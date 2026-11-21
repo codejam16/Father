@@ -14,7 +14,6 @@ final class AssistantViewModel: ObservableObject {
     @Published private(set) var errorMessage: String?
     @Published private(set) var lastReplyWasDemo = true
     @Published private(set) var isMuted = false
-<<<<<<< Updated upstream
     @Published private(set) var taskMemory = TaskMemory.empty
     @Published private(set) var sources: [ResearchSource] = []
     @Published private(set) var researchReports: [ResearchReport] = []
@@ -25,11 +24,9 @@ final class AssistantViewModel: ObservableObject {
     private var confirmedStepIDs = Set<String>()
     @Published private(set) var pendingQuestion: String?
     @Published private(set) var webInfo: WebInfo?
-=======
     /// Briefly true after a reply arrives, so the status icon can show an answer even when spoken replies are off.
     @Published private(set) var justAnswered = false
     private var answerFlash: Task<Void, Never>?
->>>>>>> Stashed changes
     private var isActive = false
     private var voiceSuspended = false
     private let client = AnalysisClient()

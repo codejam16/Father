@@ -8,7 +8,6 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
-<<<<<<< Updated upstream
         CameraExperience(model: model, speech: model.speech, settings: model.settings)
             .preferredColorScheme(.dark)
             .statusBarHidden()
@@ -16,68 +15,7 @@ struct ContentView: View {
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active { Task { await model.resume() } }
                 else { model.pause() }
-=======
-        ZStack {
-            ImmersiveCamera(camera: model.camera, enabled: !model.isBusy, onSelect: model.select)
-                .ignoresSafeArea()
-
-            VStack {
-                AssistantStatusBadge(model: model, speech: model.speech)
-                    .padding(.top, 12)
-                    .allowsHitTesting(false)
-
-                // Errors were previously only shown in the unmounted controls panel,
-                // so a failed request looked like the assistant simply staying silent.
-                if let error = model.errorMessage, !model.isBusy {
-                    Label(error, systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 12))
-                        .padding(.horizontal, 24)
-                        .allowsHitTesting(false)
-                }
-
-                Spacer()
-
-                HStack(spacing: 24) {
-                    Button { model.toggleMicrophone() } label: {
-                        Image(systemName: model.isMuted ? "mic.slash.fill" : "mic.fill")
-                            .foregroundStyle(model.isMuted ? Color.red : Color.white)
-                    }
-                    .accessibilityLabel(model.isMuted ? "Unmute microphone" : "Mute microphone")
-                    .accessibilityValue(model.isMuted ? "Muted" : "Unmuted")
-
-                    Button { model.flipCamera() } label: {
-                        Image(systemName: "arrow.triangle.2.circlepath.camera")
-                    }
-                    .disabled(model.isBusy)
-                    .opacity(model.isBusy ? 0.4 : 1)
-                    .accessibilityLabel("Flip camera")
-
-                    Button { showingSettings = true } label: {
-                        Image(systemName: "gearshape.fill")
-                    }
-                    .accessibilityLabel("Settings")
-                }
-                .font(.system(size: 22, weight: .semibold))
-                .foregroundStyle(.white)
-                .buttonStyle(CameraControlStyle())
-                .padding(.bottom, 20)
             }
-        }
-        .background(.black)
-        .preferredColorScheme(.dark)
-        .statusBarHidden()
-        .sheet(isPresented: $showingSettings) { SettingsView(settings: model.settings) }
-        .task { await model.resume() }
-        .onChange(of: showingSettings) { _, showing in model.setVoiceSuspended(showing) }
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .active { Task { await model.resume() } }
-            else { model.pause() }
-        }
     }
 }
 
@@ -152,7 +90,6 @@ private struct AssistantStatusBadge: View {
                     .symbolEffect(.pulse, options: .repeating, isActive: phase == .listening || phase == .thinking)
                     .symbolEffect(.variableColor.iterative, options: .repeating,
                                   isActive: phase == .hearing || phase == .speaking)
->>>>>>> Stashed changes
             }
             .frame(width: 30, height: 30)
 
@@ -207,7 +144,7 @@ private struct CameraExperience: View {
                 .ignoresSafeArea()
             cameraOverlays(availableHeight: availableHeight)
         }
-        .overlay(alignment: .topLeading) { statusBadge }
+        .overlay(alignment: .top) { statusBadge }
         .overlay(alignment: .topTrailing) { overlayControls }
     }
 
@@ -268,6 +205,12 @@ private struct CameraExperience: View {
             }
             .accessibilityLabel(model.isMuted ? "Unmute microphone" : "Mute microphone")
             .accessibilityValue(model.isMuted ? "Muted" : "Unmuted")
+            Button { model.flipCamera() } label: {
+                Image(systemName: "arrow.triangle.2.circlepath.camera")
+            }
+            .disabled(model.isBusy)
+            .opacity(model.isBusy ? 0.4 : 1)
+            .accessibilityLabel("Flip camera")
             Button { activeSheet = .settings } label: { Image(systemName: "gearshape.fill") }
                 .accessibilityLabel("Settings")
         }
@@ -277,10 +220,14 @@ private struct CameraExperience: View {
     }
 
     private var statusBadge: some View {
-        Text(settings.demoMode ? "DEMO · \(voiceStatus)" : voiceStatus)
-            .font(.caption.weight(.semibold)).padding(.horizontal, 12).padding(.vertical, 8)
-            .background(.ultraThinMaterial, in: Capsule()).padding(16)
-            .allowsHitTesting(false)
+        VStack(spacing: 4) {
+            AssistantStatusBadge(model: model, speech: speech)
+            if settings.demoMode {
+                Text("DEMO").font(.caption2.bold()).foregroundStyle(.yellow)
+            }
+        }
+        .padding(.top, 12)
+        .allowsHitTesting(false)
     }
 
     private var overlayControls: some View {
@@ -315,12 +262,6 @@ private struct CameraExperience: View {
         }
     }
 
-    private var voiceStatus: String {
-        if model.isBusy { return "Thinking…" }
-        if speech.isSpeaking { return "Speaking…" }
-        if model.isMuted { return "Microphone muted" }
-        return speech.isRecording ? "Listening" : "Preparing microphone…"
-    }
 }
 
 private struct CameraControlStyle: ButtonStyle {
