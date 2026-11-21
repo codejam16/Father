@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createApp, loadConfig } from '../src/server.mjs';
-import { validateAnswer, validateRequest } from '../src/contract.mjs';
+import { APIError, validateAnswer, validateRequest } from '../src/contract.mjs';
 import { analyzeWithGemini, buildGeminiBody } from '../src/gemini.mjs';
 import { checkGemini } from '../src/doctor.mjs';
 import { extractWebInfo, publicHTTPS } from '../src/web-info.mjs';
@@ -335,4 +335,22 @@ test('per-question search is an explicit boolean opt-in for compatible clients',
   assert.equal(validateRequest(input({ searchEveryQuestion: true })).searchEveryQuestion, true);
   assert.equal(validateRequest(input({ searchEveryQuestion: false })).searchEveryQuestion, false);
   assert.throws(() => validateRequest(input({ searchEveryQuestion: 'true' })), /searchEveryQuestion/);
+});
+
+test('validation failures log a redacted reason and send a specific friendly message to the phone', async (t) => {
+  const logs = [];
+  t.mock.method(console, 'warn', (message) => logs.push(message));
+  const settings = config(t, { mode: 'gemini', appToken: 'private-test-token', apiKey: 'private-model-key' });
+  const url = await running(t, settings, { analyze: async () => {
+    throw new APIError(502, 'invalid_action', 'Invalid citation; diagnostic private-model-key');
+  } });
+  const response = await post(url, input(), settings.appToken);
+  assert.equal(response.status, 502);
+  const value = await response.json();
+  assert.match(value.error.userMessage, /interpret the AI/);
+  assert.doesNotMatch(JSON.stringify(value), /Invalid citation|private-model-key/);
+  const rejected = logs.find((line) => line.includes('Request rejected:'));
+  assert.match(rejected, /invalid_action/);
+  assert.match(rejected, /Invalid citation/);
+  assert.doesNotMatch(rejected, /private-model-key/);
 });

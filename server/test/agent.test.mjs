@@ -265,7 +265,8 @@ test('always-search questions fetch links even when the UI keeps them hidden, wi
     payload(decision({ action: 'search_online', argument: 'filter replacement intervals manufacturer' })), searchPayload(),
   );
   const first = await execute(sessions, input, transport);
-  assert.deepEqual(transport.calls[0].body.generationConfig.responseJsonSchema.properties.action.enum, ['search_online']);
+  assert.ok(transport.calls[0].body.generationConfig.responseJsonSchema.required.includes('searchQuery'));
+  assert.equal(transport.calls[0].body.generationConfig.responseJsonSchema.properties.sourceIds.maxItems, 0);
   const final = await execute(sessions, { ...input, continuationId: first.continuationId, frameId: 'fresh' }, transport);
   assert.equal(final.action, 'respond');
   assert.equal(final.webInfo.sources[0].url, 'https://docs.vendor.com/manual.pdf');
@@ -295,9 +296,9 @@ test('always-search does not bypass missing credentials or an administrator rese
   }
 });
 
-test('always-search rejects a skipped search without inventing results or automatically retrying', async () => {
+test('always-search rejects a missing public query without inventing one or automatically retrying', async () => {
   const transport = fake(payload(decision()));
-  await assert.rejects(execute(new TaskSessions(), request({ searchEveryQuestion: true }), transport), /required search query/);
+  await assert.rejects(execute(new TaskSessions(), request({ searchEveryQuestion: true }), transport), /usable public search query/);
   assert.equal(transport.calls.length, 1);
 });
 
@@ -325,4 +326,46 @@ test('uncited search links remain available as related results without becoming 
   const later = await execute(sessions, { ...input, frameId: 'later', question: 'What color is it?' }, offline,
     { ...config, webResearchEnabled: false });
   assert.equal(later.webInfo, null);
+});
+
+test('a new-question respond action still searches its public query and the final answer accepts an unused argument', async () => {
+  const sessions = new TaskSessions();
+  const input = request({ searchEveryQuestion: true, includeWebInfo: true });
+  const transport = fake(
+    payload(decision({ action: 'respond', searchQuery: 'manufacturer filter cleaning', sourceIds: ['invented'],
+      answer: 'This answer has not been researched yet.', targetLabel: 'Old target', box: [100, 100, 300, 300] })),
+    searchPayload(),
+    payload(decision({ action: 'respond', argument: '', sourceIds: ['s1'], webSummary: 'Cleaning instructions.' })),
+  );
+  const first = await execute(sessions, input, transport);
+  assert.equal(first.action, 'refresh_camera');
+  assert.equal(first.target, null);
+  assert.equal(first.answer, 'Let me look that up.');
+  assert.deepEqual(first.sourceIds, []);
+  assert.equal(transport.calls[1].body.q, 'manufacturer filter cleaning');
+  const final = await execute(sessions, { ...input, frameId: 'fresh', continuationId: first.continuationId }, transport);
+  assert.equal(final.action, 'respond');
+  assert.equal(final.answer, 'A bottle.');
+  assert.deepEqual(final.sourceIds, ['s1']);
+  assert.equal(transport.calls.length, 3);
+  assert.deepEqual(transport.calls[2].body.generationConfig.responseJsonSchema.properties.sourceIds.items.enum, ['s1']);
+});
+
+test('unused arguments on final answers cannot execute a tool or suppress a usable answer', async () => {
+  for (const argument of ['', 's1', 'https://internal.local/secret']) {
+    const transport = fake(payload(decision({ argument })));
+    const result = await execute(new TaskSessions(), request(), transport);
+    assert.equal(result.action, 'respond');
+    assert.equal(result.answer, 'A bottle.');
+    assert.equal(transport.calls.length, 1);
+  }
+});
+
+test('invalid initial queries do not fall back to sending private user text to search', async () => {
+  for (const searchQuery of ['', ' ', 'x'.repeat(501), null]) {
+    const transport = fake(payload(decision({ searchQuery })));
+    await assert.rejects(execute(new TaskSessions(), request({ searchEveryQuestion: true,
+      question: 'Private question with account credentials' }), transport), /usable public search query/);
+    assert.equal(transport.calls.length, 1);
+  }
 });

@@ -6,6 +6,7 @@ import { analyzeWithGemini, demoAnswer } from './gemini.mjs';
 import { TaskSessions } from './task-session.mjs';
 import { runAgent } from './agent.mjs';
 import { ANALYSIS_TIMEOUT_MS } from './timeouts.mjs';
+import { redactDiagnostic } from './diagnostics.mjs';
 
 // Developer diagnostics stay in logs; these short messages are safe to read aloud.
 function userErrorMessage(error) {
@@ -24,6 +25,9 @@ function userErrorMessage(error) {
     task_busy: "I'm still working on your previous question. Please wait a moment.",
     tasks_busy: "I'm busy right now. Please try again in a moment.",
     invalid_request: "I couldn't use that camera view or question. Please try again.",
+    invalid_action: "I couldn't interpret the AI's response. Please ask your question again.",
+    invalid_task_state: "I couldn't update the task details. Please ask your question again.",
+    invalid_model_output: "The AI returned an unreadable answer. Please ask again.",
     request_too_large: "I couldn't use that camera view. Please try showing it again.",
   };
   return messages[error.code] ?? "I couldn't finish that request. Please try again.";
@@ -144,8 +148,11 @@ export function createApp(config, {
       if (controller.signal.aborted) {
         return send(504, { error: { code: 'request_timeout', message: 'That took too long. Please try again.', userMessage: 'That took too long. Please try again.' } });
       }
-      if (error instanceof APIError && error.code === 'provider_error') console.error(error.message);
       if (error instanceof APIError) {
+        // Fixed validation messages, not model replies, query text or images.
+        const detail = redactDiagnostic({ code: error.code, reason: error.message },
+          [config.apiKey, config.appToken, config.serperApiKey]);
+        console.warn(`[${trace.requestId}] Request rejected: ${JSON.stringify(detail)}`);
         const message = userErrorMessage(error);
         return send(error.status, { error: { code: error.code, message, userMessage: message } });
       }
