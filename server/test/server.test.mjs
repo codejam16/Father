@@ -8,6 +8,7 @@ import { Budget } from '../src/budget.mjs';
 import { createApp, loadConfig } from '../src/server.mjs';
 import { validateAnswer, validateRequest } from '../src/contract.mjs';
 import { analyzeWithGemini, buildGeminiBody } from '../src/gemini.mjs';
+import { checkGemini } from '../src/doctor.mjs';
 
 // Minimal JPEG envelope for transport validation. No test calls a real model.
 const input = (extra = {}) => ({
@@ -125,6 +126,64 @@ test('upstream errors do not expose provider credentials', async (t) => {
   const settings = config(t);
   await assert.rejects(analyzeWithGemini(input(), settings, async () => ({ ok: false, status: 403 })),
     (error) => error.status === 502 && !error.message.includes('never-used'));
+});
+
+test('Google failures produce actionable messages without forwarding upstream details', async (t) => {
+  const settings = config(t, { apiKey: 'private-key-do-not-print' });
+  for (const [status, reason, expected] of [
+    [400, 'API_KEY_INVALID', /rejected GEMINI_API_KEY/],
+    [401, '', /rejected GEMINI_API_KEY/],
+    [403, '', /denied access/],
+    [404, '', /GEMINI_MODEL/],
+    [429, '', /quota or rate limit/],
+    [400, 'FAILED_PRECONDITION', /project setup/],
+    [400, 'thinkingLevel unsupported', /thinking settings/],
+    [400, 'responseJsonSchema unsupported', /structured response/],
+    [400, 'image could not be decoded', /camera image/],
+    [400, 'invalid argument', /request format/],
+    [503, '', /temporarily unable/],
+  ]) {
+    let calls = 0;
+    await assert.rejects(analyzeWithGemini(input(), settings, async () => {
+      calls++;
+      return { ok: false, status, json: async () => ({ error: {
+        message: `${reason}: private-key-do-not-print project-private-data`,
+      } }) };
+    }), (error) => {
+      assert.equal(error.code, 'provider_error');
+      assert.equal(error.status, status === 429 ? 429 : 502);
+      assert.match(error.message, new RegExp(`Gemini HTTP ${status}`));
+      assert.match(error.message, expected);
+      assert.doesNotMatch(error.message, /private-key-do-not-print|project-private-data/);
+      return true;
+    });
+    assert.equal(calls, 1);
+  }
+});
+
+test('doctor checks metadata only and does not claim generation access', async (t) => {
+  const settings = config(t, { apiKey: 'private-key-do-not-print' });
+  const result = await checkGemini(settings, async (url, options) => {
+    assert.equal(url, `https://generativelanguage.googleapis.com/v1beta/models/${settings.model}`);
+    assert.equal(options.method, 'GET');
+    assert.equal(options.headers['x-goog-api-key'], settings.apiKey);
+    assert.equal(options.body, undefined);
+    return { ok: true, json: async () => ({ supportedGenerationMethods: ['generateContent'] }) };
+  });
+  assert.match(result, /does not verify generation permission/);
+  assert.equal(new Budget(settings.budgetPath, settings.maxRequests).used, 0);
+  assert.doesNotMatch(result, /private-key-do-not-print/);
+});
+
+test('doctor handles rejected keys, incompatible models and network errors safely', async (t) => {
+  const settings = config(t, { apiKey: 'private-key-do-not-print' });
+  await assert.rejects(checkGemini(settings, async () => ({ ok: false, status: 403,
+    json: async () => ({ error: { message: settings.apiKey } }),
+  })), /Gemini HTTP 403: Google denied access/);
+  await assert.rejects(checkGemini(settings, async () => ({ ok: true,
+    json: async () => ({ supportedGenerationMethods: ['embedContent'] }),
+  })), /does not advertise generateContent/);
+  await assert.rejects(checkGemini(settings, async () => { throw new Error(settings.apiKey); }), /Could not reach Google/);
 });
 
 test('truncated model JSON and invalid coordinates are rejected', async (t) => {

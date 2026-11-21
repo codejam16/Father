@@ -1,4 +1,5 @@
 import { APIError, answerSchema, validateAnswer } from './contract.mjs';
+import { geminiHTTPError } from './provider-error.mjs';
 
 const instruction = `You are TaskLens, a conversational visual task assistant.
 You receive a single captured frame, NOT a continuously observed world. Use its timestamp.
@@ -59,9 +60,7 @@ export async function analyzeWithGemini(request, config, fetcher = fetch) {
     throw new APIError(504, 'provider_unavailable', 'The AI service did not respond. No automatic retry was made.');
   }
   if (!response.ok) {
-    // Do not forward upstream error bodies: they can contain credential/project details.
-    throw new APIError(response.status === 429 ? 429 : 502, 'provider_error',
-      response.status === 429 ? 'AI quota reached. Wait before asking again.' : 'AI request failed. Check model access and backend configuration.');
+    throw await geminiHTTPError(response);
   }
   let payload;
   try { payload = await response.json(); } catch {

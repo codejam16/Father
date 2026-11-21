@@ -87,6 +87,7 @@ export function createApp(config, { analyze = analyzeWithGemini, budget = new Bu
       const result = config.mode === 'gemini' ? await analyze(input, config) : demoAnswer(input);
       return send(200, { frameId: input.frameId, mode: config.mode, ...result });
     } catch (error) {
+      if (error instanceof APIError && error.code === 'provider_error') console.error(error.message);
       if (error instanceof APIError) return send(error.status, { error: { code: error.code, message: error.message } });
       console.error('Request failed:', error?.name ?? 'UnknownError');
       send(500, { error: { code: 'internal_error', message: 'The backend could not process this request.' } });
