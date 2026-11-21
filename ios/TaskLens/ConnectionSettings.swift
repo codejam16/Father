@@ -7,6 +7,7 @@ final class ConnectionSettings: ObservableObject {
     @Published var demoMode: Bool { didSet { defaults.set(demoMode, forKey: "demoMode") } }
     @Published var serverURL: String { didSet { defaults.set(serverURL, forKey: "serverURL") } }
     @Published var task: String { didSet { defaults.set(task, forKey: "task") } }
+    @Published var voiceIdentifier: String { didSet { defaults.set(voiceIdentifier, forKey: "voiceIdentifier") } }
     @Published var spokenReplies: Bool { didSet { defaults.set(spokenReplies, forKey: "spokenReplies") } }
     @Published var captionsEnabled: Bool { didSet { defaults.set(captionsEnabled, forKey: "captionsEnabled") } }
     @Published var selectionEnabled: Bool { didSet { defaults.set(selectionEnabled, forKey: "selectionEnabled") } }
@@ -23,6 +24,7 @@ final class ConnectionSettings: ObservableObject {
         serverURL = defaults.string(forKey: "serverURL") ?? "http://localhost:8787"
         task = defaults.string(forKey: "task") ?? ""
         spokenReplies = defaults.object(forKey: "spokenReplies") as? Bool ?? true
+        voiceIdentifier = defaults.string(forKey: "voiceIdentifier") ?? ""
         captionsEnabled = defaults.object(forKey: "captionsEnabled") as? Bool ?? false
         selectionEnabled = defaults.object(forKey: "selectionEnabled") as? Bool ?? false
         // Adopt the new automatic default once, including existing installations.

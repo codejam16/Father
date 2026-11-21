@@ -1,4 +1,5 @@
 import SwiftUI
+import AVFoundation
 import WebKit
 
 @MainActor
@@ -63,7 +64,8 @@ struct SettingsView: View {
 
                 Section {
                     Toggle("Read replies aloud", isOn: $settings.spokenReplies)
-                } footer: {
+                    AssistantVoicePicker(settings: settings, speech: model.speech)
+                } header: { Text("Assistant voice") } footer: {
                     Text("When connected, questions send a camera image, recent conversation, and task context to your backend and AI provider. Research may generate web searches. Task memory expires on the backend after inactivity and resets when you start a new task. Demo mode stays on the phone.")
                 }
                 Section {
@@ -76,6 +78,47 @@ struct SettingsView: View {
             .navigationTitle("TaskLens settings")
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } } }
         }
+    }
+}
+
+
+@MainActor
+private struct AssistantVoicePicker: View {
+    @ObservedObject var settings: ConnectionSettings
+    @ObservedObject var speech: SpeechService
+
+    var body: some View {
+        Group {
+            Picker("Voice", selection: $settings.voiceIdentifier) {
+                Text("Automatic · best available").tag("")
+                if !settings.voiceIdentifier.isEmpty,
+                   !speech.availableVoices.contains(where: { $0.identifier == settings.voiceIdentifier }) {
+                    Text("Saved voice unavailable · using Automatic").tag(settings.voiceIdentifier)
+                }
+                ForEach(speech.availableVoices, id: \.identifier) { voice in
+                    Text(SpeechService.voiceLabel(voice)).tag(voice.identifier)
+                }
+            }
+            if let voice = speech.voice(for: settings.voiceIdentifier) {
+                Text("Using \(SpeechService.voiceLabel(voice))")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Button {
+                if speech.isSpeaking { speech.stopSpeaking() }
+                else {
+                    speech.speak("Hi, I'm TaskLens. Show me what you're working on, and we'll figure it out together.",
+                                 voiceIdentifier: settings.voiceIdentifier)
+                }
+            } label: {
+                Label(speech.isSpeaking ? "Stop preview" : "Preview voice",
+                      systemImage: speech.isSpeaking ? "stop.fill" : "speaker.wave.2")
+            }
+            Text("Optional: download an Enhanced or Premium English voice for more natural speech in iPhone Settings → Accessibility → Read & Speak → Voices, then return here. On older iOS, look for Spoken Content.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .onAppear { speech.refreshVoices() }
+        .onChange(of: settings.voiceIdentifier) { _, _ in speech.stopSpeaking() }
+        .onDisappear { speech.stopSpeaking() }
     }
 }
 

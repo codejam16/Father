@@ -48,6 +48,7 @@ final class AssistantViewModel: ObservableObject {
 
     func resume() async {
         isActive = true
+        speech.refreshVoices()
         await camera.start()
         updateListening()
     }
@@ -193,7 +194,7 @@ final class AssistantViewModel: ObservableObject {
                 if let target = response.target, !response.needsClearerView {
                     camera.point(at: target.box, frameID: frame.id, label: target.label, source: .assistant)
                 }
-                if settings.spokenReplies { speech.speak(response.answer) }
+                if settings.spokenReplies { speech.speak(response.answer, voiceIdentifier: settings.voiceIdentifier) }
                 if !demoMode && (usedResearch || !citedSourceIds.isEmpty) { researchReviewID = UUID() }
             } catch is CancellationError {
                 // Explicit cancellation/backgrounding should not surface as a failed task.
@@ -203,7 +204,7 @@ final class AssistantViewModel: ObservableObject {
                 let message = (error as? TaskLensError)?.localizedDescription
                     ?? "I couldn't finish that request. Please try again."
                 errorMessage = message
-                if settings.spokenReplies { speech.speak(message) }
+                if settings.spokenReplies { speech.speak(message, voiceIdentifier: settings.voiceIdentifier) }
             }
         }
     }

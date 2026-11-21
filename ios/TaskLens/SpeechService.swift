@@ -8,6 +8,7 @@ final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     @Published private(set) var isPreparing = false
     @Published private(set) var isSpeaking = false
     @Published private(set) var transcript = ""
+    @Published private(set) var availableVoices: [AVSpeechSynthesisVoice] = []
     var onUtterance: ((String) -> Void)?
     var onFailure: ((String) -> Void)?
 
@@ -31,6 +32,7 @@ final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     override init() {
         super.init()
         synthesizer.delegate = self
+        refreshVoices()
         interruptionObserver = NotificationCenter.default.publisher(for: AVAudioSession.interruptionNotification)
             .sink { [weak self] notification in
                 let type = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
@@ -201,7 +203,40 @@ final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelega
         isRecording = false
     }
 
-    func speak(_ text: String) {
+    func refreshVoices() {
+        let preferredLanguage = Locale.preferredLanguages.first(where: { $0.hasPrefix("en") }) ?? "en-US"
+        availableVoices = AVSpeechSynthesisVoice.speechVoices()
+            .filter { $0.language.hasPrefix("en") && !$0.voiceTraits.contains(.isNoveltyVoice) }
+            .sorted { left, right in
+                // Quality comes first, then the phone's English dialect.
+                if left.quality.rawValue != right.quality.rawValue { return left.quality.rawValue > right.quality.rawValue }
+                let leftMatches = left.language == preferredLanguage
+                let rightMatches = right.language == preferredLanguage
+                if leftMatches != rightMatches { return leftMatches }
+                if left.language != right.language { return left.language < right.language }
+                return left.name.localizedStandardCompare(right.name) == .orderedAscending
+            }
+    }
+
+    func voice(for identifier: String) -> AVSpeechSynthesisVoice? {
+        if let saved = availableVoices.first(where: { $0.identifier == identifier }) { return saved }
+        // A removed download falls back gracefully instead of breaking replies.
+        return availableVoices.first(where: { $0.quality == .premium || $0.quality == .enhanced })
+            ?? AVSpeechSynthesisVoice(language: "en-US") ?? availableVoices.first
+    }
+
+    static func voiceLabel(_ voice: AVSpeechSynthesisVoice) -> String {
+        let quality: String
+        switch voice.quality {
+        case .premium: quality = "Premium"
+        case .enhanced: quality = "Enhanced"
+        default: quality = "Standard"
+        }
+        let name = voice.name.localizedCaseInsensitiveContains(quality) ? voice.name : "\(voice.name) · \(quality)"
+        return "\(name) · \(voice.language)"
+    }
+
+    func speak(_ text: String, voiceIdentifier: String = "") {
         stopSpeaking()
         finishSession()
         transcript = ""
@@ -211,8 +246,9 @@ final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelega
             try session.setActive(true)
         } catch { scheduleRestart(); return }
         let utterance = AVSpeechUtterance(string: text)
-        utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
-        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+        refreshVoices()
+        utterance.voice = voice(for: voiceIdentifier)
+        utterance.rate = AVSpeechUtteranceDefaultSpeechRate * 0.96
         activeUtterance = utterance
         isSpeaking = true
         synthesizer.speak(utterance)
