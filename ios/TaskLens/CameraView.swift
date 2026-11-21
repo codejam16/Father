@@ -29,6 +29,7 @@ struct CameraStage: View {
     @ObservedObject var camera: CameraService
     let enabled: Bool
     let onSelect: (NormalizedBox) -> Void
+    var showsChrome = true
     @State private var dragStart: CGPoint?
     @State private var dragEnd: CGPoint?
 
@@ -69,22 +70,26 @@ struct CameraStage: View {
                     onSelect(box)
                 })
             .overlay(alignment: .topLeading) {
-                Label(camera.isRunning ? "LIVE" : "CAMERA", systemImage: "circle.fill")
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundStyle(camera.isRunning ? .mint : .white)
-                    .padding(.horizontal, 10).padding(.vertical, 7)
-                    .background(.black.opacity(0.65), in: Capsule()).padding(14)
+                if showsChrome {
+                    Label(camera.isRunning ? "LIVE" : "CAMERA", systemImage: "circle.fill")
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundStyle(camera.isRunning ? .mint : .white)
+                        .padding(.horizontal, 10).padding(.vertical, 7)
+                        .background(.black.opacity(0.65), in: Capsule()).padding(14)
+                }
             }
             .overlay(alignment: .bottom) {
-                Text(camera.status == "Camera live" ? "Tap or drag to point something out" : camera.status)
-                    .font(.caption).foregroundStyle(.white)
-                    .padding(.horizontal, 12).padding(.vertical, 8)
-                    .background(.black.opacity(0.65), in: Capsule()).padding(12)
-                    .allowsHitTesting(false)
+                if showsChrome {
+                    Text(camera.status == "Camera live" ? "Tap or drag to point something out" : camera.status)
+                        .font(.caption).foregroundStyle(.white)
+                        .padding(.horizontal, 12).padding(.vertical, 8)
+                        .background(.black.opacity(0.65), in: Capsule()).padding(12)
+                        .allowsHitTesting(false)
+                }
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 24))
-        .overlay(RoundedRectangle(cornerRadius: 24).stroke(.white.opacity(0.12), lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: showsChrome ? 24 : 0))
+        .overlay(RoundedRectangle(cornerRadius: showsChrome ? 24 : 0).stroke(.white.opacity(showsChrome ? 0.12 : 0), lineWidth: 1))
         .accessibilityLabel("Live rear camera. Tap or drag to select a region for your next question.")
     }
 

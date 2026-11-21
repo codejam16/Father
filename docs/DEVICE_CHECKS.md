@@ -21,9 +21,11 @@ These are acceptance checks, not completed test results. Native compilation and 
 ## Voice
 
 - Microphone permission granted/denied, Speech permission granted/denied.
-- Tap microphone, say a full question, stop, review text, then send. Check final words are retained.
-- Spoken reply plays from the phone; starting another recording stops playback.
-- Backgrounding stops recording/playback. No automatic recording resumes afterward.
+- After permissions, listening starts without tapping. Speak a question, pause about 1.2 seconds, and confirm exactly one request is sent, retaining the final words. Shorter pauses should not split a question; silence alone must not send anything.
+- Listening pauses while processing and speaking, then resumes automatically. Confirm the assistant never sends its own reply back as a new question. Stopping playback should resume listening.
+- Mute while listening, preparing, processing, and speaking. Confirm no more voice requests are sent, including after a pending callback or reply; unmute resumes without a push-to-talk step. Typed questions remain available when muted.
+- Backgrounding and audio interruptions stop recording/playback; no partial question should be sent. Returning to the foreground resumes unless muted. An audio interruption should show a useful message and require unmuting.
+- Settings and conversation sheets pause listening; dismissing resumes unless muted. Test microphone/Speech denial, recognition failure, and repeated session restarts. Leave it silent for two minutes and ask another question to check session renewal.
 - Repeat on the actual demo Wi-Fi; Apple speech recognition may need network access if on-device recognition is unavailable for the device/language.
 
 ## Backend and provider
@@ -39,4 +41,4 @@ These are acceptance checks, not completed test results. Native compilation and 
 
 ## Honest demo scope
 
-Use one clear, low-risk task and distinctive objects. Normal conversation has no pointer. Show both user pointing (tap/drag) and assistant pointing (locate request). Briefly move the phone after acquisition only if tracking has passed rehearsal. Do not claim reliable tiny-part tracking, occlusion recovery, automated repair safety, or full-duplex continuous voice.
+Use one clear, low-risk task and distinctive objects. Confirm that identifying a visible object produces an assistant pointer, while general or ambiguous answers do not invent one. Show both user pointing (tap/drag) and automatic assistant pointing. Briefly move the phone after acquisition only if tracking has passed rehearsal. Do not claim reliable tiny-part tracking, occlusion recovery, automated repair safety, or full-duplex continuous voice.

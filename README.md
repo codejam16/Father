@@ -8,7 +8,7 @@ A starter for a moving-camera task assistant on iPhone. Keep the camera open, as
 
 - Native SwiftUI app, targeting iPhone/iOS 17+, with a checked-in Xcode project and shared scheme.
 - Uninterrupted rear-camera preview. No permanently selected object.
-- Typed questions, push-to-talk speech recognition, and native spoken replies.
+- Typed questions, continuous speech recognition with pause-to-send and a mute button, and native spoken replies.
 - Tap or drag a region to attach it to your next question. A tap creates a region; it does not automatically segment an object.
 - Optional AI-requested target, drawn over the live preview. Normal replies return no target.
 - Experimental Apple Vision tracking for short-lived pointers, including replay of retained frames to compensate for delayed model responses. Lost/expired pointers are hidden, not drawn at stale coordinates.
@@ -27,7 +27,7 @@ A starter for a moving-camera task assistant on iPhone. Keep the camera open, as
 
 A free Apple Account can install a development app on a personal device with provisioning limits. This repository does not require App Store or TestFlight distribution. The simulator can exercise UI and geometry tests, but the real camera/tracker requires a device.
 
-**Voice controls:** tap the microphone to start, tap stop to finish, review the recognized text, then tap send. The camera stays live. This base is not an always-listening/full-duplex call.
+**Voice controls:** the microphone starts automatically while the app is active, after microphone and Speech permissions are granted. Speak a question, then pause for about 1.2 seconds to send it automatically with a camera image. The microphone button mutes/unmutes; typed questions still have a send button. Listening pauses during analysis and spoken replies to avoid transcribing the assistant, then resumes automatically. Opening settings/conversation or leaving the app pauses listening. Returning resumes it unless muted. This is turn-taking voice, without barge-in or continuous cloud audio/video streaming. Each automatically sent question uses the same backend quota as a typed question; demo responses make no Gemini calls.
 
 ## Start the backend
 

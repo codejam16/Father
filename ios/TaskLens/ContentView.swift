@@ -5,45 +5,75 @@ struct ContentView: View {
     @StateObject private var model = AssistantViewModel()
     @Environment(\.scenePhase) private var scenePhase
     @State private var showingSettings = false
-    @State private var showingConversation = false
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            ImmersiveCamera(camera: model.camera, enabled: !model.isBusy, onSelect: model.select)
+                .ignoresSafeArea()
+
+                HStack(spacing: 24) {
+                    Button { model.toggleMicrophone() } label: {
+                        Image(systemName: model.isMuted ? "mic.slash.fill" : "mic.fill")
+                            .foregroundStyle(model.isMuted ? Color.red : Color.white)
+                    }
+                    .accessibilityLabel(model.isMuted ? "Unmute microphone" : "Mute microphone")
+                    .accessibilityValue(model.isMuted ? "Muted" : "Unmuted")
+
+                    Button { showingSettings = true } label: {
+                        Image(systemName: "gearshape.fill")
+                    }
+                    .accessibilityLabel("Settings")
+                }
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(.white)
+                .buttonStyle(CameraControlStyle())
+                .padding(.bottom, 20)
+            }
+            .background(.black)
+            .preferredColorScheme(.dark)
+            .statusBarHidden()
+            .sheet(isPresented: $showingSettings) { SettingsView(settings: model.settings) }
+            .task { await model.resume() }
+            .onChange(of: showingSettings) { _, showing in model.setVoiceSuspended(showing) }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active { Task { await model.resume() } }
+                else { model.pause() }
+            }
+    }
+}
+
+private struct CameraControlStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .frame(width: 58, height: 58)
+            .background(.ultraThinMaterial, in: Circle())
+            .overlay(Circle().strokeBorder(.white.opacity(0.2), lineWidth: 1))
+            .opacity(configuration.isPressed ? 0.65 : 1)
+    }
+}
+
+@MainActor
+private struct ImmersiveCamera: View {
+    @ObservedObject var camera: CameraService
+    let enabled: Bool
+    let onSelect: (NormalizedBox) -> Void
 
     var body: some View {
         GeometryReader { geometry in
-            VStack(spacing: 14) {
-                HStack(spacing: 10) {
-                    Image(systemName: "viewfinder.circle.fill").font(.title).foregroundStyle(.mint)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("TaskLens").font(.title3.bold())
-                        Text("A second pair of eyes").font(.caption).foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Button { showingConversation = true } label: { Image(systemName: "text.bubble") }
-                        .accessibilityLabel("Conversation")
-                    Button { showingSettings = true } label: { Image(systemName: "slider.horizontal.3") }
-                        .accessibilityLabel("Connection and task settings")
-                }
-                .buttonStyle(.bordered).tint(.white)
-
-                CameraStage(camera: model.camera, enabled: !model.isBusy, onSelect: model.select)
-                    .frame(maxHeight: .infinity)
-                    .layoutPriority(1)
-
-                AssistantControls(model: model, speech: model.speech, settings: model.settings)
-            }
-            .padding(.horizontal, 18).padding(.vertical, 12)
-            .frame(width: geometry.size.width, height: geometry.size.height)
+            // Enlarge the entire stage together, keeping selection and pointer
+            // coordinates aligned with the camera image after the edge crop.
+            let aspect = max(camera.aspectRatio, 0.01)
+            let width = max(geometry.size.width, geometry.size.height * aspect)
+            let height = width / aspect
+            CameraStage(camera: camera, enabled: enabled, onSelect: onSelect, showsChrome: false)
+                .frame(width: width, height: height)
+                .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
         }
-        .background(Color(red: 0.035, green: 0.065, blue: 0.085))
-        .preferredColorScheme(.dark)
-        .sheet(isPresented: $showingSettings) { SettingsView(settings: model.settings) }
-        .sheet(isPresented: $showingConversation) { ConversationView(model: model) }
-        .task { await model.camera.start() }
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .active { Task { await model.camera.start() } }
-            else if phase == .background { model.pause() }
-        }
+        .clipped()
     }
 }
+
+// Retained for a future transcript/typed-input interface; not mounted on the camera screen.
 
 @MainActor
 private struct AssistantControls: View {
@@ -81,25 +111,28 @@ private struct AssistantControls: View {
                 Text(error).font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
             }
             if speech.isRecording {
-                Text(speech.transcript.isEmpty ? "Listening… tap the microphone to finish." : speech.transcript)
+                Text(speech.transcript.isEmpty ? "Listening… pause to send your question." : speech.transcript)
                     .font(.caption).foregroundStyle(.mint).lineLimit(3)
+            }
+            if !speech.isRecording {
+                Text(model.isMuted ? "Microphone muted" : speech.isSpeaking ? "Speaking… listening resumes after the reply." : model.isBusy ? "Thinking… listening resumes after the reply." : "Preparing microphone…")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             HStack(alignment: .bottom, spacing: 10) {
                 TextField("Ask about what you see…", text: $model.question, axis: .vertical)
                     .lineLimit(1...3).font(.subheadline).padding(12)
                     .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 14))
                     .focused($questionFocused)
-                    .disabled(model.isBusy || speech.isRecording)
+                    .disabled(model.isBusy)
                 Button {
                     questionFocused = false
-                    Task { await model.toggleMicrophone() }
+                    model.toggleMicrophone()
                 } label: {
-                    Image(systemName: speech.isRecording ? "stop.fill" : "mic.fill")
+                    Image(systemName: model.isMuted ? "mic.slash.fill" : "mic.fill")
                         .frame(width: 42, height: 44)
-                        .background(speech.isRecording ? Color.red.opacity(0.8) : .white.opacity(0.1), in: RoundedRectangle(cornerRadius: 13))
+                        .background(model.isMuted ? .white.opacity(0.1) : Color.mint.opacity(0.25), in: RoundedRectangle(cornerRadius: 13))
                 }
-                .disabled(model.isBusy || speech.isPreparing)
-                .accessibilityLabel(speech.isRecording ? "Finish speaking" : "Speak a question")
+                .accessibilityLabel(model.isMuted ? "Unmute microphone" : "Mute microphone")
                 Button {
                     questionFocused = false
                     if model.isBusy { model.cancel() } else { model.send() }
@@ -108,7 +141,7 @@ private struct AssistantControls: View {
                         .fontWeight(.bold).frame(width: 42, height: 44)
                         .foregroundStyle(.black).background(.mint, in: RoundedRectangle(cornerRadius: 13))
                 }
-                .disabled(speech.isRecording || speech.isPreparing || (!model.isBusy && model.question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
+                .disabled(!model.isBusy && model.question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .accessibilityLabel(model.isBusy ? "Cancel question" : "Send question")
             }
         }

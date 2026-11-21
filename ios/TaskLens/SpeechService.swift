@@ -3,42 +3,106 @@ import Combine
 import Speech
 
 @MainActor
-final class SpeechService: ObservableObject {
+final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
     @Published private(set) var isRecording = false
     @Published private(set) var isPreparing = false
+    @Published private(set) var isSpeaking = false
     @Published private(set) var transcript = ""
+    var onUtterance: ((String) -> Void)?
+    var onFailure: ((String) -> Void)?
 
     private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
     private let engine = AVAudioEngine()
     private let synthesizer = AVSpeechSynthesizer()
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
+    private var silenceTask: Task<Void, Never>?
+    private var sessionLimitTask: Task<Void, Never>?
+    private var restartTask: Task<Void, Never>?
+    private var preparationTask: Task<Void, Never>?
+    private var interruptionObserver: AnyCancellable?
     private var hasTap = false
     private var recordingID: UUID?
-    private var finishContinuation: CheckedContinuation<String, Never>?
     private var operationID = UUID()
+    private var wantsListening = false
+    private var consecutiveFailures = 0
+    private var activeUtterance: AVSpeechUtterance?
 
-    func startRecording() async throws {
-        guard !isRecording, !isPreparing else { return }
-        cancelRecording()
+    override init() {
+        super.init()
+        synthesizer.delegate = self
+        interruptionObserver = NotificationCenter.default.publisher(for: AVAudioSession.interruptionNotification)
+            .sink { [weak self] notification in
+                let type = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
+                guard type == AVAudioSession.InterruptionType.began.rawValue else { return }
+                Task { @MainActor [weak self] in
+                    guard let self, self.wantsListening || self.isRecording || self.isSpeaking else { return }
+                    self.setListening(false)
+                    self.stopSpeaking()
+                    self.onFailure?("Audio was interrupted. Tap Unmute when you're ready to continue.")
+                }
+            }
+    }
+
+    func setListening(_ enabled: Bool) {
+        wantsListening = enabled
+        if enabled {
+            if !isRecording, !isPreparing, !isSpeaking, restartTask == nil { prepareListening() }
+        } else {
+            operationID = UUID()
+            preparationTask?.cancel()
+            preparationTask = nil
+            isPreparing = false
+            restartTask?.cancel()
+            restartTask = nil
+            finishSession()
+            transcript = ""
+            consecutiveFailures = 0
+        }
+    }
+
+    private func prepareListening() {
+        guard wantsListening, !isSpeaking, !isRecording, !isPreparing else { return }
         let operation = UUID()
         operationID = operation
         isPreparing = true
-        defer { isPreparing = false }
-        stopSpeaking()
-        let authorization = await withCheckedContinuation { continuation in
-            SFSpeechRecognizer.requestAuthorization { continuation.resume(returning: $0) }
+        preparationTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if self.operationID == operation {
+                    self.isPreparing = false
+                    self.preparationTask = nil
+                }
+            }
+            do {
+                let authorization = await withCheckedContinuation { continuation in
+                    SFSpeechRecognizer.requestAuthorization { continuation.resume(returning: $0) }
+                }
+                guard self.operationID == operation, self.wantsListening, !Task.isCancelled else { return }
+                guard authorization == .authorized else {
+                    throw TaskLensError.message("Allow speech recognition in iPhone Settings, or type your question.")
+                }
+                let microphoneAllowed = await AVCaptureDevice.requestAccess(for: .audio)
+                guard self.operationID == operation, self.wantsListening, !Task.isCancelled else { return }
+                guard microphoneAllowed else {
+                    throw TaskLensError.message("Allow microphone access in iPhone Settings, or type your question.")
+                }
+                try self.startSession()
+            } catch {
+                guard self.operationID == operation else { return }
+                self.setListening(false)
+                self.onFailure?(error.localizedDescription)
+            }
         }
-        guard authorization == .authorized, await AVCaptureDevice.requestAccess(for: .audio) else {
-            throw TaskLensError.message("Allow microphone and speech recognition in iPhone Settings, or type your question.")
-        }
-        guard operationID == operation else { throw CancellationError() }
+    }
+
+    private func startSession() throws {
         guard let recognizer, recognizer.isAvailable else {
-            throw TaskLensError.message("Speech recognition is unavailable. You can still type a question.")
+            throw TaskLensError.message("Speech recognition is unavailable. Tap Unmute to retry, or type a question.")
         }
-        let audioSession = AVAudioSession.sharedInstance()
-        try audioSession.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
-        try audioSession.setActive(true)
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
+        try session.setActive(true)
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
         if recognizer.supportsOnDeviceRecognition { request.requiresOnDeviceRecognition = true }
@@ -49,85 +113,131 @@ final class SpeechService: ObservableObject {
         let node = engine.inputNode
         let format = node.outputFormat(forBus: 0)
         guard format.sampleRate > 0, format.channelCount > 0 else {
-            throw TaskLensError.message("No microphone input is available.")
+            throw TaskLensError.message("No microphone input is available. You can still type a question.")
         }
-        node.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
-            request.append(buffer)
-        }
+        node.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in request.append(buffer) }
         hasTap = true
         recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
             Task { @MainActor in
                 guard let self, self.recordingID == id else { return }
-                if let result { self.transcript = result.bestTranscription.formattedString }
-                if result?.isFinal == true || error != nil { self.finishNow() }
+                if let result {
+                    let text = result.bestTranscription.formattedString
+                    if text != self.transcript {
+                        self.transcript = text
+                        self.consecutiveFailures = 0
+                        self.scheduleSilence(for: id)
+                    }
+                }
+                if result?.isFinal == true {
+                    self.completeUtterance()
+                } else if error != nil {
+                    self.finishSession()
+                    self.consecutiveFailures += 1
+                    if self.consecutiveFailures >= 3 {
+                        self.setListening(false)
+                        self.onFailure?("Speech recognition stopped. Tap Unmute to retry, or type your question.")
+                    } else {
+                        self.scheduleRestart()
+                    }
+                }
             }
         }
         engine.prepare()
-        do {
-            try engine.start()
-            isRecording = true
-        } catch {
-            cancelRecording()
-            throw TaskLensError.message("Could not start the microphone. Try typing your question.")
+        do { try engine.start() }
+        catch {
+            finishSession()
+            throw TaskLensError.message("Could not start the microphone. Tap Unmute to retry, or type a question.")
+        }
+        isRecording = true
+        // Rotate before Apple's recognition session duration limit.
+        sessionLimitTask = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(50)) } catch { return }
+            guard let self, self.recordingID == id else { return }
+            self.completeUtterance()
         }
     }
 
-    func finishRecording() async -> String {
-        guard recordingID != nil else { return transcript }
-        isPreparing = true
-        defer { isPreparing = false }
-        engine.stop()
-        removeTap()
-        request?.endAudio()
-        isRecording = false
-        return await withCheckedContinuation { continuation in
-            finishContinuation = continuation
-            let id = recordingID
-            // Some recognizers never deliver a final result after endAudio.
-            Task { [weak self] in
-                try? await Task.sleep(for: .milliseconds(900))
-                guard let self, self.recordingID == id else { return }
-                self.finishNow()
-            }
+    private func scheduleSilence(for id: UUID) {
+        silenceTask?.cancel()
+        guard !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        silenceTask = Task { [weak self] in
+            do { try await Task.sleep(for: .milliseconds(1200)) } catch { return }
+            guard let self, self.recordingID == id, self.wantsListening else { return }
+            self.completeUtterance()
         }
     }
 
-    func cancelRecording() {
-        operationID = UUID()
-        finishNow()
+    private func completeUtterance() {
+        let text = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        finishSession()
+        transcript = ""
+        if wantsListening, !text.isEmpty { onUtterance?(text) }
+        scheduleRestart()
     }
 
-    private func finishNow() {
+    private func scheduleRestart() {
+        guard wantsListening, !isSpeaking, restartTask == nil else { return }
+        restartTask = Task { [weak self] in
+            do { try await Task.sleep(for: .milliseconds(400)) } catch { return }
+            guard let self else { return }
+            self.restartTask = nil
+            if self.wantsListening { self.prepareListening() }
+        }
+    }
+
+    private func finishSession() {
+        // Invalidate callbacks before cancelling, so late results cannot send twice.
         recordingID = nil
+        silenceTask?.cancel()
+        silenceTask = nil
+        sessionLimitTask?.cancel()
+        sessionLimitTask = nil
         engine.stop()
-        removeTap()
+        if hasTap { engine.inputNode.removeTap(onBus: 0); hasTap = false }
         request?.endAudio()
         recognitionTask?.cancel()
         recognitionTask = nil
         request = nil
         isRecording = false
-        let continuation = finishContinuation
-        finishContinuation = nil
-        continuation?.resume(returning: transcript)
-    }
-
-    private func removeTap() {
-        if hasTap { engine.inputNode.removeTap(onBus: 0); hasTap = false }
     }
 
     func speak(_ text: String) {
-        guard !isRecording else { return }
         stopSpeaking()
+        finishSession()
+        transcript = ""
         let session = AVAudioSession.sharedInstance()
         do {
             try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
             try session.setActive(true)
-        } catch { return }
+        } catch { scheduleRestart(); return }
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+        activeUtterance = utterance
+        isSpeaking = true
         synthesizer.speak(utterance)
     }
 
-    func stopSpeaking() { synthesizer.stopSpeaking(at: .immediate) }
+    func stopSpeaking() {
+        activeUtterance = nil
+        synthesizer.stopSpeaking(at: .immediate)
+        isSpeaking = false
+        scheduleRestart()
+    }
+
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        Task { @MainActor [weak self] in self?.finishedSpeaking(utterance) }
+    }
+
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+        Task { @MainActor [weak self] in self?.finishedSpeaking(utterance) }
+    }
+
+    private func finishedSpeaking(_ utterance: AVSpeechUtterance) {
+        guard activeUtterance === utterance else { return }
+        activeUtterance = nil
+        isSpeaking = false
+        // Let the speaker's last sound fade before opening the microphone.
+        scheduleRestart()
+    }
 }
