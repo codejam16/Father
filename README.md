@@ -45,6 +45,27 @@ For a physical phone, enter **`http://YOUR_MAC_LAN_IP:8787`** as the backend URL
 
 The checked-in Info.plist permits HTTP **for local development only**. Use an HTTPS endpoint and remove `NSAllowsArbitraryLoads` before distribution. Do not expose a development server to the internet without reviewing deployment/authentication settings.
 
+## Research and task memory
+
+In live mode, the assistant chooses one validated action per decision: `respond`, `ask_clarification`, `request_view`, `search_online`, or `read_source`. Ordinary identification uses one model call. It asks for missing product/version details when needed, rather than assuming every task is about a vehicle or a particular product type.
+
+Research uses Gemini's built-in Google Search and URL Context tools in separate calls, without mixing tools with the structured camera response. Search returns source metadata; reading is limited to source IDs already returned by Google. A failed/paywalled retrieval is not treated as a read document. Relevant PDF diagrams can inform research notes, but this is not guaranteed pixel matching between a manual illustration and the camera view.
+
+After a successful research operation, the backend returns a short-lived continuation. The iPhone takes a fresh camera image, clears the old manual selection, and continues the same question before deciding what to highlight. At most two research operations and five model calls are allowed per question, with no automatic provider retries. Each model call reserves one slot from `MAX_LIVE_REQUESTS`, including failed attempts; a question with research can consume several slots. Google may execute multiple search queries inside one grounded call, so this is not a hard search-query or monetary cap. Research availability and charges depend on the model/project; no billing settings are changed by this app.
+
+The camera screen still has only mute and settings. Source-backed answers automatically open a secondary **Sources and research** sheet with source links, evidence excerpts, and Google's supplied Search suggestions. Dismiss it to resume listening. Sources and task memory are also available from settings. Errors are spoken when spoken replies are enabled and are available as **Last issue** in settings.
+
+Task context is held in bounded backend memory (100 sessions, 30-minute inactivity expiry); images are not stored there. It includes a goal, relevant facts, open questions, and proposed plan steps. Only **Mark completed** in settings confirms a step; model suggestions cannot mark work completed. Confirmations sync with the next question. **Start a new task** or changing the task notes starts a fresh context; backend restarts discard memory. Treat remembered facts as assistant-maintained notes, not verified ground truth.
+
+Optional backend settings (defaults work without editing an existing `.env`):
+
+```dotenv
+ENABLE_WEB_RESEARCH=true
+MAX_RESEARCH_STEPS=2
+```
+
+Turn **Search online when needed** off in app settings to keep task memory and camera answers while disabling research. Demo mode never runs any provider calls or search tools. Tool availability, localization accuracy, and latency still need verification on the intended account/device.
+
 ## Enable real AI
 
 In `server/.env`:
@@ -72,8 +93,8 @@ If an AI request fails, the app and backend terminal now show Google's HTTP stat
 ## Keep within the $5 budget
 
 - Demo mode makes **no provider calls**, even if a Gemini key happens to exist in the environment.
-- Real image analysis happens only when the user sends a question. Camera preview/tracking remain on the phone. There is no continuous cloud video/audio stream.
-- `MAX_LIVE_REQUESTS` is a persistent total allowance stored in `server/.data/allowance.json`; restarts do not reset it. Failed/aborted attempts also consume a slot. Do not delete that file to bypass the limit unintentionally.
+- Real image analysis happens when a typed or automatically transcribed question is sent, and on bounded fresh-frame continuations after research. Camera preview/tracking remain on the phone. There is no continuous cloud video/audio stream.
+- `MAX_LIVE_REQUESTS` counts all live model calls, including research. It is a persistent total allowance stored in `server/.data/allowance.json`; restarts do not reset it. Failed/aborted attempts also consume a slot. Do not delete that file to bypass the limit unintentionally.
 - Limit image size, conversation length, output tokens, and rate. The backend makes no automatic provider retries.
 - This allowance is **not a guaranteed monetary cap**. Prices, image tokens, reasoning tokens, quota eligibility, and other project usage affect spending. Verify current provider pricing/billing, monitor usage, and leave headroom. An alerts-only cloud budget is not a hard spending limit.
 - For a strictly free run, keep billing disabled and use an eligible free-tier model after confirming your project's quotas. Avoid enabling paid services merely to make a demo work.

@@ -45,7 +45,7 @@ export function buildGeminiBody(request, maxOutputTokens) {
   };
 }
 
-export async function analyzeWithGemini(request, config, fetcher = fetch) {
+export async function generateContent(body, config, fetcher = fetch) {
   let response;
   try {
     response = await fetcher(
@@ -53,15 +53,15 @@ export async function analyzeWithGemini(request, config, fetcher = fetch) {
       {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-goog-api-key': config.apiKey },
-        body: JSON.stringify(buildGeminiBody(request, config.maxOutputTokens)),
-        signal: AbortSignal.timeout(20_000),
+        body: JSON.stringify(body),
+        signal: config.signal
+          ? AbortSignal.any([AbortSignal.timeout(20_000), config.signal]) : AbortSignal.timeout(20_000),
       },
     );
   } catch {
     throw new APIError(504, 'provider_unavailable', 'The AI service did not respond. No automatic retry was made.');
   }
   if (!response.ok) {
-    // Log only the HTTP status, never upstream bodies or credentials.
     console.warn(`Gemini HTTP ${response.status}`);
     throw await geminiHTTPError(response);
   }
@@ -69,20 +69,31 @@ export async function analyzeWithGemini(request, config, fetcher = fetch) {
   try { payload = await response.json(); } catch {
     throw new APIError(502, 'invalid_model_output', 'The AI service returned an unreadable response.');
   }
-  const candidate = payload.candidates?.[0];
-  if (candidate?.finishReason !== 'STOP') {
+  if (payload.candidates?.[0]?.finishReason !== 'STOP') {
     throw new APIError(502, 'incomplete_model_output', 'The AI could not finish a usable answer. Try a simpler question.');
   }
-  const raw = candidate?.content?.parts?.filter((part) => !part.thought && typeof part.text === 'string')
-    .map((part) => part.text).join('');
-  let answer;
-  try { answer = JSON.parse(raw); } catch {
-    throw new APIError(502, 'invalid_model_output', 'The AI returned an unreadable answer.');
-  }
-  return { ...validateAnswer(answer), usage: {
+  return payload;
+}
+
+export function candidateText(payload) {
+  return payload.candidates?.[0]?.content?.parts
+    ?.filter((part) => !part.thought && typeof part.text === 'string').map((part) => part.text).join('') ?? '';
+}
+
+export function providerUsage(payload) {
+  return {
     inputTokens: payload.usageMetadata?.promptTokenCount ?? 0,
     outputTokens: (payload.usageMetadata?.candidatesTokenCount ?? 0) + (payload.usageMetadata?.thoughtsTokenCount ?? 0),
-  } };
+  };
+}
+
+export async function analyzeWithGemini(request, config, fetcher = fetch) {
+  const payload = await generateContent(buildGeminiBody(request, config.maxOutputTokens), config, fetcher);
+  let answer;
+  try { answer = JSON.parse(candidateText(payload)); } catch {
+    throw new APIError(502, 'invalid_model_output', 'The AI returned an unreadable answer.');
+  }
+  return { ...validateAnswer(answer), usage: providerUsage(payload) };
 }
 
 export function demoAnswer(request) {

@@ -4,6 +4,7 @@ import Security
 
 @MainActor
 final class ConnectionSettings: ObservableObject {
+    @Published var researchEnabled: Bool { didSet { defaults.set(researchEnabled, forKey: "researchEnabled") } }
     @Published var demoMode: Bool { didSet { defaults.set(demoMode, forKey: "demoMode") } }
     @Published var serverURL: String { didSet { defaults.set(serverURL, forKey: "serverURL") } }
     @Published var task: String { didSet { defaults.set(task, forKey: "task") } }
@@ -16,6 +17,7 @@ final class ConnectionSettings: ObservableObject {
     init() {
         let defaults = UserDefaults.standard
         let service = "TaskLens.ProxyToken"
+        researchEnabled = defaults.object(forKey: "researchEnabled") as? Bool ?? true
         demoMode = defaults.object(forKey: "demoMode") as? Bool ?? true
         serverURL = defaults.string(forKey: "serverURL") ?? "http://localhost:8787"
         task = defaults.string(forKey: "task") ?? ""

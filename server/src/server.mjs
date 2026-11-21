@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { APIError, validateRequest } from './contract.mjs';
 import { analyzeWithGemini, demoAnswer } from './gemini.mjs';
 import { Budget } from './budget.mjs';
+import { TaskSessions } from './task-session.mjs';
+import { runAgent } from './agent.mjs';
 
 function integer(value, fallback, max) {
   const number = value === undefined ? fallback : Number(value);
@@ -22,6 +24,8 @@ export function loadConfig(env = process.env) {
     maxRequests: integer(env.MAX_LIVE_REQUESTS, 50, 1000),
     requestsPerMinute: integer(env.REQUESTS_PER_MINUTE, 10, 60),
     maxOutputTokens: integer(env.MAX_OUTPUT_TOKENS, 2048, 4096),
+    webResearchEnabled: env.ENABLE_WEB_RESEARCH !== 'false',
+    maxResearchSteps: integer(env.MAX_RESEARCH_STEPS, 2, 2),
     budgetPath: env.BUDGET_FILE ?? fileURLToPath(new URL('../.data/allowance.json', import.meta.url)),
   };
   if (mode === 'gemini' && (!config.apiKey || config.appToken.length < 16)) {
@@ -61,14 +65,24 @@ async function readJSON(request) {
   });
 }
 
-export function createApp(config, { analyze = analyzeWithGemini, budget = new Budget(config.budgetPath, config.maxRequests) } = {}) {
+export function createApp(config, {
+  analyze = analyzeWithGemini, agent = runAgent,
+  budget = new Budget(config.budgetPath, config.maxRequests), sessions = new TaskSessions(),
+} = {}) {
   let recent = [];
   const server = createServer(async (request, response) => {
     const started = Date.now();
+    const controller = new AbortController();
+    const deadline = setTimeout(() => controller.abort(), 45_000);
+    response.on('finish', () => clearTimeout(deadline));
     const route = request.url === '/analyze' ? '/analyze' : request.url === '/health' ? '/health' : '/other';
     console.log(`[${new Date().toISOString()}] Request received: ${route}`);
     response.on('close', () => {
-      if (!response.writableFinished) console.warn(`Request disconnected: ${route} after ${Date.now() - started}ms`);
+      clearTimeout(deadline);
+      if (!response.writableFinished) {
+        controller.abort();
+        console.warn(`Request disconnected: ${route} after ${Date.now() - started}ms`);
+      }
     });
     const send = (status, data) => {
       console.log(`Request completed: ${route} HTTP ${status} ${data.error?.code ?? 'ok'} (${Date.now() - started}ms)`);
@@ -90,17 +104,33 @@ export function createApp(config, { analyze = analyzeWithGemini, budget = new Bu
       if (recent.length >= config.requestsPerMinute) throw new APIError(429, 'rate_limited', 'Please wait before asking another question.');
       recent.push(now);
       const input = validateRequest(await readJSON(request));
-      if (config.mode === 'gemini') budget.reserve();
-      const result = config.mode === 'gemini' ? await analyze(input, config) : demoAnswer(input);
+      let result;
+      if (config.mode === 'gemini') {
+        const callConfig = { ...config, signal: controller.signal, reserveAdditionalCall: () => budget.reserve() };
+        if (input.sessionId) {
+          result = await sessions.run(input, async (session) => {
+            budget.reserve();
+            const result = await agent(input, callConfig, session);
+            controller.signal.throwIfAborted();
+            return result;
+          });
+        } else {
+          budget.reserve();
+          result = await analyze(input, callConfig);
+        }
+      } else { result = demoAnswer(input); }
       return send(200, { frameId: input.frameId, mode: config.mode, ...result });
     } catch (error) {
+      if (controller.signal.aborted) {
+        return send(504, { error: { code: 'request_timeout', message: 'The request was cancelled or timed out. No automatic retry was made.' } });
+      }
       if (error instanceof APIError && error.code === 'provider_error') console.error(error.message);
       if (error instanceof APIError) return send(error.status, { error: { code: error.code, message: error.message } });
       console.error('Request failed:', error?.name ?? 'UnknownError');
       send(500, { error: { code: 'internal_error', message: 'The backend could not process this request.' } });
     }
   });
-  server.requestTimeout = 25_000;
+  server.requestTimeout = 55_000;
   server.headersTimeout = 10_000;
   return server;
 }

@@ -4,7 +4,8 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var model = AssistantViewModel()
     @Environment(\.scenePhase) private var scenePhase
-    @State private var showingSettings = false
+    private enum Sheet: String, Identifiable { case settings, sources; var id: String { rawValue } }
+    @State private var activeSheet: Sheet?
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -19,7 +20,7 @@ struct ContentView: View {
                     .accessibilityLabel(model.isMuted ? "Unmute microphone" : "Mute microphone")
                     .accessibilityValue(model.isMuted ? "Muted" : "Unmuted")
 
-                    Button { showingSettings = true } label: {
+                    Button { activeSheet = .settings } label: {
                         Image(systemName: "gearshape.fill")
                     }
                     .accessibilityLabel("Settings")
@@ -32,9 +33,17 @@ struct ContentView: View {
             .background(.black)
             .preferredColorScheme(.dark)
             .statusBarHidden()
-            .sheet(isPresented: $showingSettings) { SettingsView(settings: model.settings) }
+            .sheet(item: $activeSheet) { sheet in
+                if sheet == .settings { SettingsView(settings: model.settings, model: model) }
+                else { ResearchSourcesView(model: model) }
+            }
             .task { await model.resume() }
-            .onChange(of: showingSettings) { _, showing in model.setVoiceSuspended(showing) }
+            .onChange(of: activeSheet) { _, sheet in
+                model.setVoiceSuspended(sheet != nil, stopPlayback: sheet == .settings)
+            }
+            .onChange(of: model.researchReviewID) { _, review in
+                if review != nil { activeSheet = .sources }
+            }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active { Task { await model.resume() } }
                 else { model.pause() }

@@ -22,6 +22,8 @@ export async function geminiHTTPError(response) {
     message = 'Google quota or rate limit reached. Check the project quota in Google AI Studio; waiting may not resolve a zero allowance.';
   } else if (status === 400 && /failed_precondition|free tier|billing|country|region/.test(detail)) {
     message = 'Google rejected the project setup. Check project eligibility, region and plan in Google AI Studio.';
+  } else if (status === 400 && /google_search|url_context|grounding|tool.*support/.test(detail)) {
+    message = 'Google rejected the research tool. Check tool availability for this model/project, or turn off online research in app settings.';
   } else if (status === 400 && /thinking/.test(detail)) {
     message = 'Google rejected the thinking settings for this model. Check the backend generationConfig and selected model.';
   } else if (status === 400 && /schema|responsemimetype|response_mime_type/.test(detail)) {

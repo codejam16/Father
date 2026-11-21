@@ -108,6 +108,38 @@ struct ImagePayload: Encodable {
     let height: Int
 }
 
+struct TaskStep: Codable, Identifiable {
+    let id: String
+    let text: String
+    var completed: Bool
+}
+
+struct TaskMemory: Codable {
+    var goal: String
+    var facts: [String]
+    var openQuestions: [String]
+    var plan: [TaskStep]
+    static var empty: Self { Self(goal: "", facts: [], openQuestions: [], plan: []) }
+}
+
+struct ResearchSource: Decodable, Identifiable {
+    let id: String
+    let title: String
+    let url: String
+}
+
+struct ResearchSupport: Decodable {
+    let text: String
+    let sourceIds: [String]
+}
+
+struct ResearchReport: Decodable {
+    let kind: String
+    let text: String
+    let supports: [ResearchSupport]
+    let searchSuggestionsHTML: String?
+}
+
 struct AnalysisRequest: Encodable {
     let frameId: String
     let capturedAt: String
@@ -116,8 +148,14 @@ struct AnalysisRequest: Encodable {
     let image: ImagePayload
     let history: [HistoryMessage]
     let selection: NormalizedBox?
+    let sessionId: String?
+    let continuationId: String?
+    let researchEnabled: Bool
+    let confirmedStepIds: [String]
 
-    init(frame: CapturedFrame, question: String, task: String, history: [ChatMessage], selection: NormalizedBox?) {
+    init(frame: CapturedFrame, question: String, task: String, history: [ChatMessage], selection: NormalizedBox?,
+         sessionId: String? = nil, continuationId: String? = nil,
+         researchEnabled: Bool = true, confirmedStepIds: [String] = []) {
         self.frameId = frame.id
         self.capturedAt = ISO8601DateFormatter().string(from: frame.capturedAt)
         self.question = question
@@ -125,6 +163,10 @@ struct AnalysisRequest: Encodable {
         self.image = ImagePayload(base64: frame.jpeg.base64EncodedString(), width: frame.width, height: frame.height)
         self.history = history.suffix(8).map { HistoryMessage(role: $0.role, content: String($0.content.prefix(2000))) }
         self.selection = selection
+        self.sessionId = sessionId
+        self.continuationId = continuationId
+        self.researchEnabled = researchEnabled
+        self.confirmedStepIds = confirmedStepIds
     }
 }
 
@@ -139,6 +181,12 @@ struct AnalysisResponse: Decodable {
     let answer: String
     let target: Target?
     let needsClearerView: Bool
+    var action: String? = nil
+    var continuationId: String? = nil
+    var taskMemory: TaskMemory? = nil
+    var sources: [ResearchSource]? = nil
+    var researchReports: [ResearchReport]? = nil
+    var sourceIds: [String]? = nil
 }
 
 struct Highlight {

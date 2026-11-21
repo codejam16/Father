@@ -14,6 +14,14 @@ final class AssistantViewModel: ObservableObject {
     @Published private(set) var errorMessage: String?
     @Published private(set) var lastReplyWasDemo = true
     @Published private(set) var isMuted = false
+    @Published private(set) var taskMemory = TaskMemory.empty
+    @Published private(set) var sources: [ResearchSource] = []
+    @Published private(set) var researchReports: [ResearchReport] = []
+    @Published private(set) var citedSourceIds: [String] = []
+    @Published private(set) var researchReviewID: UUID?
+    private var sessionID = UUID().uuidString.lowercased()
+    private var sessionTask: String?
+    private var confirmedStepIDs = Set<String>()
     private var isActive = false
     private var voiceSuspended = false
     private let client = AnalysisClient()
@@ -39,10 +47,10 @@ final class AssistantViewModel: ObservableObject {
         updateListening()
     }
 
-    func setVoiceSuspended(_ suspended: Bool) {
+    func setVoiceSuspended(_ suspended: Bool, stopPlayback: Bool = true) {
         voiceSuspended = suspended
         updateListening()
-        if suspended { speech.stopSpeaking() }
+        if suspended && stopPlayback { speech.stopSpeaking() }
     }
 
     private func updateListening() {
@@ -84,6 +92,10 @@ final class AssistantViewModel: ObservableObject {
         let text = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !isBusy, !text.isEmpty else { return }
         guard text.count <= 1500 else { errorMessage = "Please shorten your question to 1,500 characters."; return }
+        if sessionTask != settings.task {
+            clearTaskContext()
+            sessionTask = settings.task
+        }
         isBusy = true
         updateListening()
         speech.stopSpeaking()
@@ -96,6 +108,9 @@ final class AssistantViewModel: ObservableObject {
         let endpoint = settings.serverURL
         let token = settings.token
         let task = settings.task
+        let researchEnabled = settings.researchEnabled
+        let sessionID = self.sessionID
+        let confirmations = Array(confirmedStepIDs)
         work = Task {
             defer {
                 if workID == id {
@@ -105,17 +120,40 @@ final class AssistantViewModel: ObservableObject {
                 }
             }
             do {
-                let frame: CapturedFrame
+                var frame: CapturedFrame
                 if let attachment { frame = attachment.frame }
                 else { frame = try await camera.snapshot() }
-                try Task.checkCancellation()
-                let request = AnalysisRequest(frame: frame, question: text, task: task,
-                                              history: history, selection: attachment?.box)
-                let response: AnalysisResponse
-                if demoMode { response = try await client.demo(request) }
-                else { response = try await client.analyze(request, endpoint: endpoint, token: token) }
-                try Task.checkCancellation()
-                guard workID == id else { return }
+                var continuationID: String?
+                var currentSelection = attachment?.box
+                var response: AnalysisResponse
+                var usedResearch = false
+                var refreshes = 0
+                while true {
+                    try Task.checkCancellation()
+                    let request = AnalysisRequest(frame: frame, question: text, task: task,
+                                                  history: history, selection: currentSelection,
+                                                  sessionId: sessionID, continuationId: continuationID,
+                                                  researchEnabled: researchEnabled, confirmedStepIds: confirmations)
+                    if demoMode { response = try await client.demo(request) }
+                    else { response = try await client.analyze(request, endpoint: endpoint, token: token) }
+                    try Task.checkCancellation()
+                    guard workID == id else { return }
+                    if let memory = response.taskMemory { taskMemory = memory }
+                    if let responseSources = response.sources { sources = responseSources }
+                    if let reports = response.researchReports { researchReports = reports }
+                    guard response.action == "refresh_camera" else { break }
+                    guard refreshes < 2, let nextID = response.continuationId else {
+                        throw TaskLensError.message("Research reached its limit. Please ask a more specific follow-up.")
+                    }
+                    refreshes += 1
+                    usedResearch = true
+                    continuationID = nextID
+                    // Research may outlive the camera's frame ring. Never draw its old coordinates.
+                    frame = try await camera.snapshot()
+                    currentSelection = nil
+                }
+                confirmedStepIDs.subtract(confirmations)
+                citedSourceIds = response.sourceIds ?? []
                 messages.append(ChatMessage(role: .user, content: text))
                 messages.append(ChatMessage(role: .assistant, content: response.answer))
                 if messages.count > 40 { messages.removeFirst(messages.count - 40) }
@@ -126,11 +164,13 @@ final class AssistantViewModel: ObservableObject {
                     camera.point(at: target.box, frameID: frame.id, label: target.label, source: .assistant)
                 }
                 if settings.spokenReplies { speech.speak(response.answer) }
+                if !demoMode && (usedResearch || !citedSourceIds.isEmpty) { researchReviewID = UUID() }
             } catch is CancellationError {
                 // Explicit cancellation/backgrounding should not surface as a failed task.
             } catch {
                 guard workID == id else { return }
                 errorMessage = error.localizedDescription
+                if settings.spokenReplies { speech.speak("I couldn't finish that request. " + error.localizedDescription) }
             }
         }
     }
@@ -156,7 +196,25 @@ final class AssistantViewModel: ObservableObject {
         cancel()
         clearSelection()
         question = ""
-        messages.removeAll()
+        clearTaskContext()
+        sessionTask = settings.task
         errorMessage = nil
+    }
+
+    func confirmStep(_ id: String) {
+        guard let index = taskMemory.plan.firstIndex(where: { $0.id == id }) else { return }
+        taskMemory.plan[index].completed = true
+        confirmedStepIDs.insert(id)
+    }
+
+    private func clearTaskContext() {
+        sessionID = UUID().uuidString.lowercased()
+        messages.removeAll()
+        taskMemory = .empty
+        sources = []
+        researchReports = []
+        citedSourceIds = []
+        researchReviewID = nil
+        confirmedStepIDs.removeAll()
     }
 }

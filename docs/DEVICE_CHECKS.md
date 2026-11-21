@@ -42,3 +42,16 @@ These are acceptance checks, not completed test results. Native compilation and 
 ## Honest demo scope
 
 Use one clear, low-risk task and distinctive objects. Confirm that identifying a visible object produces an assistant pointer, while general or ambiguous answers do not invent one. Show both user pointing (tap/drag) and automatic assistant pointing. Briefly move the phone after acquisition only if tracking has passed rehearsal. Do not claim reliable tiny-part tracking, occlusion recovery, automated repair safety, or full-duplex continuous voice.
+
+
+## Research and memory
+
+- Keep the camera screen free of transcripts. Ask for ordinary object identification: no research should be performed unnecessarily.
+- Ask a task that needs exact product documentation. Confirm the assistant asks for missing model/version details before researching and retains your answer after earlier messages fall out of chat history.
+- With an eligible Gemini project, inspect Terminal for `Agent action: search_online` / `read_source`. Verify source links, manufacturer relevance, grounded excerpts, and Google's supplied Search suggestions appear in the secondary sheet. Dismissing it resumes listening; playback must not be transcribed.
+- Compare an accessible manual with a paywalled/unreachable document. The latter must not be claimed as read. Uncertain diagram-to-camera matches must ask for a clearer view instead of producing a speculative box.
+- Move the camera during research. Confirm a fresh frame is sent after research and old selected-image coordinates are never drawn on the new view. Keep in mind the existing frame-ring tracking lifetime.
+- Check a task plan in settings. It must not mark suggested steps complete automatically. Mark one completed, ask another question and confirm its state persists. Start a new task/change notes and confirm old context/sources clear.
+- Turn online research off. Camera answers and memory should still work without search calls. Demo mode must make zero provider calls regardless of this toggle.
+- Test bad source metadata, exhausted allowance, expired continuations/backend restart, cancellation, network loss, and backgrounding during research. Do not automatically retry failed provider calls. Errors should be spoken (if enabled) and visible under Last issue.
+- Measure the calls and latency for direct identification vs search plus document reading. Budget per model call, not per spoken question. Do not promise free research without verifying the account's tool quota/pricing.
