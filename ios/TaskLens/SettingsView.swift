@@ -39,9 +39,9 @@ struct SettingsView: View {
                 }
                 Section {
                     Toggle("Captions", isOn: $settings.captionsEnabled)
-                    Toggle("Web info", isOn: $settings.webInfoEnabled)
+                    Toggle("Automatic web info", isOn: $settings.webInfoEnabled)
                 } header: { Text("Camera overlays") }
-                footer: { Text("Captions show both sides of the conversation over the camera. Web info enables Google Search for future questions and shows source links, price details when found, and online page previews. Search can add latency and provider charges. Turning it off hides the cards and disables search on future questions; an already sent request may finish. Opening previews contacts the source websites.") }
+                footer: { Text("Drag the handle above captions up or down to change their height. Automatic web info is on by default: useful links appear as a small strip only when a reply has web results. Tap its chevron for details and previews, or × to dismiss that reply’s links. You can disable automatic web info here. Search may add latency and provider charges; opening previews contacts source websites.") }
             }
             .navigationTitle("TaskLens settings")
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } } }
