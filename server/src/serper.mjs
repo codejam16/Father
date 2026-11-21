@@ -1,5 +1,6 @@
 import { APIError } from './contract.mjs';
 import { publicURL } from './research.mjs';
+import { SEARCH_TIMEOUT_MS } from './timeouts.mjs';
 
 function failure(status) {
   let message = 'Web search is temporarily unavailable. Please try again later.';
@@ -64,7 +65,7 @@ export async function searchWithSerper(query, config, previousSources = [], fetc
   console.log(`[${requestId}] Serper search START`);
   let response;
   try {
-    const timeout = AbortSignal.timeout(10_000);
+    const timeout = AbortSignal.timeout(SEARCH_TIMEOUT_MS);
     response = await fetcher('https://google.serper.dev/search', {
       method: 'POST', redirect: 'error',
       headers: { 'content-type': 'application/json', 'X-API-KEY': config.serperApiKey },

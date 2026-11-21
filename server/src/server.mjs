@@ -5,6 +5,7 @@ import { APIError, validateRequest } from './contract.mjs';
 import { analyzeWithGemini, demoAnswer } from './gemini.mjs';
 import { TaskSessions } from './task-session.mjs';
 import { runAgent } from './agent.mjs';
+import { ANALYSIS_TIMEOUT_MS } from './timeouts.mjs';
 
 // Developer diagnostics stay in logs; these short messages are safe to read aloud.
 function userErrorMessage(error) {
@@ -98,7 +99,7 @@ export function createApp(config, {
     const started = Date.now();
     const trace = { requestId: randomUUID().slice(0, 8), calls: 0, searchCalls: 0 };
     const controller = new AbortController();
-    const deadline = setTimeout(() => controller.abort(), 45_000);
+    const deadline = setTimeout(() => controller.abort(), ANALYSIS_TIMEOUT_MS);
     response.on('finish', () => clearTimeout(deadline));
     const route = request.url === '/analyze' ? '/analyze' : request.url === '/health' ? '/health' : '/other';
     console.log(`[${new Date().toISOString()}] Request received: ${route} [${trace.requestId}]`);
@@ -152,6 +153,7 @@ export function createApp(config, {
       send(500, { error: { code: 'internal_error', message: "I couldn't finish that request. Please try again.", userMessage: "I couldn't finish that request. Please try again." } });
     }
   });
+  // This limits receiving the upload; ANALYSIS_TIMEOUT_MS bounds processing.
   server.requestTimeout = 55_000;
   server.headersTimeout = 10_000;
   return server;

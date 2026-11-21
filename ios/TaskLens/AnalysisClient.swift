@@ -8,7 +8,8 @@ struct AnalysisClient {
         }
         var request = URLRequest(url: base.appendingPathComponent("analyze"))
         request.httpMethod = "POST"
-        request.timeoutInterval = 55
+        // Backend allows 95s for a decision, research and a final answer.
+        request.timeoutInterval = 105
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if !token.isEmpty { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
         request.httpBody = try JSONEncoder().encode(input)

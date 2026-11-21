@@ -3,6 +3,8 @@ import { randomUUID } from 'node:crypto';
 import { geminiHTTPError } from './provider-error.mjs';
 import { webAnswerSchema, webInstruction } from './web-info.mjs';
 import { searchWithSerper } from './serper.mjs';
+import { GEMINI_TIMEOUT_MS } from './timeouts.mjs';
+import { logGoogleError } from './diagnostics.mjs';
 
 const instruction = `You are TaskLens, a conversational visual task assistant.
 You receive a single captured frame, NOT a continuously observed world. Use its timestamp.
@@ -66,29 +68,45 @@ export async function generateContent(body, config, fetcher = fetch) {
     : body.tools?.some((tool) => tool.url_context) ? 'read_source' : 'camera_decision';
   const started = Date.now();
   console.log(`[${requestId}] Google call ${callNumber} (${callId}) START model=${config.model} action=${operation}`);
-  let response;
+  config.signal?.throwIfAborted();
+  const timeout = AbortSignal.timeout(GEMINI_TIMEOUT_MS);
+  const signal = config.signal ? AbortSignal.any([timeout, config.signal]) : timeout;
+  let payload;
   try {
-    response = await fetcher(
+    const response = await fetcher(
       `https://generativelanguage.googleapis.com/v1beta/models/${config.model}:generateContent`,
       {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-goog-api-key': config.apiKey },
         body: JSON.stringify(body),
-        signal: config.signal
-          ? AbortSignal.any([AbortSignal.timeout(20_000), config.signal]) : AbortSignal.timeout(20_000),
+        signal,
       },
     );
-  } catch {
-    console.warn(`[${requestId}] Google call ${callNumber} (${callId}) NETWORK/TIMEOUT after ${Date.now() - started}ms; no HTTP response`);
-    throw new APIError(504, 'provider_unavailable', 'The AI service did not respond. No automatic retry was made.');
-  }
-  console.log(`[${requestId}] Google call ${callNumber} (${callId}) HTTP ${response.status ?? (response.ok ? 200 : 'unknown')} (${Date.now() - started}ms)`);
-  if (!response.ok) {
-    throw await geminiHTTPError(response, config, { requestId, callId, callNumber, operation });
-  }
-  let payload;
-  try { payload = await response.json(); } catch {
-    throw new APIError(502, 'invalid_model_output', 'The AI service returned an unreadable response.');
+    console.log(`[${requestId}] Google call ${callNumber} (${callId}) HTTP ${response.status ?? (response.ok ? 200 : 'unknown')} (${Date.now() - started}ms)`);
+    if (!response.ok) {
+      throw await geminiHTTPError(response, config, { requestId, callId, callNumber, operation });
+    }
+    // The deadline covers the response body too, not just the initial headers.
+    try { payload = await response.json(); } catch (error) {
+      if (signal.aborted) throw error;
+      throw new APIError(502, 'invalid_model_output', 'The AI service returned an unreadable response.');
+    }
+    signal.throwIfAborted();
+  } catch (error) {
+    config.signal?.throwIfAborted(); // Disconnects and the overall deadline cancel immediately.
+    if (error instanceof APIError) throw error;
+    const timedOut = timeout.aborted;
+    const elapsedMs = Date.now() - started;
+    console.warn(`[${requestId}] Google call ${callNumber} (${callId}) ${timedOut ? 'TIMEOUT' : 'NETWORK'} after ${elapsedMs}ms; no automatic retry`);
+    logGoogleError({ timestamp: new Date().toISOString(), requestId, callId, callNumber, operation,
+      model: config.model, httpStatus: null, transportError: timedOut ? 'timeout' : 'network',
+      elapsedMs, timeoutMs: GEMINI_TIMEOUT_MS, googleResponse: null }, config);
+    const failure = new APIError(timedOut ? 504 : 502, 'provider_unavailable',
+      timedOut ? 'Gemini exceeded its 40-second response deadline. No automatic retry was made.'
+        : 'Could not connect to Gemini. No automatic retry was made.');
+    failure.userMessage = timedOut ? 'The AI service is taking too long to respond. Please try again.'
+      : "I couldn't reach the AI service. Please try again.";
+    throw failure;
   }
   if (payload.candidates?.[0]?.finishReason !== 'STOP') {
     throw new APIError(502, 'incomplete_model_output', 'The AI could not finish a usable answer. Try a simpler question.');

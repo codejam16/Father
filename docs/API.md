@@ -84,7 +84,7 @@ If highlighting is useful, `target` is `{ "label": "USB connector", "box": [100,
 | 415 | Content type is not JSON |
 | 429 | Google provider quota or rate limit (no local usage quota) |
 | 502 | Upstream rejection, malformed/truncated model response |
-| 504 | Provider connection failure/timeout |
+| 504 | Provider or whole-request timeout |
 
 No automatic retries. Cancellation on the phone does not guarantee cancellation of work already accepted by Google or reverse its usage accounting.
 
@@ -110,7 +110,7 @@ Additional response fields are `action`, `continuationId`, `taskMemory`, `source
 
 For `refresh_camera`, no target is returned. Capture a new frame and repeat the same question, task, and session with the returned `continuationId`. Clear any previous selection. A continuation lasts two minutes, cannot reuse the preceding frame ID, is consumed on success, and cannot be shared across sessions/questions. The client follows at most two refreshes. Do not add intermediate research progress messages to chat history as completed answers.
 
-Each task-aware HTTP request permits a decision and at most one research operation, with a 45-second backend deadline and a 55-second phone timeout. Across a question and its continuations there are at most five external calls; Serper searches replace the previous grounded-model search calls. One search action sends exactly one authenticated POST to `https://google.serper.dev/search`, with `q`, `num: 5`, `gl` and `hl`. The Serper key is sent only as `X-API-KEY` to that fixed host; redirects are rejected. Serper requests have a 10-second timeout and share the client-disconnect cancellation signal. There are no automatic retries or fallback to Google's built-in search. Model calls and Serper searches have separate counters and quotas. No camera images, conversation or task memory are sent to Serper. Legacy web requests use at most two model calls and one Serper query.
+Each task-aware HTTP request permits a decision and at most one research operation, with a 95-second backend deadline and a 105-second phone timeout. Each Gemini call allows up to 40 seconds, including reading the response body; the request budget also covers legacy requests with two Gemini calls and a 10-second Serper query. Across a question and its continuations there are at most five external calls; Serper searches replace the previous grounded-model search calls. One search action sends exactly one authenticated POST to `https://google.serper.dev/search`, with `q`, `num: 5`, `gl` and `hl`. The Serper key is sent only as `X-API-KEY` to that fixed host; redirects are rejected. Serper requests have a 10-second timeout and share the client-disconnect cancellation signal. There are no automatic retries or fallback to Google's built-in search. Model calls and Serper searches have separate counters and quotas. No camera images, conversation or task memory are sent to Serper. Legacy web requests use at most two model calls and one Serper query.
 
 A missing Serper key leaves camera-only mode available. A Serper 401/403, 402/429, timeout, network failure, or empty/unusable results ends a research turn with an honest answer and no fabricated citations/target/continuation. No further model call is made for that failure; subsequent camera questions are still allowed. These fallback replies use HTTP 200 as a completed conversational turn. Google model 429s remain provider errors.
 
