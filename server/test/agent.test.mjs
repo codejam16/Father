@@ -8,7 +8,7 @@ import { extractResearch, publicURL } from '../src/research.mjs';
 import { validateRequest } from '../src/contract.mjs';
 import { createApp, loadConfig } from '../src/server.mjs';
 
-const config = { model: 'test-model', maxOutputTokens: 2048, apiKey: 'not-real', maxResearchSteps: 2 };
+const config = { model: 'test-model', maxOutputTokens: 2048, apiKey: 'not-real', serperApiKey: 'fake-serper-key', maxResearchSteps: 2 };
 const request = (extra = {}) => validateRequest({
   sessionId: randomUUID(), frameId: randomUUID(), capturedAt: new Date().toISOString(),
   task: 'Identify and use this product', question: 'How do I clean this filter?',
@@ -23,13 +23,10 @@ const payload = (value, candidate = {}) => ({
   candidates: [{ finishReason: 'STOP', content: { parts: [{ text: typeof value === 'string' ? value : JSON.stringify(value) }] }, ...candidate }],
   usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5 },
 });
-const searchPayload = () => payload('The manufacturer describes the removable filter.', {
-  groundingMetadata: {
-    groundingChunks: [{ web: { uri: 'https://docs.vendor.com/manual.pdf', title: 'Manufacturer manual' } }],
-    groundingSupports: [{ segment: { text: 'The filter is removable.' }, groundingChunkIndices: [0] }],
-    searchEntryPoint: { renderedContent: '<div>Google Search suggestions</div>' },
-  },
-});
+const searchPayload = () => ({ organic: [{
+  title: 'Manufacturer manual', link: 'https://docs.vendor.com/manual.pdf',
+  snippet: 'The manufacturer says the filter is removable.',
+}] });
 const readPayload = () => payload('The diagram shows the filter below the handle.', {
   urlContextMetadata: { urlMetadata: [{ retrievedUrl: 'https://docs.vendor.com/manual.pdf', urlRetrievalStatus: 'URL_RETRIEVAL_STATUS_SUCCESS' }] },
 });
@@ -73,9 +70,12 @@ test('search uses grounded metadata, then requires a fresh camera frame before h
   assert.equal(first.target, null);
   assert.equal(first.sources[0].id, 's1');
   assert.deepEqual(first.researchReports[0].supports[0].sourceIds, ['s1']);
-  assert.match(first.researchReports[0].searchSuggestionsHTML, /Google/);
-  assert.deepEqual(transport.calls[1].body.tools, [{ google_search: {} }]);
-  assert.equal(transport.calls[1].body.generationConfig.responseJsonSchema, undefined);
+  assert.equal(first.researchReports[0].searchSuggestionsHTML, null);
+  assert.equal(first.researchReports[0].provider, 'serper');
+  assert.equal(transport.calls[1].url, 'https://google.serper.dev/search');
+  assert.equal(transport.calls[1].body.q, 'manufacturer model A filter manual');
+  assert.equal(transport.calls[1].body.tools, undefined);
+  assert.equal(transport.calls[1].body.generationConfig, undefined);
   await assert.rejects(execute(sessions, { ...input, continuationId: first.continuationId }, transport), /fresh camera frame/);
   assert.equal(transport.calls.length, 2);
   const final = await execute(sessions, { ...input, frameId: 'fresh-frame', continuationId: first.continuationId }, transport, settings);
@@ -134,7 +134,11 @@ test('unknown actions, invented citations and arbitrary read URLs cannot execute
 test('search text without provider source metadata is never presented as verified research', async () => {
   const transport = fake(payload(decision({ action: 'search_online', argument: 'query' })),
     payload('I searched and found https://made-up.vendor.com'));
-  await assert.rejects(execute(new TaskSessions(), request(), transport), /usable source links/);
+  const result = await execute(new TaskSessions(), request(), transport);
+  assert.equal(result.action, 'respond');
+  assert.equal(result.webInfo, null);
+  assert.deepEqual(result.sources, []);
+  assert.equal(transport.calls.length, 2);
 });
 
 test('paywalled or failed URL retrieval cannot be claimed as a read document', () => {
@@ -204,7 +208,7 @@ test('invalid session and confirmation fields are rejected before provider acces
 
 test('full HTTP search/read/refresh flow uses five calls and retains the final source and frame', async (t) => {
   const settings = loadConfig({ AI_MODE: 'gemini', GEMINI_API_KEY: 'fake-key', APP_TOKEN: 'private-test-token',
-    MAX_LIVE_REQUESTS: '1', REQUESTS_PER_MINUTE: '1' });
+    SERPER_API_KEY: 'fake-serper-key', MAX_LIVE_REQUESTS: '1', REQUESTS_PER_MINUTE: '1' });
   const transport = fake(
     payload(decision({ action: 'search_online', argument: 'filter manual' })), searchPayload(),
     payload(decision({ action: 'read_source', argument: 's1' })), readPayload(),

@@ -69,6 +69,14 @@ test('recognized API key patterns are redacted even without explicit config', ()
   assert.equal(redactDiagnostic({ message: `Invalid key: ${apiKey}` }).message, 'Invalid key: [REDACTED]');
 });
 
+test('Serper credentials are redacted from diagnostic fields and echoed messages', () => {
+  const records = [];
+  logGoogleError({ 'X-API-KEY': 'search-secret', serperApiKey: 'search-secret', message: 'echo search-secret' },
+    { serperApiKey: 'search-secret', diagnosticLogger: (record) => records.push(record) });
+  assert.doesNotMatch(JSON.stringify(records), /search-secret/);
+  assert.equal(records[0]['X-API-KEY'], '[REDACTED]');
+});
+
 test('Google error records persist locally with owner-only access and bounded rotation', (t) => {
   t.mock.method(console, 'error', () => {});
   const directory = mkdtempSync(join(tmpdir(), 'tasklens-errors-'));

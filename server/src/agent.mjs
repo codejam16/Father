@@ -2,6 +2,7 @@ import { APIError, answerSchema, validateAnswer } from './contract.mjs';
 import { buildGeminiBody, generateContent, candidateText, providerUsage } from './gemini.mjs';
 import { mergeMemory, continuation } from './task-session.mjs';
 import { researchBody, extractResearch, publicURL } from './research.mjs';
+import { searchWithSerper } from './serper.mjs';
 
 const actions = ['respond', 'ask_clarification', 'request_view', 'search_online', 'read_source'];
 const memorySchema = {
@@ -29,8 +30,9 @@ After research, you receive a fresh camera frame. Use the actual frame to identi
 Your sourceIds list identifies the sources supporting THIS answer. Do not cite sources for visual observations alone. Return all requested schema fields. For general/ambiguous answers return null targetLabel and box.`;
 
 export function buildAgentBody(request, config, session, canResearch) {
-  const body = buildGeminiBody({ ...request, includeWebInfo: false }, config.maxOutputTokens);
+  const body = buildGeminiBody({ ...request, includeWebInfo: false }, config.maxOutputTokens, { researchAvailable: canResearch });
   body.systemInstruction.parts.push({ text: agentInstruction });
+  if (!config.serperApiKey) body.systemInstruction.parts.push({ text: 'Web search is not connected on this server. Continue helping with visible evidence and prior supplied sources, but do not promise a new lookup or tell the user to enable an already enabled overlay.' });
   if (request.includeWebInfo) {
     body.systemInstruction.parts.push({ text: 'Optional web info cards are enabled. When product prices, shopping details, or further reading would help, choose a research action if researchAllowed. Return a concise source-backed webSummary for the optional card, or null when unnecessary or ungrounded. For uncertain product identification, label results as similar products, never an exact match. Prices require current source evidence, currency and retailer. Do not invent prices, availability, links, or make purchases.' });
   }
@@ -72,7 +74,7 @@ function taskWebInfo(request, session, decision) {
 
 export async function runAgent(request, config, session, fetcher = fetch) {
   const researchSteps = session.pending?.researchSteps ?? 0;
-  const canResearch = config.webResearchEnabled !== false && request.researchEnabled !== false && researchSteps < (config.maxResearchSteps ?? 2);
+  const canResearch = config.webResearchEnabled !== false && request.researchEnabled !== false && Boolean(config.serperApiKey) && researchSteps < (config.maxResearchSteps ?? 2);
   const payload = await generateContent(buildAgentBody(request, config, session, canResearch), config, fetcher);
   let decision;
   try { decision = JSON.parse(candidateText(payload)); } catch {
@@ -101,12 +103,29 @@ export async function runAgent(request, config, session, fetcher = fetch) {
     }
     config.signal?.throwIfAborted();
     console.log(`Agent action: ${decision.action}`);
-    const result = await generateContent(researchBody(decision.action, toolArgument, request, config.maxOutputTokens, session.memory), config, fetcher);
-    const extracted = extractResearch(result, candidateText(result), session.sources, decision.action, toolArgument);
+    let extracted;
+    let toolUsage = { inputTokens: 0, outputTokens: 0 };
+    try {
+      if (decision.action === 'search_online') {
+        extracted = await searchWithSerper(toolArgument, config, session.sources, fetcher);
+      } else {
+        const result = await generateContent(researchBody(decision.action, toolArgument, request, config.maxOutputTokens, session.memory), config, fetcher);
+        extracted = extractResearch(result, candidateText(result), session.sources, decision.action, toolArgument);
+        toolUsage = providerUsage(result);
+      }
+    } catch (error) {
+      if (decision.action !== 'search_online' || !['search_auth', 'search_quota', 'search_unavailable', 'search_unverified', 'search_not_configured'].includes(error.code)) throw error;
+      console.warn(error.message);
+      session.pending = null;
+      return {
+        answer: error.userMessage ?? "I couldn't find useful online results. Please show a clearer label or ask a camera question.",
+        target: null, needsClearerView: false, action: 'respond', continuationId: null, webInfo: null,
+        taskMemory: session.memory, sources: session.sources, researchReports: session.reports, sourceIds: [], usage,
+      };
+    }
     session.sources = extracted.sources;
     session.reports.push(extracted.report);
     session.reports = session.reports.slice(-3);
-    const toolUsage = providerUsage(result);
     usage.inputTokens += toolUsage.inputTokens; usage.outputTokens += toolUsage.outputTokens;
     const continuationId = continuation(session, request, researchSteps + 1);
     return {

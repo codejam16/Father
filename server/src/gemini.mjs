@@ -1,7 +1,8 @@
 import { APIError, answerSchema, validateAnswer } from './contract.mjs';
 import { randomUUID } from 'node:crypto';
 import { geminiHTTPError } from './provider-error.mjs';
-import { webAnswerSchema, webInstruction, extractWebInfo } from './web-info.mjs';
+import { webAnswerSchema, webInstruction } from './web-info.mjs';
+import { searchWithSerper } from './serper.mjs';
 
 const instruction = `You are TaskLens, a conversational visual task assistant.
 You receive a single captured frame, NOT a continuously observed world. Use its timestamp.
@@ -16,11 +17,18 @@ If you cannot locate the item, return no box and ask for a clearer view. Do not 
 For hazardous repairs, avoid directing physical actions and suggest appropriate qualified assistance. Never guess which energized component to touch.
 Return the requested JSON object, with no markdown.`;
 
-export function buildGeminiBody(request, maxOutputTokens) {
+export function buildGeminiBody(request, maxOutputTokens, { researchAvailable = false, evidence = null } = {}) {
+  const schema = request.includeWebInfo ? {
+    ...webAnswerSchema,
+    properties: { ...webAnswerSchema.properties, searchQuery: { type: ['string', 'null'] },
+      sourceIds: { type: 'array', items: { type: 'string' }, maxItems: 8 } },
+    required: [...webAnswerSchema.required, 'searchQuery', 'sourceIds'],
+  } : answerSchema;
   return {
     systemInstruction: { parts: [{ text: instruction + (request.includeWebInfo ? '\n' + webInstruction
-      : '\nWeb lookup is disabled. Do not claim to have checked live prices, availability, or websites. If asked for current prices, explain that Web info can be enabled.') }] },
-    ...(request.includeWebInfo ? { tools: [{ googleSearch: {} }] } : {}),
+      : researchAvailable ? '\nExternal research is controlled by researchAllowed in the task context.'
+        : '\nWeb lookup is disabled. Do not claim to have checked live prices, availability, or websites. If asked for current prices, explain that Web info can be enabled.')
+      + (request.includeWebInfo ? '\nFor this response, use searchQuery for one concise query only when researchAvailable=true and external facts help; otherwise return null. Return sourceIds only from supplied researchEvidence. With researchEvidence, use it to answer and return searchQuery=null. Without evidence, answer from the visible scene and do not claim checked prices or sources.' : '') }] },
     contents: [
       ...request.history.map((message) => ({
         role: message.role === 'assistant' ? 'model' : 'user',
@@ -35,6 +43,7 @@ export function buildGeminiBody(request, maxOutputTokens) {
             capturedAt: request.capturedAt,
             frameId: request.frameId,
             selection: request.selection,
+            ...(request.includeWebInfo ? { researchAvailable, researchEvidence: evidence } : {}),
           }) },
           { inlineData: { mimeType: request.image.mimeType, data: request.image.base64 } },
         ],
@@ -42,7 +51,7 @@ export function buildGeminiBody(request, maxOutputTokens) {
     ],
     generationConfig: {
       responseMimeType: 'application/json',
-      responseJsonSchema: request.includeWebInfo ? webAnswerSchema : answerSchema,
+      responseJsonSchema: schema,
       maxOutputTokens,
       thinkingConfig: { thinkingLevel: 'LOW' },
     },
@@ -102,12 +111,42 @@ export function providerUsage(payload) {
 }
 
 export async function analyzeWithGemini(request, config, fetcher = fetch) {
-  const payload = await generateContent(buildGeminiBody(request, config.maxOutputTokens), config, fetcher);
+  const researchAvailable = request.includeWebInfo && request.researchEnabled !== false && config.webResearchEnabled !== false && Boolean(config.serperApiKey);
+  let payload = await generateContent(buildGeminiBody(request, config.maxOutputTokens, { researchAvailable }), config, fetcher);
   let answer;
   try { answer = JSON.parse(candidateText(payload)); } catch {
     throw new APIError(502, 'invalid_model_output', 'The AI returned an unreadable answer.');
   }
-  return { ...validateAnswer(answer), webInfo: request.includeWebInfo ? extractWebInfo(payload.candidates[0], answer) : null, usage: providerUsage(payload) };
+  let result = validateAnswer(answer);
+  const usage = providerUsage(payload);
+  let webInfo = null;
+  if (researchAvailable && answer.searchQuery != null) {
+    if (typeof answer.searchQuery !== 'string' || !answer.searchQuery.trim() || answer.searchQuery.length > 500) {
+      throw new APIError(502, 'invalid_action', 'The model returned an invalid search query.');
+    }
+    let evidence;
+    try { evidence = await searchWithSerper(answer.searchQuery, config, [], fetcher); }
+    catch (error) {
+      if (!['search_auth', 'search_quota', 'search_unavailable', 'search_unverified', 'search_not_configured'].includes(error.code)) throw error;
+      console.warn(error.message);
+      return { answer: error.userMessage ?? "I couldn't find useful online results. Please try a more specific question.", target: null, needsClearerView: false, webInfo: null, usage };
+    }
+    payload = await generateContent(buildGeminiBody(request, config.maxOutputTokens, { evidence }), config, fetcher);
+    try { answer = JSON.parse(candidateText(payload)); } catch {
+      throw new APIError(502, 'invalid_model_output', 'The AI returned an unreadable answer.');
+    }
+    result = validateAnswer(answer);
+    const finalUsage = providerUsage(payload);
+    usage.inputTokens += finalUsage.inputTokens; usage.outputTokens += finalUsage.outputTokens;
+    if (!Array.isArray(answer.sourceIds) || answer.sourceIds.some((id) => !evidence.sources.some((source) => source.id === id))) {
+      throw new APIError(502, 'invalid_action', 'The model returned an unknown source reference.');
+    }
+    const sources = evidence.sources.filter((source) => answer.sourceIds.includes(source.id));
+    if (sources.length && typeof answer.webSummary === 'string' && answer.webSummary.trim()) {
+      webInfo = { summary: answer.webSummary.trim().slice(0, 1600), sources: sources.map(({ title, url }) => ({ title, url })), searchSuggestionHTML: null };
+    }
+  }
+  return { ...result, webInfo, usage };
 }
 
 export function demoAnswer(request) {

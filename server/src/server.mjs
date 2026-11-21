@@ -45,8 +45,14 @@ export function loadConfig(env = process.env) {
     maxOutputTokens: integer(env.MAX_OUTPUT_TOKENS, 2048, 4096),
     diagnosticLogPath: fileURLToPath(new URL('../.data/provider-errors.jsonl', import.meta.url)),
     webResearchEnabled: env.ENABLE_WEB_RESEARCH !== 'false',
+    serperApiKey: env.SERPER_API_KEY?.trim() ?? '',
+    serperCountry: env.SERPER_COUNTRY ?? 'ca',
+    serperLanguage: env.SERPER_LANGUAGE ?? 'en',
     maxResearchSteps: integer(env.MAX_RESEARCH_STEPS, 2, 2),
   };
+  if (!/^[a-z]{2}$/.test(config.serperCountry) || !/^[a-z]{2}(-[a-zA-Z]{2})?$/.test(config.serperLanguage)) {
+    throw new Error('Use a two-letter SERPER_COUNTRY and a valid SERPER_LANGUAGE code.');
+  }
   if (mode === 'gemini' && (!config.apiKey || config.appToken.length < 16)) {
     throw new Error('Gemini mode requires GEMINI_API_KEY and an APP_TOKEN of at least 16 characters.');
   }
@@ -90,7 +96,7 @@ export function createApp(config, {
 } = {}) {
   const server = createServer(async (request, response) => {
     const started = Date.now();
-    const trace = { requestId: randomUUID().slice(0, 8), calls: 0 };
+    const trace = { requestId: randomUUID().slice(0, 8), calls: 0, searchCalls: 0 };
     const controller = new AbortController();
     const deadline = setTimeout(() => controller.abort(), 45_000);
     response.on('finish', () => clearTimeout(deadline));
@@ -104,7 +110,7 @@ export function createApp(config, {
       }
     });
     const send = (status, data) => {
-      console.log(`Request completed: ${route} [${trace.requestId}] googleCalls=${trace.calls} HTTP ${status} ${data.error?.code ?? 'ok'} (${Date.now() - started}ms)`);
+      console.log(`Request completed: ${route} [${trace.requestId}] googleCalls=${trace.calls} serperSearches=${trace.searchCalls} HTTP ${status} ${data.error?.code ?? 'ok'} (${Date.now() - started}ms)`);
       if (response.destroyed) return;
       response.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
       response.end(JSON.stringify(data));

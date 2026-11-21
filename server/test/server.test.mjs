@@ -235,7 +235,7 @@ test('web lookup is explicit, opt-in and validated for old and new clients', asy
   assert.throws(() => validateRequest(input({ includeWebInfo: 'true' })), /boolean/);
   const newRequest = validateRequest(input({ includeWebInfo: true }));
   const body = buildGeminiBody(newRequest, 1024);
-  assert.deepEqual(body.tools, [{ googleSearch: {} }]);
+  assert.equal(body.tools, undefined);
   assert.ok(body.generationConfig.responseJsonSchema.required.includes('webSummary'));
   assert.match(body.systemInstruction.parts[0].text, /SIMILAR products/);
   const settings = config(t, { mode: 'gemini', appToken: 'a-private-test-token' });
@@ -282,23 +282,31 @@ test('source URLs reject local, credential-bearing and executable destinations',
   assert.equal(publicHTTPS('https://shop.example.com/bottle'), 'https://shop.example.com/bottle');
 });
 
-test('Gemini returns grounded cards only when this request opted in, with one provider call', async (t) => {
-  const settings = config(t);
+test('legacy web cards use Serper evidence and never a built-in Gemini search tool', async (t) => {
   for (const enabled of [false, true]) {
-    let calls = 0;
-    const result = await analyzeWithGemini(input({ includeWebInfo: enabled }), settings, async (_, options) => {
-      calls++;
-      assert.equal(Boolean(JSON.parse(options.body).tools), enabled);
+    const settings = config(t, { serperApiKey: 'fake-serper-key' });
+    const calls = [];
+    const result = await analyzeWithGemini(input({ includeWebInfo: enabled }), settings, async (url, options) => {
+      const body = JSON.parse(options.body);
+      calls.push({ url, body });
+      assert.equal(body.tools, undefined);
+      if (url === 'https://google.serper.dev/search') {
+        return { ok: true, json: async () => ({ organic: [{ title: 'Bottle', link: 'https://shop.vendor.com/bottle', snippet: 'Similar bottle: CAD 25.' }] }) };
+      }
+      const final = calls.length > 1;
       return { ok: true, json: async () => ({ candidates: [{ finishReason: 'STOP', content: { parts: [{ text: JSON.stringify({
-        answer: 'A bottle.', targetLabel: null, box: null, needsClearerView: false, webSummary: 'Similar bottles cost CAD 25.',
-      }) }] }, groundingMetadata: {
-        groundingChunks: [{ web: { title: 'Bottle', uri: 'https://shop.example.com/bottle' } }],
-        groundingSupports: [{ groundingChunkIndices: [0] }],
-      } }] }) };
+        answer: 'A bottle.', targetLabel: null, box: null, needsClearerView: false,
+        searchQuery: enabled && !final ? 'bottle Canada price' : null,
+        sourceIds: final ? ['s1'] : [], webSummary: final ? 'Similar bottle: CAD 25.' : null,
+      }) }] } }] }) };
     });
-    assert.equal(calls, 1);
+    assert.equal(calls.length, enabled ? 3 : 1);
     assert.equal(result.webInfo !== null, enabled);
-    if (enabled) assert.match(result.webInfo.summary, /CAD 25/);
+    if (enabled) {
+      assert.match(result.webInfo.summary, /CAD 25/);
+      assert.equal(result.webInfo.sources[0].url, 'https://shop.vendor.com/bottle');
+      assert.match(calls[2].body.contents.at(-1).parts[0].text, /snippets/);
+    }
   }
 });
 

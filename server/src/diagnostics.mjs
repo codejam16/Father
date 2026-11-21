@@ -14,7 +14,7 @@ export function redactDiagnostic(value, secrets = []) {
     if (typeof value === 'string') return redactText(value);
     if (Array.isArray(value)) return value.map(visit);
     if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [
-      key, /^(api[-_]?key|key|x-goog-api-key|authorization|app[-_]?token|access[-_]?token|password|token)$/i.test(key)
+      key, /^(api[-_]?key|key|x-goog-api-key|x-api-key|serper[-_]?api[-_]?key|authorization|app[-_]?token|access[-_]?token|password|token)$/i.test(key)
         ? '[REDACTED]' : visit(item),
     ]));
     return value;
@@ -23,7 +23,7 @@ export function redactDiagnostic(value, secrets = []) {
 }
 
 export function logGoogleError(event, config = {}) {
-  const safe = redactDiagnostic(event, [config.apiKey, config.appToken]);
+  const safe = redactDiagnostic(event, [config.apiKey, config.appToken, config.serperApiKey]);
   if (config.diagnosticLogger) { config.diagnosticLogger(safe); return; }
   console.error('GOOGLE ERROR — original response (credentials redacted):\n' + JSON.stringify(safe, null, 2));
   if (!config.diagnosticLogPath) return;
