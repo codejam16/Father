@@ -64,7 +64,14 @@ async function readJSON(request) {
 export function createApp(config, { analyze = analyzeWithGemini, budget = new Budget(config.budgetPath, config.maxRequests) } = {}) {
   let recent = [];
   const server = createServer(async (request, response) => {
+    const started = Date.now();
+    const route = request.url === '/analyze' ? '/analyze' : request.url === '/health' ? '/health' : '/other';
+    console.log(`[${new Date().toISOString()}] Request received: ${route}`);
+    response.on('close', () => {
+      if (!response.writableFinished) console.warn(`Request disconnected: ${route} after ${Date.now() - started}ms`);
+    });
     const send = (status, data) => {
+      console.log(`Request completed: ${route} HTTP ${status} ${data.error?.code ?? 'ok'} (${Date.now() - started}ms)`);
       if (response.destroyed) return;
       response.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
       response.end(JSON.stringify(data));
