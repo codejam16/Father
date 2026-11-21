@@ -21,106 +21,145 @@ struct ContentView: View {
 
 @MainActor
 private struct CameraExperience: View {
+    private enum CameraSheet: String, Identifiable, Equatable {
+        case settings, conversation, sources
+        var id: String { rawValue }
+    }
+
     @ObservedObject var model: AssistantViewModel
     @ObservedObject var speech: SpeechService
     @ObservedObject var settings: ConnectionSettings
-    @State private var showingSettings = false
-    @State private var showingConversation = false
+    @State private var activeSheet: CameraSheet?
     @State private var dismissedWebReply: UUID?
     @AppStorage("captionHeightFraction") private var captionHeightFraction = 0.22
 
     var body: some View {
         GeometryReader { geometry in
-            ZStack(alignment: .bottom) {
-                ImmersiveCamera(camera: model.camera, enabled: !model.isBusy, onSelect: model.select)
-                    .ignoresSafeArea()
-
-                VStack(spacing: 10) {
-                    if let error = model.errorMessage {
-                        ScrollView {
-                            Text(error).font(.caption).foregroundStyle(.orange)
-                                .frame(maxWidth: .infinity, alignment: .leading).padding(12)
-                        }
-                        .frame(maxHeight: 70)
-                        .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 14))
-                    }
-                    if model.selectedFrame != nil {
-                        HStack {
-                            Label("Selected view", systemImage: "scope").font(.caption)
-                            Spacer()
-                            Button("Clear", action: model.clearSelection).font(.caption.bold())
-                        }
-                        .padding(10).background(.ultraThinMaterial, in: Capsule())
-                    }
-                    if settings.captionsEnabled {
-                        CaptionsOverlay(model: model, speech: speech, heightFraction: $captionHeightFraction,
-                                        availableHeight: geometry.size.height, showHistory: { showingConversation = true })
-                            .transition(.opacity.combined(with: .move(edge: .bottom)))
-                    }
-                    if settings.webInfoEnabled, let info = model.webInfo, !info.sources.isEmpty,
-                       let replyID = model.messages.last?.id, dismissedWebReply != replyID {
-                        WebInfoStrip(info: info) { dismissedWebReply = replyID }
-                            .id(replyID)
-                            .transition(.opacity)
-                    }
-                    HStack(spacing: 24) {
-                        Button { model.toggleMicrophone() } label: {
-                            Image(systemName: model.isMuted ? "mic.slash.fill" : "mic.fill")
-                                .foregroundStyle(model.isMuted ? Color.red : Color.white)
-                        }
-                        .accessibilityLabel(model.isMuted ? "Unmute microphone" : "Mute microphone")
-                        .accessibilityValue(model.isMuted ? "Muted" : "Unmuted")
-                        Button { activeSheet = .settings } label: { Image(systemName: "gearshape.fill") }
-                            .accessibilityLabel("Settings")
-                    }
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(.white).buttonStyle(CameraControlStyle())
-                    .padding(.top, 4)
-                }
-                .padding(.horizontal, 16).padding(.bottom, 16)
-            }
-            .overlay(alignment: .topLeading) {
-                Text(settings.demoMode ? "DEMO · \(voiceStatus)" : voiceStatus)
-                    .font(.caption.weight(.semibold)).padding(.horizontal, 12).padding(.vertical, 8)
-                    .background(.ultraThinMaterial, in: Capsule()).padding(16)
-                    .allowsHitTesting(false)
-            }
-            .overlay(alignment: .topTrailing) {
-                VStack(spacing: 12) {
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.2)) { settings.captionsEnabled.toggle() }
-                    } label: {
-                        Image(systemName: settings.captionsEnabled ? "text.bubble.fill" : "text.bubble")
-                            .foregroundStyle(settings.captionsEnabled ? Color.mint : Color.white)
-                    }
-                    .accessibilityLabel(settings.captionsEnabled ? "Hide captions" : "Show captions")
-                    .accessibilityValue(settings.captionsEnabled ? "On" : "Off")
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.2)) { settings.webInfoEnabled.toggle() }
-                    } label: {
-                        Image(systemName: settings.webInfoEnabled ? "info.circle.fill" : "info.circle")
-                            .foregroundStyle(settings.webInfoEnabled ? Color.mint : Color.white)
-                    }
-                    .accessibilityLabel(settings.webInfoEnabled ? "Disable automatic web info" : "Enable automatic web info")
-                    .accessibilityValue(settings.webInfoEnabled ? "On" : "Off")
-                }
-                .font(.system(size: 20, weight: .semibold))
-                .buttonStyle(CameraControlStyle()).padding(.trailing, 16).padding(.top, 60)
-            }
+            cameraCanvas(availableHeight: geometry.size.height)
         }
         .background(.black)
         .sheet(item: $activeSheet) { sheet in
-            switch sheet {
-            case .settings: SettingsView(settings: settings, model: model)
-            case .conversation: ConversationView(model: model)
-            case .sources: ResearchSourcesView(model: model)
-            }
+            presentedSheet(sheet)
         }
         .onChange(of: activeSheet) { _, sheet in
             model.setVoiceSuspended(sheet != nil, stopPlayback: sheet != .sources)
         }
         .onChange(of: model.researchReviewID) { _, review in
             if review != nil { activeSheet = .sources }
+        }
+    }
+
+    private func cameraCanvas(availableHeight: CGFloat) -> some View {
+        ZStack(alignment: .bottom) {
+            ImmersiveCamera(camera: model.camera, enabled: !model.isBusy, onSelect: model.select)
+                .ignoresSafeArea()
+            cameraOverlays(availableHeight: availableHeight)
+        }
+        .overlay(alignment: .topLeading) { statusBadge }
+        .overlay(alignment: .topTrailing) { overlayControls }
+    }
+
+    private func cameraOverlays(availableHeight: CGFloat) -> some View {
+        VStack(spacing: 10) {
+            errorBanner
+            selectionBanner
+            if settings.captionsEnabled {
+                CaptionsOverlay(model: model, speech: speech, heightFraction: $captionHeightFraction,
+                                availableHeight: availableHeight, showHistory: { activeSheet = .conversation })
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+            webInfoStrip
+            primaryControls
+        }
+        .padding(.horizontal, 16).padding(.bottom, 16)
+    }
+
+    @ViewBuilder
+    private var errorBanner: some View {
+        if let error = model.errorMessage {
+            ScrollView {
+                Text(error).font(.caption).foregroundStyle(.orange)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(12)
+            }
+            .frame(maxHeight: 70)
+            .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 14))
+        }
+    }
+
+    @ViewBuilder
+    private var selectionBanner: some View {
+        if model.selectedFrame != nil {
+            HStack {
+                Label("Selected view", systemImage: "scope").font(.caption)
+                Spacer()
+                Button("Clear", action: model.clearSelection).font(.caption.bold())
+            }
+            .padding(10).background(.ultraThinMaterial, in: Capsule())
+        }
+    }
+
+    @ViewBuilder
+    private var webInfoStrip: some View {
+        if settings.webInfoEnabled, let info = model.webInfo, !info.sources.isEmpty,
+           let replyID = model.messages.last?.id, dismissedWebReply != replyID {
+            WebInfoStrip(info: info) { dismissedWebReply = replyID }
+                .id(replyID)
+                .transition(.opacity)
+        }
+    }
+
+    private var primaryControls: some View {
+        HStack(spacing: 24) {
+            Button { model.toggleMicrophone() } label: {
+                Image(systemName: model.isMuted ? "mic.slash.fill" : "mic.fill")
+                    .foregroundStyle(model.isMuted ? Color.red : Color.white)
+            }
+            .accessibilityLabel(model.isMuted ? "Unmute microphone" : "Mute microphone")
+            .accessibilityValue(model.isMuted ? "Muted" : "Unmuted")
+            Button { activeSheet = .settings } label: { Image(systemName: "gearshape.fill") }
+                .accessibilityLabel("Settings")
+        }
+        .font(.system(size: 22, weight: .semibold))
+        .foregroundStyle(.white).buttonStyle(CameraControlStyle())
+        .padding(.top, 4)
+    }
+
+    private var statusBadge: some View {
+        Text(settings.demoMode ? "DEMO · \(voiceStatus)" : voiceStatus)
+            .font(.caption.weight(.semibold)).padding(.horizontal, 12).padding(.vertical, 8)
+            .background(.ultraThinMaterial, in: Capsule()).padding(16)
+            .allowsHitTesting(false)
+    }
+
+    private var overlayControls: some View {
+        VStack(spacing: 12) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) { settings.captionsEnabled.toggle() }
+            } label: {
+                Image(systemName: settings.captionsEnabled ? "text.bubble.fill" : "text.bubble")
+                    .foregroundStyle(settings.captionsEnabled ? Color.mint : Color.white)
+            }
+            .accessibilityLabel(settings.captionsEnabled ? "Hide captions" : "Show captions")
+            .accessibilityValue(settings.captionsEnabled ? "On" : "Off")
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) { settings.webInfoEnabled.toggle() }
+            } label: {
+                Image(systemName: settings.webInfoEnabled ? "info.circle.fill" : "info.circle")
+                    .foregroundStyle(settings.webInfoEnabled ? Color.mint : Color.white)
+            }
+            .accessibilityLabel(settings.webInfoEnabled ? "Disable automatic web info" : "Enable automatic web info")
+            .accessibilityValue(settings.webInfoEnabled ? "On" : "Off")
+        }
+        .font(.system(size: 20, weight: .semibold))
+        .buttonStyle(CameraControlStyle()).padding(.trailing, 16).padding(.top, 60)
+    }
+
+    @ViewBuilder
+    private func presentedSheet(_ sheet: CameraSheet) -> some View {
+        switch sheet {
+        case .settings: SettingsView(settings: settings, model: model)
+        case .conversation: ConversationView(model: model)
+        case .sources: ResearchSourcesView(model: model)
         }
     }
 
