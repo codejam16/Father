@@ -111,7 +111,7 @@ private struct AssistantStatusBadge: View {
 @MainActor
 private struct CameraExperience: View {
     private enum CameraSheet: String, Identifiable, Equatable {
-        case settings, conversation, sources
+        case settings, conversation
         var id: String { rawValue }
     }
 
@@ -121,43 +121,42 @@ private struct CameraExperience: View {
     @State private var activeSheet: CameraSheet?
     @State private var dismissedWebReply: UUID?
     @AppStorage("captionHeightFraction") private var captionHeightFraction = 0.22
+    @AppStorage("webInfoHeightFraction") private var webInfoHeightFraction = 0.25
+    @AppStorage("webInfoWidthFraction") private var webInfoWidthFraction = 1.0
 
     var body: some View {
         GeometryReader { geometry in
-            cameraCanvas(availableHeight: geometry.size.height)
+            cameraCanvas(availableSize: geometry.size)
         }
         .background(.black)
         .sheet(item: $activeSheet) { sheet in
             presentedSheet(sheet)
         }
         .onChange(of: activeSheet) { _, sheet in
-            model.setVoiceSuspended(sheet != nil, stopPlayback: sheet != .sources)
-        }
-        .onChange(of: model.researchReviewID) { _, review in
-            if review != nil { activeSheet = .sources }
+            model.setVoiceSuspended(sheet != nil)
         }
     }
 
-    private func cameraCanvas(availableHeight: CGFloat) -> some View {
+    private func cameraCanvas(availableSize: CGSize) -> some View {
         ZStack(alignment: .bottom) {
             ImmersiveCamera(camera: model.camera, enabled: !model.isBusy, onSelect: model.select)
                 .ignoresSafeArea()
-            cameraOverlays(availableHeight: availableHeight)
+            cameraOverlays(availableSize: availableSize)
         }
         .overlay(alignment: .top) { statusBadge }
         .overlay(alignment: .topTrailing) { overlayControls }
     }
 
-    private func cameraOverlays(availableHeight: CGFloat) -> some View {
+    private func cameraOverlays(availableSize: CGSize) -> some View {
         VStack(spacing: 10) {
             errorBanner
             selectionBanner
             if settings.captionsEnabled {
                 CaptionsOverlay(model: model, speech: speech, heightFraction: $captionHeightFraction,
-                                availableHeight: availableHeight, showHistory: { activeSheet = .conversation })
+                                availableHeight: availableSize.height, showHistory: { activeSheet = .conversation })
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
-            webInfoStrip
+            webInfoStrip(availableSize: availableSize)
             primaryControls
         }
         .padding(.horizontal, 16).padding(.bottom, 16)
@@ -188,10 +187,15 @@ private struct CameraExperience: View {
     }
 
     @ViewBuilder
-    private var webInfoStrip: some View {
+    private func webInfoStrip(availableSize: CGSize) -> some View {
         if settings.webInfoEnabled, let info = model.webInfo, !info.sources.isEmpty,
            let replyID = model.messages.last?.id, dismissedWebReply != replyID {
-            WebInfoStrip(info: info) { dismissedWebReply = replyID }
+            let captionHeight = settings.captionsEnabled
+                ? min(0.55, max(0.15, captionHeightFraction)) * Double(availableSize.height) : 0
+            let maxInfoHeight = min(availableSize.height * 0.40, max(96, availableSize.height - CGFloat(captionHeight) - 180))
+            WebInfoStrip(info: info, heightFraction: $webInfoHeightFraction, widthFraction: $webInfoWidthFraction,
+                         availableSize: availableSize, maximumHeight: maxInfoHeight) { dismissedWebReply = replyID }
+                .frame(maxWidth: .infinity)
                 .id(replyID)
                 .transition(.opacity)
         }
@@ -258,7 +262,6 @@ private struct CameraExperience: View {
         switch sheet {
         case .settings: SettingsView(settings: settings, model: model)
         case .conversation: ConversationView(model: model)
-        case .sources: ResearchSourcesView(model: model)
         }
     }
 
@@ -402,50 +405,140 @@ private struct CaptionBubble: View {
 @MainActor
 private struct WebInfoStrip: View {
     let info: WebInfo
+    @Binding var heightFraction: Double
+    @Binding var widthFraction: Double
+    let availableSize: CGSize
+    let maximumHeight: CGFloat
     let dismiss: () -> Void
     @State private var expanded = false
+    @GestureState private var resizeOffset = CGSize.zero
+
+    private var usableWidth: CGFloat { max(1, availableSize.width - 32) }
+    private var screenHeight: CGFloat { max(1, availableSize.height) }
+    private func clampedHeight(_ value: Double) -> Double {
+        let maximum = Double(maximumHeight / screenHeight)
+        let minimum = min(maximum, 96 / Double(screenHeight))
+        return min(maximum, max(minimum, value.isFinite ? value : 0.25))
+    }
+    private func clampedWidth(_ value: Double) -> Double {
+        min(1, max(0.55, value.isFinite ? value : 1))
+    }
+    private var panelWidth: CGFloat {
+        CGFloat(clampedWidth(widthFraction + Double(resizeOffset.width * 2 / usableWidth))) * usableWidth
+    }
+    private var panelHeight: CGFloat {
+        CGFloat(clampedHeight(heightFraction - Double(resizeOffset.height / screenHeight))) * screenHeight
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 8) {
-                Image(systemName: "globe").font(.caption2).foregroundStyle(.white.opacity(0.6))
-                Text(info.summary ?? "Related sources")
-                    .font(.caption).foregroundStyle(.white.opacity(0.85)).lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                Button {
-                    withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() }
-                } label: {
-                    Image(systemName: expanded ? "chevron.down" : "chevron.up").font(.caption2)
-                        .frame(width: 32, height: 32)
-                }
-                .accessibilityLabel(expanded ? "Collapse web details" : "Expand web details and images")
-                Button(action: dismiss) { Image(systemName: "xmark").font(.system(size: 10)).frame(width: 32, height: 32) }
-                    .accessibilityLabel("Dismiss these sources")
-            }
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 7) {
-                    ForEach(info.sources) { source in
-                        Link(destination: source.url) {
-                            HStack(spacing: 4) {
-                                Text(source.title).lineLimit(1)
-                                Image(systemName: "arrow.up.right").font(.system(size: 8))
-                            }
-                            .font(.system(size: 11)).foregroundStyle(.white.opacity(0.85))
-                            .padding(.horizontal, 9).padding(.vertical, 6)
-                            .background(.white.opacity(0.07), in: Capsule())
-                        }
-                        .frame(maxWidth: 170)
-                    }
-                }
-            }
+        VStack(alignment: .leading, spacing: 6) {
+            resizeHandles
+            heading
+            sourceLinks
             if expanded {
-                WebInfoDetails(info: info)
-                    .transition(.opacity)
+                WebInfoDetails(info: info).transition(.opacity)
             }
         }
-        .padding(.horizontal, 11).padding(.vertical, 5)
-        .background(Color(white: 0.15).opacity(0.48), in: RoundedRectangle(cornerRadius: 16))
-        .foregroundStyle(.white.opacity(0.7))
+        .padding(.horizontal, 11).padding(.bottom, 8)
+        .frame(width: panelWidth, height: expanded ? panelHeight : nil)
+        .background(Color(white: 0.15).opacity(0.32), in: RoundedRectangle(cornerRadius: 16))
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .foregroundStyle(.white.opacity(0.8))
+    }
+
+    private var resizeHandles: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "globe").font(.system(size: 10)).frame(width: 26)
+            Capsule().fill(.white.opacity(0.4)).frame(width: 32, height: 3)
+                .frame(maxWidth: .infinity, minHeight: 25)
+                .contentShape(Rectangle())
+                .gesture(heightResize)
+                .accessibilityElement()
+                .accessibilityLabel("Info box height")
+                .accessibilityHint("Drag up to make the info box taller or down to make it shorter.")
+                .accessibilityAdjustableAction { direction in
+                    expanded = true
+                    switch direction {
+                    case .increment: heightFraction = clampedHeight(heightFraction + 0.04)
+                    case .decrement: heightFraction = clampedHeight(heightFraction - 0.04)
+                    @unknown default: break
+                    }
+                }
+            Image(systemName: "arrow.up.right.and.arrow.down.left")
+                .font(.system(size: 11)).frame(width: 30, height: 25)
+                .contentShape(Rectangle())
+                .gesture(cornerResize)
+                .accessibilityElement()
+                .accessibilityLabel("Info box size")
+                .accessibilityHint("Drag upward and outward to increase height and width.")
+                .accessibilityAdjustableAction { direction in
+                    expanded = true
+                    let delta: Double
+                    switch direction {
+                    case .increment: delta = 0.04
+                    case .decrement: delta = -0.04
+                    @unknown default: return
+                    }
+                    heightFraction = clampedHeight(heightFraction + delta)
+                    widthFraction = clampedWidth(widthFraction + delta)
+                }
+        }
+    }
+
+    private var heightResize: some Gesture {
+        DragGesture(minimumDistance: 2, coordinateSpace: .global)
+            .updating($resizeOffset) { value, state, _ in state = CGSize(width: 0, height: value.translation.height) }
+            .onChanged { _ in expanded = true }
+            .onEnded { value in
+                heightFraction = clampedHeight(heightFraction - Double(value.translation.height / screenHeight))
+            }
+    }
+
+    private var cornerResize: some Gesture {
+        DragGesture(minimumDistance: 2, coordinateSpace: .global)
+            .updating($resizeOffset) { value, state, _ in state = value.translation }
+            .onChanged { _ in expanded = true }
+            .onEnded { value in
+                heightFraction = clampedHeight(heightFraction - Double(value.translation.height / screenHeight))
+                widthFraction = clampedWidth(widthFraction + Double(value.translation.width * 2 / usableWidth))
+            }
+    }
+
+    private var heading: some View {
+        HStack(spacing: 6) {
+            Text(info.summary ?? "Related sources")
+                .font(.caption).foregroundStyle(.white.opacity(0.9)).lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() }
+            } label: {
+                Image(systemName: expanded ? "chevron.down" : "chevron.up").font(.caption2)
+                    .frame(width: 30, height: 30)
+            }
+            .accessibilityLabel(expanded ? "Collapse web details" : "Expand web details inside the camera view")
+            Button(action: dismiss) { Image(systemName: "xmark").font(.system(size: 10)).frame(width: 30, height: 30) }
+                .accessibilityLabel("Dismiss these sources")
+        }
+    }
+
+    private var sourceLinks: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 7) {
+                ForEach(info.sources) { source in
+                    Link(destination: source.url) {
+                        HStack(spacing: 4) {
+                            Text(source.title).lineLimit(1)
+                            Image(systemName: "arrow.up.right").font(.system(size: 8))
+                        }
+                        .font(.system(size: 11)).foregroundStyle(.white.opacity(0.85))
+                        .padding(.horizontal, 9).padding(.vertical, 6)
+                        .background(.white.opacity(0.07), in: Capsule())
+                    }
+                    .frame(maxWidth: 170)
+                }
+            }
+        }
+        .frame(height: 28)
     }
 }
 
@@ -476,8 +569,8 @@ private struct WebInfoDetails: View {
             }
             .padding(.vertical, 5)
         }
-        // Only explicitly expanded details scroll; the automatic strip sizes to its content.
-        .frame(maxHeight: 230)
+        // Expanded details scroll within the user-sized, camera-local box.
+        .frame(maxHeight: .infinity)
     }
 }
 

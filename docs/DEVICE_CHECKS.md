@@ -58,7 +58,7 @@ Use one clear, low-risk task and distinctive objects. Confirm that identifying a
 
 - Keep the camera screen free of transcripts. Ask for ordinary object identification: no research should be performed unnecessarily.
 - Ask a task that needs exact product documentation. Confirm the assistant asks for missing model/version details before researching and retains your answer after earlier messages fall out of chat history.
-- With an eligible Gemini project, inspect Terminal for `Agent action: search_online` / `read_source`. Verify source links, manufacturer relevance, grounded excerpts, and Google's supplied Search suggestions appear in the secondary sheet. Dismissing it resumes listening; playback must not be transcribed.
+- Inspect Terminal for `Agent action: search_online` / `read_source`. Receiving a researched answer must not automatically open Sources and research, cover the camera, stop playback, or pause/resume the microphone. Useful links appear only in the transparent camera-local info box when its display toggle is enabled. Full evidence is available from Settings only on explicit navigation.
 - Compare an accessible manual with a paywalled/unreachable document. The latter must not be claimed as read. Uncertain diagram-to-camera matches must ask for a clearer view instead of producing a speculative box.
 - Move the camera during research. Confirm a fresh frame is sent after research and old selected-image coordinates are never drawn on the new view. Keep in mind the existing frame-ring tracking lifetime.
 - Check a task plan in settings. It must not mark suggested steps complete automatically. Mark one completed, ask another question and confirm its state persists. Start a new task/change notes and confirm old context/sources clear.
@@ -73,3 +73,9 @@ Use one clear, low-risk task and distinctive objects. Confirm that identifying a
 - Test missing/invalid key, empty search results, exhausted credits, slow network, and cancellation. The assistant must not fabricate a live price or claim to have read a full page from a snippet. Search failures should finish cleanly and allow the next camera question.
 - Disable research in Settings and then globally with `ENABLE_WEB_RESEARCH=false`: neither path may send Serper queries. Mock mode must remain entirely offline. Test old clients without task sessions as well as the task-aware client.
 - Serper credits are finite and separate from Gemini quotas. Verify actual result quality, product match, images and latency using the team's account; the automated checks use mocked responses and spend no search credits.
+
+## Resizable inline info box
+
+- With real search results visible, drag the info box's top handle vertically and its corner horizontally/vertically. Height and width change without selecting camera objects, sending another question, opening a modal or interrupting speech. Confirm the box cannot cover the whole screen, including when captions are also tall.
+- Collapse/expand using the chevron: details, images and scrolling remain inside the box. New replies start compact, saved dimensions apply on expansion, and × dismisses only the current results. Test size persistence after relaunch and orientation changes, smaller phones and larger text.
+- The centered colored status badge stays in place, with no old top-left status text. Captions keep their independent height adjustment. Test both resize handles with VoiceOver. Only explicit Settings/history navigation or tapping a website link should open another screen. Native layout and gestures require real-device verification.

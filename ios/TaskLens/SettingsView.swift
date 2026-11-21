@@ -21,7 +21,7 @@ struct SettingsView: View {
                 Section {
                     Toggle("Search online when needed", isOn: $settings.researchEnabled)
                 } header: { Text("Research") }
-                footer: { Text("The assistant can search for relevant information and read source pages or manuals. Research uses extra API calls and may have separate search charges. Results open with sources and Google Search suggestions; dismiss them to resume listening.") }
+                footer: { Text("The assistant can search for relevant information and read source pages or manuals. Useful results stay in the transparent box over the camera; they do not automatically open another screen or pause listening. Research uses extra API calls and may have separate search charges.") }
 
                 if !model.taskMemory.goal.isEmpty || !model.taskMemory.plan.isEmpty || !model.taskMemory.facts.isEmpty || !model.taskMemory.openQuestions.isEmpty {
                     Section("Current task") {
@@ -74,7 +74,7 @@ struct SettingsView: View {
                     Toggle("Captions", isOn: $settings.captionsEnabled)
                     Toggle("Automatic web info", isOn: $settings.webInfoEnabled)
                 } header: { Text("Camera overlays") }
-                footer: { Text("Drag the handle above captions up or down to change their height. Automatic web info shows useful links as a small strip when a reply has web results; expand it for details and previews, or dismiss that reply’s links with ×. Search online when needed controls whether the assistant can research; turning Automatic web info off hides the cards without disabling task research. Research may add latency and provider charges. Opening previews contacts source websites.") }
+                footer: { Text("Drag the captions handle to change their height. On the transparent info box, drag its top handle for height or its corner for height and width. Sizes are saved. Expand details inside the box, or dismiss that reply’s links with ×. Search online when needed controls research; Automatic web info controls the box. Opening a website link leaves the app at your request.") }
             }
             .navigationTitle("TaskLens settings")
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } } }
