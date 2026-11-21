@@ -146,7 +146,8 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
                 guard self.tracker != nil else { break }
                 self.advanceTracker(on: frame.pixels, publish: false)
             }
-            if self.tracker != nil, let result = self.tracker?.results?.first,
+            if self.tracker != nil,
+               let result = self.tracker?.results?.first as? VNDetectedObjectObservation,
                let trackedBox = NormalizedBox.fromVision(result.boundingBox) {
                 self.publishHighlight(trackedBox)
             }
@@ -161,7 +162,8 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
         guard let tracker, let sequence else { return }
         do {
             try sequence.perform([tracker], on: pixels, orientation: .up)
-            guard let result = tracker.results?.first, result.confidence >= 0.5,
+            guard let result = tracker.results?.first as? VNDetectedObjectObservation,
+                  result.confidence >= 0.5,
                   let box = NormalizedBox.fromVision(result.boundingBox) else {
                 resetTracking()
                 publishStatus("Lost the pointer. Ask again or point to the item.")
