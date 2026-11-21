@@ -74,11 +74,7 @@ struct SettingsView: View {
                     Toggle("Captions", isOn: $settings.captionsEnabled)
                     Toggle("Automatic web info", isOn: $settings.webInfoEnabled)
                 } header: { Text("Camera overlays") }
-<<<<<<< HEAD
-                footer: { Text("Captions show both sides of the conversation over the camera. Web info adds optional source cards, price details when found, and online page previews. Search online when needed controls whether the assistant can research; turning Web info off hides the cards without disabling task research. Research can add latency and provider charges. Opening previews contacts the source websites.") }
-=======
-                footer: { Text("Drag the handle above captions up or down to change their height. Automatic web info is on by default: useful links appear as a small strip only when a reply has web results. Tap its chevron for details and previews, or × to dismiss that reply’s links. You can disable automatic web info here. Search may add latency and provider charges; opening previews contacts source websites.") }
->>>>>>> 70ef7a0a1e0d60728c308f85a59e138ffcd9ad5a
+                footer: { Text("Drag the handle above captions up or down to change their height. Automatic web info shows useful links as a small strip when a reply has web results; expand it for details and previews, or dismiss that reply’s links with ×. Search online when needed controls whether the assistant can research; turning Automatic web info off hides the cards without disabling task research. Research may add latency and provider charges. Opening previews contacts source websites.") }
             }
             .navigationTitle("TaskLens settings")
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } } }
