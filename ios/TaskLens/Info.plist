@@ -2,29 +2,51 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleDevelopmentRegion</key><string>en</string>
-    <key>CFBundleDisplayName</key><string>TaskLens</string>
-    <key>CFBundleExecutable</key><string>$(EXECUTABLE_NAME)</string>
-    <key>CFBundleIdentifier</key><string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
-    <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
-    <key>CFBundleName</key><string>$(PRODUCT_NAME)</string>
-    <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>1.0</string>
-    <key>CFBundleVersion</key><string>1</string>
-    <key>LSRequiresIPhoneOS</key><true/>
-    <key>NSCameraUsageDescription</key><string>Show the assistant what you are working on and point to objects.</string>
-    <key>NSMicrophoneUsageDescription</key><string>Speak questions to your visual assistant.</string>
-    <key>NSSpeechRecognitionUsageDescription</key><string>Turn your spoken questions into text.</string>
-    <key>NSLocalNetworkUsageDescription</key><string>Connect to your TaskLens backend on your local network.</string>
-    <key>NSAppTransportSecurity</key>
-    <dict>
-        <!-- DEVELOPMENT ONLY: permits the team's local HTTP proxy. Use HTTPS for distribution. -->
-        <key>NSAllowsArbitraryLoads</key><true/>
-        <key>NSAllowsLocalNetworking</key><true/>
-    </dict>
-    <key>UIApplicationSceneManifest</key>
-    <dict><key>UIApplicationSupportsMultipleScenes</key><false/></dict>
-    <key>UILaunchScreen</key><dict/>
-    <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string></array>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>TaskLens</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>NSCameraUsageDescription</key>
+	<string>Show the assistant what you are working on and point to objects.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Connect to your TaskLens backend on your local network.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Speak questions to your visual assistant.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Turn your spoken questions into text.</string>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+	</dict>
+	<key>UILaunchScreen</key>
+	<dict/>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+	</array>
 </dict>
 </plist>

@@ -8,6 +8,7 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
+<<<<<<< Updated upstream
         CameraExperience(model: model, speech: model.speech, settings: model.settings)
             .preferredColorScheme(.dark)
             .statusBarHidden()
@@ -15,7 +16,158 @@ struct ContentView: View {
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active { Task { await model.resume() } }
                 else { model.pause() }
+=======
+        ZStack {
+            ImmersiveCamera(camera: model.camera, enabled: !model.isBusy, onSelect: model.select)
+                .ignoresSafeArea()
+
+            VStack {
+                AssistantStatusBadge(model: model, speech: model.speech)
+                    .padding(.top, 12)
+                    .allowsHitTesting(false)
+
+                // Errors were previously only shown in the unmounted controls panel,
+                // so a failed request looked like the assistant simply staying silent.
+                if let error = model.errorMessage, !model.isBusy {
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 12))
+                        .padding(.horizontal, 24)
+                        .allowsHitTesting(false)
+                }
+
+                Spacer()
+
+                HStack(spacing: 24) {
+                    Button { model.toggleMicrophone() } label: {
+                        Image(systemName: model.isMuted ? "mic.slash.fill" : "mic.fill")
+                            .foregroundStyle(model.isMuted ? Color.red : Color.white)
+                    }
+                    .accessibilityLabel(model.isMuted ? "Unmute microphone" : "Mute microphone")
+                    .accessibilityValue(model.isMuted ? "Muted" : "Unmuted")
+
+                    Button { model.flipCamera() } label: {
+                        Image(systemName: "arrow.triangle.2.circlepath.camera")
+                    }
+                    .disabled(model.isBusy)
+                    .opacity(model.isBusy ? 0.4 : 1)
+                    .accessibilityLabel("Flip camera")
+
+                    Button { showingSettings = true } label: {
+                        Image(systemName: "gearshape.fill")
+                    }
+                    .accessibilityLabel("Settings")
+                }
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(.white)
+                .buttonStyle(CameraControlStyle())
+                .padding(.bottom, 20)
             }
+        }
+        .background(.black)
+        .preferredColorScheme(.dark)
+        .statusBarHidden()
+        .sheet(isPresented: $showingSettings) { SettingsView(settings: model.settings) }
+        .task { await model.resume() }
+        .onChange(of: showingSettings) { _, showing in model.setVoiceSuspended(showing) }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { Task { await model.resume() } }
+            else { model.pause() }
+        }
+    }
+}
+
+/// Small assistant indicator: listening, hearing you, thinking, answering.
+@MainActor
+private struct AssistantStatusBadge: View {
+    @ObservedObject var model: AssistantViewModel
+    @ObservedObject var speech: SpeechService
+
+    private enum Phase: Equatable { case preparing, muted, listening, hearing, thinking, speaking, answered }
+
+    private var phase: Phase {
+        if model.isBusy { return .thinking }
+        if speech.isSpeaking { return .speaking }
+        if model.justAnswered { return .answered }
+        if model.isMuted { return .muted }
+        if speech.isRecording { return speech.transcript.isEmpty ? .listening : .hearing }
+        return .preparing
+    }
+
+    private var symbol: String {
+        switch phase {
+        case .preparing: "ellipsis"
+        case .muted: "mic.slash.fill"
+        case .listening: "ear"
+        case .hearing: "waveform"
+        case .thinking: "sparkles"
+        case .speaking: "speaker.wave.2.fill"
+        case .answered: "checkmark"
+        }
+    }
+
+    private var title: String {
+        switch phase {
+        case .preparing: "Getting ready"
+        case .muted: "Muted"
+        case .listening: "Listening"
+        case .hearing: "Hearing you"
+        case .thinking: "Thinking"
+        case .speaking: "Answering"
+        case .answered: "Answered"
+        }
+    }
+
+    private var tint: Color {
+        switch phase {
+        case .preparing: .white
+        case .muted: .red
+        case .listening, .hearing: .mint
+        case .thinking: .purple
+        case .speaking, .answered: .cyan
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ZStack {
+                Circle().fill(tint.opacity(0.22))
+                if phase == .thinking {
+                    TimelineView(.animation) { context in
+                        let turn = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1)
+                        Circle()
+                            .trim(from: 0, to: 0.3)
+                            .stroke(tint, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                            .rotationEffect(.degrees(turn * 360))
+                    }
+                }
+                Image(systemName: symbol)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(tint)
+                    .contentTransition(.symbolEffect(.replace))
+                    .symbolEffect(.pulse, options: .repeating, isActive: phase == .listening || phase == .thinking)
+                    .symbolEffect(.variableColor.iterative, options: .repeating,
+                                  isActive: phase == .hearing || phase == .speaking)
+>>>>>>> Stashed changes
+            }
+            .frame(width: 30, height: 30)
+
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.white)
+        }
+        .padding(.leading, 5)
+        .padding(.trailing, 12)
+        .padding(.vertical, 5)
+        .background(.ultraThinMaterial, in: Capsule())
+        .overlay(Capsule().strokeBorder(tint.opacity(0.45), lineWidth: 1))
+        .animation(.easeInOut(duration: 0.25), value: phase)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Assistant status: \(title)")
     }
 }
 

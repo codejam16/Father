@@ -12,6 +12,8 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
     @Published private(set) var status = "Starting camera…"
     @Published private(set) var highlight: Highlight?
     @Published private(set) var aspectRatio: CGFloat = 0.75
+    /// Which camera is live. Frames are never mirrored; the front preview is mirrored on screen only.
+    @Published private(set) var position: AVCaptureDevice.Position = .back
 
     private struct BufferedFrame {
         let id: String
@@ -23,6 +25,9 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
     private let queue = DispatchQueue(label: "tasklens.camera", qos: .userInitiated)
     private let context = CIContext()
     private var configured = false
+    private var input: AVCaptureDeviceInput?
+    private var output: AVCaptureVideoDataOutput?
+    private var desiredPosition: AVCaptureDevice.Position = .back
     private var frames: [BufferedFrame] = []
     private var lastFrameTime = -Double.infinity
     private var tracker: VNTrackObjectRequest?
@@ -62,25 +67,79 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
         session.beginConfiguration()
         defer { session.commitConfiguration() }
         session.sessionPreset = .vga640x480
-        guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) else {
-            throw TaskLensError.message("A rear camera is required. Use a physical iPhone.")
+        guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: desiredPosition) else {
+            throw TaskLensError.message("This camera is unavailable. Use a physical iPhone.")
         }
         let input = try AVCaptureDeviceInput(device: device)
         guard session.canAddInput(input) else { throw TaskLensError.message("Could not open the camera.") }
         session.addInput(input)
+        self.input = input
         let output = AVCaptureVideoDataOutput()
         output.alwaysDiscardsLateVideoFrames = true
         output.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
         output.setSampleBufferDelegate(self, queue: queue)
         guard session.canAddOutput(output) else { throw TaskLensError.message("Could not receive camera frames.") }
         session.addOutput(output)
-        // Physically rotate buffers upright; use the same rotation on the preview.
-        guard let connection = output.connection(with: .video), connection.isVideoRotationAngleSupported(90) else {
+        self.output = output
+        guard orientOutput() else {
             throw TaskLensError.message("This camera cannot provide the required portrait frames.")
         }
-        connection.videoRotationAngle = 90
-        if connection.isVideoMirroringSupported { connection.isVideoMirrored = false }
         configured = true
+    }
+
+    /// Physically rotate buffers upright; the preview uses the same rotation. Buffers are never
+    /// mirrored (even for the front camera) so text stays readable for the AI and every box
+    /// coordinate refers to the same unmirrored image.
+    private func orientOutput() -> Bool {
+        guard let connection = output?.connection(with: .video), connection.isVideoRotationAngleSupported(90) else {
+            return false
+        }
+        connection.videoRotationAngle = 90
+        if connection.isVideoMirroringSupported {
+            connection.automaticallyAdjustsVideoMirroring = false
+            connection.isVideoMirrored = false
+        }
+        return true
+    }
+
+    /// Switches between the rear and front cameras without stopping the session.
+    func flipCamera() {
+        queue.async { [weak self] in
+            guard let self else { return }
+            let next: AVCaptureDevice.Position = self.desiredPosition == .back ? .front : .back
+            guard self.configured, let current = self.input else {
+                // Not started yet: the next start() opens the chosen camera.
+                self.desiredPosition = next
+                DispatchQueue.main.async { self.position = next }
+                return
+            }
+            guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: next),
+                  let replacement = try? AVCaptureDeviceInput(device: device) else {
+                self.publishStatus(next == .front ? "No front camera is available." : "No rear camera is available.")
+                return
+            }
+            self.session.beginConfiguration()
+            self.session.removeInput(current)
+            guard self.session.canAddInput(replacement) else {
+                self.session.addInput(current)
+                self.session.commitConfiguration()
+                self.publishStatus("Could not switch cameras.")
+                return
+            }
+            self.session.addInput(replacement)
+            self.input = replacement
+            let oriented = self.orientOutput()
+            self.session.commitConfiguration()
+            self.desiredPosition = next
+            // Frames from the previous camera must not be used for questions or tracking.
+            self.frames.removeAll()
+            self.lastFrameTime = -Double.infinity
+            self.resetTracking()
+            DispatchQueue.main.async {
+                self.position = next
+                self.status = oriented ? "Camera live" : "This camera cannot provide portrait frames."
+            }
+        }
     }
 
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {

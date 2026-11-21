@@ -8,6 +8,7 @@ private final class PreviewView: UIView {
 
 private struct CameraPreview: UIViewRepresentable {
     let session: AVCaptureSession
+    let mirrored: Bool
 
     func makeUIView(context: Context) -> PreviewView {
         let view = PreviewView()
@@ -20,7 +21,10 @@ private struct CameraPreview: UIViewRepresentable {
         view.previewLayer.session = session
         if let connection = view.previewLayer.connection, connection.isVideoRotationAngleSupported(90) {
             connection.videoRotationAngle = 90
-            if connection.isVideoMirroringSupported { connection.isVideoMirrored = false }
+            if connection.isVideoMirroringSupported {
+                connection.automaticallyAdjustsVideoMirroring = false
+                connection.isVideoMirrored = mirrored
+            }
         }
     }
 }
@@ -33,11 +37,19 @@ struct CameraStage: View {
     @State private var dragStart: CGPoint?
     @State private var dragEnd: CGPoint?
 
+    /// The front camera preview is mirrored like a selfie view. Captured frames are not,
+    /// so touches and boxes are converted between the two horizontally.
+    private var mirrored: Bool { camera.position == .front }
+
+    private func unmirrored(_ point: CGPoint, in size: CGSize) -> CGPoint {
+        mirrored ? CGPoint(x: size.width - point.x, y: point.y) : point
+    }
+
     var body: some View {
         GeometryReader { geometry in
             ZStack {
                 Color.black
-                CameraPreview(session: camera.session)
+                CameraPreview(session: camera.session, mirrored: mirrored)
                 if !camera.isRunning {
                     VStack(spacing: 12) {
                         Image(systemName: "camera.viewfinder").font(.system(size: 42, weight: .light))
@@ -59,13 +71,14 @@ struct CameraStage: View {
             .gesture(DragGesture(minimumDistance: 0)
                 .onChanged { value in
                     guard enabled, camera.isRunning else { return }
-                    dragStart = value.startLocation
-                    dragEnd = value.location
+                    dragStart = unmirrored(value.startLocation, in: geometry.size)
+                    dragEnd = unmirrored(value.location, in: geometry.size)
                 }
                 .onEnded { value in
                     defer { dragStart = nil; dragEnd = nil }
                     guard enabled, camera.isRunning,
-                          let box = FrameGeometry.selection(start: value.startLocation, end: value.location,
+                          let box = FrameGeometry.selection(start: unmirrored(value.startLocation, in: geometry.size),
+                                                            end: unmirrored(value.location, in: geometry.size),
                                                             viewport: geometry.size, aspect: camera.aspectRatio) else { return }
                     onSelect(box)
                 })
@@ -90,7 +103,7 @@ struct CameraStage: View {
         }
         .clipShape(RoundedRectangle(cornerRadius: showsChrome ? 24 : 0))
         .overlay(RoundedRectangle(cornerRadius: showsChrome ? 24 : 0).stroke(.white.opacity(showsChrome ? 0.12 : 0), lineWidth: 1))
-        .accessibilityLabel("Live rear camera. Tap or drag to select a region for your next question.")
+        .accessibilityLabel("Live camera. Tap or drag to select a region for your next question.")
     }
 
     private func pointer(_ box: NormalizedBox, label: String, color: Color, in size: CGSize) -> some View {
@@ -98,6 +111,7 @@ struct CameraStage: View {
         let rect = box.unitRect
         let width = rect.width * image.width
         let height = rect.height * image.height
+        let midX = mirrored ? 1 - rect.midX : rect.midX
         return RoundedRectangle(cornerRadius: 10)
             .fill(color.opacity(0.10))
             .overlay(RoundedRectangle(cornerRadius: 10).stroke(color, lineWidth: 3))
@@ -108,7 +122,7 @@ struct CameraStage: View {
                     .offset(y: -28)
             }
             .frame(width: width, height: height)
-            .position(x: image.minX + rect.midX * image.width, y: image.minY + rect.midY * image.height)
+            .position(x: image.minX + midX * image.width, y: image.minY + rect.midY * image.height)
             .allowsHitTesting(false)
     }
 }
