@@ -61,7 +61,7 @@ When the assistant cites actual search sources for a Web info request, `webInfo`
 }
 ```
 
-These are illustrative values, not an actual price. Sources are public HTTPS URLs returned by Serper, with stable server-assigned IDs; model-generated IDs must resolve to existing provider sources. Serper's `organic` entries supply titles, links and snippets, capped at five usable results per query, deduplicated against the session's sources. Knowledge-graph website/description fields may supply an additional candidate within the same cap. Local/IP/credential-bearing/non-HTTPS URLs are rejected. Search snippets are labelled as snippets, never read-document evidence. New generated URLs are not accepted as citations. `searchSuggestionHTML`/`searchSuggestionsHTML` are null for Serper results, so the app displays no invented Google widget. The existing native Link Presentation preview fetches page metadata when expanded, independently of Serper. Exact prices and product matches still need source checking. Legacy clients receive cards only after citing supplied source IDs with a nonempty summary. Updated iOS clients accept older responses without `webInfo`.
+These are illustrative values, not an actual price. Sources are public HTTPS URLs returned by Serper, with stable server-assigned IDs; model-generated IDs must resolve to existing provider sources. Serper's `organic` entries supply titles, links and snippets, capped at five usable results per query, deduplicated against the session's sources. Knowledge-graph website/description fields may supply an additional candidate within the same cap. Local/IP/credential-bearing/non-HTTPS URLs are rejected. Search snippets are labelled as snippets, never read-document evidence. New generated URLs are not accepted as citations. `searchSuggestionHTML`/`searchSuggestionsHTML` are null for Serper results, so the app displays no invented Google widget. The existing native Link Presentation preview fetches page metadata when expanded, independently of Serper. Exact prices and product matches still need source checking. Legacy clients receive cards only after citing supplied source IDs with a nonempty summary. Updated iOS clients accept older responses without `webInfo`. For per-question-search sessions, uncited results from the current completed research turn can appear as Related search results with real provider links; they are not added to the spoken answer’s `sourceIds` and old results are not revived as a fresh search.
 
 If highlighting is useful, `target` is `{ "label": "USB connector", "box": [100, 200, 400, 600] }`.
 
@@ -98,9 +98,13 @@ The updated iPhone app adds these optional fields to `POST /analyze`:
   "sessionId": "c1d43987-6b55-4258-9742-a4bfccdb50ed",
   "continuationId": null,
   "researchEnabled": true,
+  "searchEveryQuestion": true,
+  "includeWebInfo": true,
   "confirmedStepIds": []
 }
 ```
+
+`searchEveryQuestion` is an optional boolean, default `false` for older clients. With a task session, `true` requires the first decision of each new question to be `search_online` when research is available. Continuations do not repeat that requirement. Existing session evidence does not replace the next question’s initial lookup. Missing search credentials and the global research switch still permit camera-only answers. The updated iPhone always sends this flag, `researchEnabled: true`, and `includeWebInfo: true`; its display toggle is entirely local and never triggers a new request.
 
 `sessionId` enables the bounded action workflow in live mode. Legacy clients without it retain single-call camera analysis unless an explicit Web info request produces a Serper lookup and a second model call. Demo mode remains provider-free. Confirmations must reference an existing plan step; new/edited model-proposed steps are never completed automatically.
 

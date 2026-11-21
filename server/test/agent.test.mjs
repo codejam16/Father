@@ -254,3 +254,75 @@ test('optional web cards reuse verified task research without adding implicit se
   assert.equal(final.webInfo.sources[0].url, 'https://docs.vendor.com/manual.pdf');
   assert.match(final.webInfo.summary, /removable filter/);
 });
+
+test('always-search questions fetch links even when the UI keeps them hidden, without repeating on continuation', async () => {
+  const sessions = new TaskSessions();
+  // Overlay visibility stays on the phone; both visible and hidden modes request cards.
+  const input = request({ searchEveryQuestion: true, includeWebInfo: true });
+  const transport = fake(
+    payload(decision({ action: 'search_online', argument: 'filter cleaning manufacturer manual' })), searchPayload(),
+    payload(decision({ sourceIds: ['s1'], webSummary: 'Manufacturer cleaning instructions.' })),
+    payload(decision({ action: 'search_online', argument: 'filter replacement intervals manufacturer' })), searchPayload(),
+  );
+  const first = await execute(sessions, input, transport);
+  assert.deepEqual(transport.calls[0].body.generationConfig.responseJsonSchema.properties.action.enum, ['search_online']);
+  const final = await execute(sessions, { ...input, continuationId: first.continuationId, frameId: 'fresh' }, transport);
+  assert.equal(final.action, 'respond');
+  assert.equal(final.webInfo.sources[0].url, 'https://docs.vendor.com/manual.pdf');
+  assert.equal(final.webInfo.summary, 'Manufacturer cleaning instructions.');
+  assert.equal(transport.calls.filter((call) => call.url === 'https://google.serper.dev/search').length, 1);
+  assert.ok(transport.calls[2].body.generationConfig.responseJsonSchema.properties.action.enum.includes('respond'));
+  // A follow-up question in the same session gets its own search, even with older evidence present.
+  await execute(sessions, { ...input, question: 'When should I replace it?', frameId: 'next-question' }, transport);
+  assert.equal(transport.calls.filter((call) => call.url === 'https://google.serper.dev/search').length, 2);
+});
+
+test('always-search policy is independent of whether source cards are requested', async () => {
+  const transport = fake(payload(decision({ action: 'search_online', argument: 'filter manual' })), searchPayload());
+  const result = await execute(new TaskSessions(), request({ searchEveryQuestion: true, includeWebInfo: false }), transport);
+  assert.equal(result.action, 'refresh_camera');
+  assert.equal(transport.calls[1].url, 'https://google.serper.dev/search');
+});
+
+test('always-search does not bypass missing credentials or an administrator research switch', async () => {
+  for (const extra of [{ serperApiKey: '' }, { webResearchEnabled: false }]) {
+    const transport = fake(payload(decision()));
+    const result = await execute(new TaskSessions(), request({ searchEveryQuestion: true }), transport, { ...config, ...extra });
+    assert.equal(result.action, 'respond');
+    assert.equal(transport.calls.length, 1);
+    assert.deepEqual(transport.calls[0].body.generationConfig.responseJsonSchema.properties.action.enum,
+      ['respond', 'ask_clarification', 'request_view']);
+  }
+});
+
+test('always-search rejects a skipped search without inventing results or automatically retrying', async () => {
+  const transport = fake(payload(decision()));
+  await assert.rejects(execute(new TaskSessions(), request({ searchEveryQuestion: true }), transport), /required search query/);
+  assert.equal(transport.calls.length, 1);
+});
+
+test('always-search ends cleanly on empty results rather than continuing to search', async () => {
+  const transport = fake(payload(decision({ action: 'search_online', argument: 'uncertain object' })), { organic: [] });
+  const result = await execute(new TaskSessions(), request({ searchEveryQuestion: true }), transport);
+  assert.equal(result.action, 'respond');
+  assert.equal(result.continuationId, null);
+  assert.equal(result.webInfo, null);
+  assert.equal(transport.calls.length, 2);
+});
+
+test('uncited search links remain available as related results without becoming answer citations', async () => {
+  const input = request({ searchEveryQuestion: true, includeWebInfo: true });
+  const sessions = new TaskSessions();
+  const transport = fake(payload(decision({ action: 'search_online', argument: 'reusable water bottle' })),
+    searchPayload(), payload(decision({ answer: 'It looks like a bottle.', webSummary: null })));
+  const first = await execute(sessions, input, transport);
+  const final = await execute(sessions, { ...input, frameId: 'fresh', continuationId: first.continuationId }, transport);
+  assert.deepEqual(final.sourceIds, []);
+  assert.equal(final.webInfo.summary, 'Related search results');
+  assert.equal(final.webInfo.sources[0].url, 'https://docs.vendor.com/manual.pdf');
+  // No new research in a later camera-only turn must not revive old links as fresh results.
+  const offline = fake(payload(decision()));
+  const later = await execute(sessions, { ...input, frameId: 'later', question: 'What color is it?' }, offline,
+    { ...config, webResearchEnabled: false });
+  assert.equal(later.webInfo, null);
+});

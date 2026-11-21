@@ -81,7 +81,10 @@ struct CameraStage: View {
                                                             end: unmirrored(value.location, in: geometry.size),
                                                             viewport: geometry.size, aspect: camera.aspectRatio) else { return }
                     onSelect(box)
-                })
+                }, including: enabled ? .all : .none)
+            .onChange(of: enabled) { _, active in
+                if !active { dragStart = nil; dragEnd = nil }
+            }
             .overlay(alignment: .topLeading) {
                 if showsChrome {
                     Label(camera.isRunning ? "LIVE" : "CAMERA", systemImage: "circle.fill")
@@ -103,7 +106,7 @@ struct CameraStage: View {
         }
         .clipShape(RoundedRectangle(cornerRadius: showsChrome ? 24 : 0))
         .overlay(RoundedRectangle(cornerRadius: showsChrome ? 24 : 0).stroke(.white.opacity(showsChrome ? 0.12 : 0), lineWidth: 1))
-        .accessibilityLabel("Live camera. Tap or drag to select a region for your next question.")
+        .accessibilityLabel(enabled ? "Live camera. Tap or drag to select a region for your next question." : "Live camera. Region selection is off.")
     }
 
     private func pointer(_ box: NormalizedBox, label: String, color: Color, in size: CGSize) -> some View {
@@ -113,13 +116,14 @@ struct CameraStage: View {
         let height = rect.height * image.height
         let midX = mirrored ? 1 - rect.midX : rect.midX
         return RoundedRectangle(cornerRadius: 10)
-            .fill(color.opacity(0.10))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(color, lineWidth: 3))
+            .fill(color.opacity(0.035))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(color.opacity(0.85), lineWidth: 1.5))
             .overlay(alignment: .topLeading) {
                 Text(label).font(.system(size: 10, weight: .semibold))
-                    .lineLimit(2).padding(5)
-                    .foregroundStyle(.black).background(color, in: RoundedRectangle(cornerRadius: 5))
-                    .offset(y: -28)
+                    .lineLimit(2).padding(.horizontal, 7).padding(.vertical, 4)
+                    .foregroundStyle(.white.opacity(0.9))
+                    .background(.black.opacity(0.35), in: Capsule())
+                    .padding(6)
             }
             .frame(width: width, height: height)
             .position(x: image.minX + midX * image.width, y: image.minY + rect.midY * image.height)

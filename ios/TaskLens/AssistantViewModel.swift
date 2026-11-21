@@ -68,13 +68,13 @@ final class AssistantViewModel: ObservableObject {
     }
 
     func select(_ box: NormalizedBox) {
-        guard !isBusy else { return }
+        guard !isBusy, settings.selectionEnabled else { return }
         let id = UUID()
         selectionID = id
         Task {
             do {
                 let frame = try await camera.snapshot()
-                guard selectionID == id else { return }
+                guard selectionID == id, settings.selectionEnabled else { return }
                 selectedFrame = SelectedFrame(frame: frame, box: box)
                 camera.point(at: box, frameID: frame.id, label: "Your selection", source: .user)
             } catch { errorMessage = error.localizedDescription }
@@ -131,10 +131,11 @@ final class AssistantViewModel: ObservableObject {
         let endpoint = settings.serverURL
         let token = settings.token
         let task = settings.task
-        let researchEnabled = settings.researchEnabled
+        let researchEnabled = true
         let sessionID = self.sessionID
         let confirmations = Array(confirmedStepIDs)
-        let includeWebInfo = settings.webInfoEnabled
+        // Visibility is local: always fetch evidence and cards, even while hidden.
+        let includeWebInfo = true
         work = Task {
             defer {
                 if workID == id {
@@ -158,7 +159,8 @@ final class AssistantViewModel: ObservableObject {
                     let request = AnalysisRequest(frame: frame, question: text, task: task,
                                                   history: history, selection: currentSelection,
                                                   sessionId: sessionID, continuationId: continuationID,
-                                                  researchEnabled: researchEnabled, confirmedStepIds: confirmations, includeWebInfo: includeWebInfo)
+                                                  researchEnabled: researchEnabled, confirmedStepIds: confirmations, includeWebInfo: includeWebInfo,
+                                                  searchEveryQuestion: true)
                     if demoMode { response = try await client.demo(request) }
                     else { response = try await client.analyze(request, endpoint: endpoint, token: token) }
                     try Task.checkCancellation()

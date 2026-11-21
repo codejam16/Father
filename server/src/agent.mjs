@@ -29,9 +29,14 @@ Update memory with the task goal, relevant established facts, unresolved questio
 After research, you receive a fresh camera frame. Use the actual frame to identify and box the relevant component. Diagram descriptions are supporting context, not proof of a pixel match. If the visual match is ambiguous, ask for a closer view instead of drawing a speculative box.
 Your sourceIds list identifies the sources supporting THIS answer. Do not cite sources for visual observations alone. Return all requested schema fields. For general/ambiguous answers return null targetLabel and box.`;
 
+function needsInitialSearch(request, canResearch) {
+  return request.searchEveryQuestion === true && !request.continuationId && canResearch;
+}
+
 export function buildAgentBody(request, config, session, canResearch) {
   const body = buildGeminiBody({ ...request, includeWebInfo: false }, config.maxOutputTokens, { researchAvailable: canResearch });
   body.systemInstruction.parts.push({ text: agentInstruction });
+  if (needsInitialSearch(request, canResearch)) body.systemInstruction.parts.push({ text: "This app requests a web search for every new question, even when its result cards are hidden. Your next action must be search_online with one concise, relevant query based on the public topic and visible object. For an uncertain object use a qualified category, not an invented exact model. Omit private identifiers, credentials and unnecessary personal details. After supplied search evidence arrives, answer normally; do not repeat this initial lookup on a continuation." });
   if (!config.serperApiKey) body.systemInstruction.parts.push({ text: 'Web search is not connected on this server. Continue helping with visible evidence and prior supplied sources, but do not promise a new lookup or tell the user to enable an already enabled overlay.' });
   if (request.includeWebInfo) {
     body.systemInstruction.parts.push({ text: 'Optional web info cards are enabled. When product prices, shopping details, or further reading would help, choose a research action if researchAllowed. Return a concise source-backed webSummary for the optional card, or null when unnecessary or ungrounded. For uncertain product identification, label results as similar products, never an exact match. Prices require current source evidence, currency and retailer. Do not invent prices, availability, links, or make purchases.' });
@@ -47,7 +52,7 @@ export function buildAgentBody(request, config, session, canResearch) {
     ...answerSchema,
     properties: {
       ...answerSchema.properties,
-      action: { type: 'string', enum: canResearch ? actions : actions.slice(0, 3) },
+      action: { type: 'string', enum: needsInitialSearch(request, canResearch) ? ['search_online'] : canResearch ? actions : actions.slice(0, 3) },
       argument: { type: ['string', 'null'] },
       sourceIds: { type: 'array', maxItems: 8, items: { type: 'string' } },
       memory: memorySchema,
@@ -62,11 +67,16 @@ export function buildAgentBody(request, config, session, canResearch) {
 }
 
 function taskWebInfo(request, session, decision) {
-  if (!request.includeWebInfo || !decision.sourceIds.length) return null;
-  const sources = session.sources.filter((source) => decision.sourceIds.includes(source.id));
+  if (!request.includeWebInfo) return null;
+  // A visual answer may not cite its accompanying search. Keep those actual links
+  // available as related results, without claiming they support the spoken answer.
+  const related = !decision.sourceIds.length && request.searchEveryQuestion === true
+    && session.pending?.researchSteps > 0;
+  const ids = related ? session.reports.at(-1)?.supports.flatMap((support) => support.sourceIds) ?? [] : decision.sourceIds;
+  const sources = session.sources.filter((source) => ids.includes(source.id));
   if (!sources.length) return null;
   return {
-    summary: typeof decision.webSummary === 'string' ? decision.webSummary.slice(0, 1600) : null,
+    summary: related ? 'Related search results' : typeof decision.webSummary === 'string' ? decision.webSummary.slice(0, 1600) : null,
     sources: sources.slice(0, 6).map(({ title, url }) => ({ title, url })),
     searchSuggestionHTML: session.reports.findLast((report) => report.searchSuggestionsHTML)?.searchSuggestionsHTML ?? null,
   };
@@ -83,6 +93,9 @@ export async function runAgent(request, config, session, fetcher = fetch) {
   if (!decision || !actions.includes(decision.action) || !Array.isArray(decision.sourceIds) || decision.sourceIds.length > 8 ||
       decision.sourceIds.some((id) => !session.sources.some((source) => source.id === id))) {
     throw new APIError(502, 'invalid_action', 'The assistant returned an unsupported action or source.');
+  }
+  if (needsInitialSearch(request, canResearch) && decision.action !== 'search_online') {
+    throw new APIError(502, 'invalid_action', 'The assistant did not provide the required search query.');
   }
   const research = ['search_online', 'read_source'].includes(decision.action);
   if (research && !canResearch) throw new APIError(502, 'tool_limit', 'The research limit was reached. Ask a more specific follow-up question.');
@@ -136,10 +149,11 @@ export async function runAgent(request, config, session, fetcher = fetch) {
     };
   }
   if (decision.argument != null) throw new APIError(502, 'invalid_action', 'The assistant returned unexpected action arguments.');
+  const webInfo = taskWebInfo(request, session, decision);
   session.pending = null;
   return {
     ...answer, action: decision.action, continuationId: null,
-    webInfo: taskWebInfo(request, session, decision),
+    webInfo,
     taskMemory: session.memory, sources: session.sources, researchReports: session.reports,
     sourceIds: [...new Set(decision.sourceIds)], usage,
   };

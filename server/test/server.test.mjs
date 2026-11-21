@@ -329,3 +329,10 @@ test('incidental search results do not create an automatic web info strip', () =
     assert.equal(extractWebInfo(candidate, { webSummary }), null);
   }
 });
+
+test('per-question search is an explicit boolean opt-in for compatible clients', () => {
+  assert.equal(validateRequest(input()).searchEveryQuestion, false);
+  assert.equal(validateRequest(input({ searchEveryQuestion: true })).searchEveryQuestion, true);
+  assert.equal(validateRequest(input({ searchEveryQuestion: false })).searchEveryQuestion, false);
+  assert.throws(() => validateRequest(input({ searchEveryQuestion: 'true' })), /searchEveryQuestion/);
+});

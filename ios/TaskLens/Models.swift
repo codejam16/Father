@@ -153,10 +153,12 @@ struct AnalysisRequest: Encodable {
     let researchEnabled: Bool
     let confirmedStepIds: [String]
     let includeWebInfo: Bool
+    let searchEveryQuestion: Bool
 
     init(frame: CapturedFrame, question: String, task: String, history: [ChatMessage], selection: NormalizedBox?,
          sessionId: String? = nil, continuationId: String? = nil,
-         researchEnabled: Bool = true, confirmedStepIds: [String] = [], includeWebInfo: Bool = false) {
+         researchEnabled: Bool = true, confirmedStepIds: [String] = [], includeWebInfo: Bool = false,
+         searchEveryQuestion: Bool = false) {
         self.frameId = frame.id
         self.capturedAt = ISO8601DateFormatter().string(from: frame.capturedAt)
         self.question = question
@@ -169,6 +171,7 @@ struct AnalysisRequest: Encodable {
         self.researchEnabled = researchEnabled
         self.confirmedStepIds = confirmedStepIds
         self.includeWebInfo = includeWebInfo
+        self.searchEveryQuestion = searchEveryQuestion
     }
 }
 

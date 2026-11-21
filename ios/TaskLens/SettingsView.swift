@@ -18,10 +18,6 @@ struct SettingsView: View {
                         NavigationLink("Sources and research") { ResearchDetails(model: model) }
                     }
                 }
-                Section {
-                    Toggle("Search online when needed", isOn: $settings.researchEnabled)
-                } header: { Text("Research") }
-                footer: { Text("The assistant can search for relevant information and read source pages or manuals. Useful results stay in the transparent box over the camera; they do not automatically open another screen or pause listening. Research uses extra API calls and may have separate search charges.") }
 
                 if !model.taskMemory.goal.isEmpty || !model.taskMemory.plan.isEmpty || !model.taskMemory.facts.isEmpty || !model.taskMemory.openQuestions.isEmpty {
                     Section("Current task") {
@@ -72,9 +68,10 @@ struct SettingsView: View {
                 }
                 Section {
                     Toggle("Captions", isOn: $settings.captionsEnabled)
-                    Toggle("Automatic web info", isOn: $settings.webInfoEnabled)
+                    Toggle("Show web info", isOn: $settings.webInfoEnabled)
+                    Toggle("Select a region", isOn: $settings.selectionEnabled)
                 } header: { Text("Camera overlays") }
-                footer: { Text("Drag the captions handle to change their height. On the transparent info box, drag its top handle for height or its corner for height and width. Sizes are saved. Expand details inside the box, or dismiss that reply’s links with ×. Search online when needed controls research; Automatic web info controls the box. Opening a website link leaves the app at your request.") }
+                footer: { Text("Every new question requests a web lookup when search is connected, even when web info is hidden. The info button shows a dot when hidden results are available. Drag the info handle upward to fill the screen, down to shrink it, or use its corner to adjust width. Captions have their own height handle. Turn on Select a region to tap or drag over the camera. Opening results does not search again.") }
             }
             .navigationTitle("TaskLens settings")
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } } }

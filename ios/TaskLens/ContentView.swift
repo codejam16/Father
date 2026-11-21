@@ -119,7 +119,7 @@ private struct CameraExperience: View {
     @ObservedObject var speech: SpeechService
     @ObservedObject var settings: ConnectionSettings
     @State private var activeSheet: CameraSheet?
-    @State private var dismissedWebReply: UUID?
+    @State private var webPanelHeight: CGFloat = 0
     @AppStorage("captionHeightFraction") private var captionHeightFraction = 0.22
     @AppStorage("webInfoHeightFraction") private var webInfoHeightFraction = 0.25
     @AppStorage("webInfoWidthFraction") private var webInfoWidthFraction = 1.0
@@ -135,28 +135,39 @@ private struct CameraExperience: View {
         .onChange(of: activeSheet) { _, sheet in
             model.setVoiceSuspended(sheet != nil)
         }
+        .onChange(of: settings.selectionEnabled) { _, enabled in
+            if !enabled { model.clearSelection() }
+        }
     }
 
     private func cameraCanvas(availableSize: CGSize) -> some View {
         ZStack(alignment: .bottom) {
-            ImmersiveCamera(camera: model.camera, enabled: !model.isBusy, onSelect: model.select)
+            ImmersiveCamera(camera: model.camera, enabled: settings.selectionEnabled && !model.isBusy, onSelect: model.select)
                 .ignoresSafeArea()
             cameraOverlays(availableSize: availableSize)
         }
+        // A camera-local overlay: expanding never presents a sheet or pauses voice.
+        .overlay(alignment: .bottom) { webInfoStrip(availableSize: availableSize) }
         .overlay(alignment: .top) { statusBadge }
-        .overlay(alignment: .topTrailing) { overlayControls }
+        .overlay(alignment: .topTrailing) {
+            if webPanelHeight < availableSize.height * 0.96 { overlayControls }
+        }
+        .overlay(alignment: .topLeading) {
+            if webPanelHeight < availableSize.height * 0.96 { selectionIndicator }
+        }
     }
 
     private func cameraOverlays(availableSize: CGSize) -> some View {
         VStack(spacing: 10) {
-            errorBanner
-            selectionBanner
-            if settings.captionsEnabled {
-                CaptionsOverlay(model: model, speech: speech, heightFraction: $captionHeightFraction,
-                                availableHeight: availableSize.height, showHistory: { activeSheet = .conversation })
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            VStack(spacing: 10) {
+                errorBanner
+                if settings.captionsEnabled {
+                    CaptionsOverlay(model: model, speech: speech, heightFraction: $captionHeightFraction,
+                                    availableHeight: availableSize.height, showHistory: { activeSheet = .conversation })
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
+                }
             }
-            webInfoStrip(availableSize: availableSize)
+            .padding(.bottom, min(webPanelHeight, availableSize.height * 0.4))
             primaryControls
         }
         .padding(.horizontal, 16).padding(.bottom, 16)
@@ -175,29 +186,37 @@ private struct CameraExperience: View {
     }
 
     @ViewBuilder
-    private var selectionBanner: some View {
+    private var selectionIndicator: some View {
         if model.selectedFrame != nil {
-            HStack {
-                Label("Selected view", systemImage: "scope").font(.caption)
-                Spacer()
-                Button("Clear", action: model.clearSelection).font(.caption.bold())
+            Button(action: model.clearSelection) {
+                HStack(spacing: 5) {
+                    Image(systemName: "viewfinder")
+                    Text("Focus")
+                    Image(systemName: "xmark").font(.system(size: 8, weight: .semibold))
+                }
+                .font(.caption2).foregroundStyle(.white.opacity(0.85))
+                .padding(.horizontal, 10).padding(.vertical, 8)
+                .background(.black.opacity(0.24), in: Capsule())
             }
-            .padding(10).background(.ultraThinMaterial, in: Capsule())
+            .accessibilityLabel("Clear selected region")
+            .padding(.leading, 16).padding(.top, 62)
         }
     }
+
+    private var hasWebResults: Bool { model.webInfo?.sources.isEmpty == false }
 
     @ViewBuilder
     private func webInfoStrip(availableSize: CGSize) -> some View {
         if settings.webInfoEnabled, let info = model.webInfo, !info.sources.isEmpty,
-           let replyID = model.messages.last?.id, dismissedWebReply != replyID {
-            let captionHeight = settings.captionsEnabled
-                ? min(0.55, max(0.15, captionHeightFraction)) * Double(availableSize.height) : 0
-            let maxInfoHeight = min(availableSize.height * 0.40, max(96, availableSize.height - CGFloat(captionHeight) - 180))
+           let replyID = model.messages.last?.id {
             WebInfoStrip(info: info, heightFraction: $webInfoHeightFraction, widthFraction: $webInfoWidthFraction,
-                         availableSize: availableSize, maximumHeight: maxInfoHeight) { dismissedWebReply = replyID }
-                .frame(maxWidth: .infinity)
-                .id(replyID)
-                .transition(.opacity)
+                         availableSize: availableSize, reportHeight: { webPanelHeight = $0 }) {
+                withAnimation(.easeInOut(duration: 0.2)) { settings.webInfoEnabled = false }
+            }
+            .frame(maxWidth: .infinity)
+            .id(replyID)
+            .transition(.opacity)
+            .onDisappear { webPanelHeight = 0 }
         }
     }
 
@@ -249,9 +268,24 @@ private struct CameraExperience: View {
             } label: {
                 Image(systemName: settings.webInfoEnabled ? "info.circle.fill" : "info.circle")
                     .foregroundStyle(settings.webInfoEnabled ? Color.mint : Color.white)
+                    .overlay(alignment: .topTrailing) {
+                        if !settings.webInfoEnabled && hasWebResults {
+                            Circle().fill(.mint).frame(width: 7, height: 7)
+                                .overlay(Circle().stroke(.black.opacity(0.5), lineWidth: 1))
+                                .offset(x: 5, y: -3)
+                        }
+                    }
             }
-            .accessibilityLabel(settings.webInfoEnabled ? "Disable automatic web info" : "Enable automatic web info")
-            .accessibilityValue(settings.webInfoEnabled ? "On" : "Off")
+            .accessibilityLabel(settings.webInfoEnabled ? "Hide web info" : "Show web info")
+            .accessibilityValue(!settings.webInfoEnabled && hasWebResults ? "Hidden, results available" : settings.webInfoEnabled ? "Visible" : "Hidden")
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) { settings.selectionEnabled.toggle() }
+            } label: {
+                Image(systemName: "viewfinder")
+                    .foregroundStyle(settings.selectionEnabled ? Color.mint : Color.white)
+            }
+            .accessibilityLabel(settings.selectionEnabled ? "Turn off region selection" : "Select a region")
+            .accessibilityValue(settings.selectionEnabled ? "On. Tap or drag over the camera." : "Off")
         }
         .font(.system(size: 20, weight: .semibold))
         .buttonStyle(CameraControlStyle()).padding(.trailing, 16).padding(.top, 60)
@@ -408,7 +442,7 @@ private struct WebInfoStrip: View {
     @Binding var heightFraction: Double
     @Binding var widthFraction: Double
     let availableSize: CGSize
-    let maximumHeight: CGFloat
+    let reportHeight: (CGFloat) -> Void
     let dismiss: () -> Void
     @State private var expanded = false
     @GestureState private var resizeOffset = CGSize.zero
@@ -416,19 +450,22 @@ private struct WebInfoStrip: View {
     private var usableWidth: CGFloat { max(1, availableSize.width - 32) }
     private var screenHeight: CGFloat { max(1, availableSize.height) }
     private func clampedHeight(_ value: Double) -> Double {
-        let maximum = Double(maximumHeight / screenHeight)
-        let minimum = min(maximum, 96 / Double(screenHeight))
-        return min(maximum, max(minimum, value.isFinite ? value : 0.25))
+        let minimum = min(1, 170 / Double(screenHeight))
+        return min(1, max(minimum, value.isFinite ? value : 0.25))
     }
     private func clampedWidth(_ value: Double) -> Double {
         min(1, max(0.55, value.isFinite ? value : 1))
     }
     private var panelWidth: CGFloat {
-        CGFloat(clampedWidth(widthFraction + Double(resizeOffset.width * 2 / usableWidth))) * usableWidth
+        let fraction = clampedWidth(widthFraction + Double(resizeOffset.width * 2 / usableWidth))
+        return fullScreen ? availableSize.width : CGFloat(fraction) * usableWidth
     }
     private var panelHeight: CGFloat {
         CGFloat(clampedHeight(heightFraction - Double(resizeOffset.height / screenHeight))) * screenHeight
     }
+    private var fullScreen: Bool { expanded && panelHeight >= screenHeight * 0.96 }
+    private var bottomInset: CGFloat { expanded ? min(88, max(0, screenHeight - panelHeight)) : 88 }
+    private var reportedHeight: CGFloat { expanded ? panelHeight : 112 }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -440,10 +477,14 @@ private struct WebInfoStrip: View {
             }
         }
         .padding(.horizontal, 11).padding(.bottom, 8)
+        .padding(.top, fullScreen ? 52 : 0)
         .frame(width: panelWidth, height: expanded ? panelHeight : nil)
-        .background(Color(white: 0.15).opacity(0.32), in: RoundedRectangle(cornerRadius: 16))
-        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .background(Color(white: 0.15).opacity(fullScreen ? 0.72 : 0.32), in: RoundedRectangle(cornerRadius: fullScreen ? 0 : 16))
+        .clipShape(RoundedRectangle(cornerRadius: fullScreen ? 0 : 16))
         .foregroundStyle(.white.opacity(0.8))
+        .padding(.bottom, bottomInset)
+        .onAppear { reportHeight(reportedHeight) }
+        .onChange(of: reportedHeight) { _, height in reportHeight(height) }
     }
 
     private var resizeHandles: some View {
@@ -455,12 +496,12 @@ private struct WebInfoStrip: View {
                 .gesture(heightResize)
                 .accessibilityElement()
                 .accessibilityLabel("Info box height")
-                .accessibilityHint("Drag up to make the info box taller or down to make it shorter.")
+                .accessibilityHint("Drag up to fill the screen or down to make the info box shorter.")
                 .accessibilityAdjustableAction { direction in
                     expanded = true
                     switch direction {
-                    case .increment: heightFraction = clampedHeight(heightFraction + 0.04)
-                    case .decrement: heightFraction = clampedHeight(heightFraction - 0.04)
+                    case .increment: heightFraction = clampedHeight(heightFraction + 0.1)
+                    case .decrement: heightFraction = clampedHeight(heightFraction - 0.1)
                     @unknown default: break
                     }
                 }
@@ -490,7 +531,8 @@ private struct WebInfoStrip: View {
             .updating($resizeOffset) { value, state, _ in state = CGSize(width: 0, height: value.translation.height) }
             .onChanged { _ in expanded = true }
             .onEnded { value in
-                heightFraction = clampedHeight(heightFraction - Double(value.translation.height / screenHeight))
+                let next = clampedHeight(heightFraction - Double(value.translation.height / screenHeight))
+                heightFraction = next >= 0.9 ? 1 : next
             }
     }
 
@@ -499,7 +541,8 @@ private struct WebInfoStrip: View {
             .updating($resizeOffset) { value, state, _ in state = value.translation }
             .onChanged { _ in expanded = true }
             .onEnded { value in
-                heightFraction = clampedHeight(heightFraction - Double(value.translation.height / screenHeight))
+                let next = clampedHeight(heightFraction - Double(value.translation.height / screenHeight))
+                heightFraction = next >= 0.9 ? 1 : next
                 widthFraction = clampedWidth(widthFraction + Double(value.translation.width * 2 / usableWidth))
             }
     }
@@ -510,6 +553,16 @@ private struct WebInfoStrip: View {
                 .font(.caption).foregroundStyle(.white.opacity(0.9)).lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    if fullScreen { heightFraction = 0.3 }
+                    else { expanded = true; heightFraction = 1; widthFraction = 1 }
+                }
+            } label: {
+                Image(systemName: fullScreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+                    .font(.caption2).frame(width: 30, height: 30)
+            }
+            .accessibilityLabel(fullScreen ? "Restore info box size" : "Fill screen with web info")
+            Button {
                 withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() }
             } label: {
                 Image(systemName: expanded ? "chevron.down" : "chevron.up").font(.caption2)
@@ -517,7 +570,7 @@ private struct WebInfoStrip: View {
             }
             .accessibilityLabel(expanded ? "Collapse web details" : "Expand web details inside the camera view")
             Button(action: dismiss) { Image(systemName: "xmark").font(.system(size: 10)).frame(width: 30, height: 30) }
-                .accessibilityLabel("Dismiss these sources")
+                .accessibilityLabel("Hide web info; keep results available")
         }
     }
 
