@@ -2,15 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { TaskSessions, emptyMemory, mergeMemory } from '../src/task-session.mjs';
 import { runAgent } from '../src/agent.mjs';
 import { extractResearch, publicURL } from '../src/research.mjs';
 import { validateRequest } from '../src/contract.mjs';
 import { createApp, loadConfig } from '../src/server.mjs';
-import { Budget } from '../src/budget.mjs';
 
 const config = { model: 'test-model', maxOutputTokens: 2048, apiKey: 'not-real', maxResearchSteps: 2 };
 const request = (extra = {}) => validateRequest({
@@ -67,12 +63,11 @@ test('simple identification uses one decision call and keeps established task co
 test('search uses grounded metadata, then requires a fresh camera frame before highlighting', async () => {
   const sessions = new TaskSessions();
   const input = request();
-  let extraCalls = 0;
   const transport = fake(
     payload(decision({ action: 'search_online', argument: 'manufacturer model A filter manual', answer: 'Let me check the manual.' })),
     searchPayload(), payload(decision({ sourceIds: ['s1'], targetLabel: 'Filter', box: [100, 200, 400, 600] })),
   );
-  const settings = { ...config, reserveAdditionalCall: () => extraCalls++ };
+  const settings = config;
   const first = await execute(sessions, input, transport, settings);
   assert.equal(first.action, 'refresh_camera');
   assert.equal(first.target, null);
@@ -86,7 +81,6 @@ test('search uses grounded metadata, then requires a fresh camera frame before h
   const final = await execute(sessions, { ...input, frameId: 'fresh-frame', continuationId: first.continuationId }, transport, settings);
   assert.equal(final.target.label, 'Filter');
   assert.equal(final.continuationId, null);
-  assert.equal(extraCalls, 1);
   assert.match(transport.calls[2].body.contents.at(-1).parts[0].text, /manufacturer/i);
   await assert.rejects(execute(sessions, { ...input, frameId: 'again', continuationId: first.continuationId }, transport), /expired/);
 });
@@ -208,37 +202,15 @@ test('invalid session and confirmation fields are rejected before provider acces
     { sessionId: null, continuationId: randomUUID() }]) assert.throws(() => request(extra));
 });
 
-test('HTTP research reserves each provider call and never invokes a tool after allowance exhaustion', async (t) => {
-  const directory = mkdtempSync(join(tmpdir(), 'tasklens-agent-'));
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
+test('full HTTP search/read/refresh flow uses five calls and retains the final source and frame', async (t) => {
   const settings = loadConfig({ AI_MODE: 'gemini', GEMINI_API_KEY: 'fake-key', APP_TOKEN: 'private-test-token',
-    BUDGET_FILE: join(directory, 'allowance.json'), MAX_LIVE_REQUESTS: '1' });
-  const budget = new Budget(settings.budgetPath, 1);
-  const transport = fake(payload(decision({ action: 'search_online', argument: 'query' })));
-  const server = createApp(settings, { budget, agent: (input, config, session) => runAgent(input, config, session, transport.fetcher) });
-  server.listen(0, '127.0.0.1'); await once(server, 'listening');
-  t.after(() => new Promise((resolve) => { server.close(resolve); server.closeAllConnections(); }));
-  const response = await fetch(`http://127.0.0.1:${server.address().port}/analyze`, {
-    method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer private-test-token' }, body: JSON.stringify(request()),
-  });
-  assert.equal(response.status, 429);
-  assert.equal((await response.json()).error.code, 'request_allowance_exhausted');
-  assert.equal(transport.calls.length, 1);
-  assert.equal(budget.used, 1);
-});
-
-test('full HTTP search/read/refresh flow charges exactly five model calls and retains the final source and frame', async (t) => {
-  const directory = mkdtempSync(join(tmpdir(), 'tasklens-agent-'));
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
-  const settings = loadConfig({ AI_MODE: 'gemini', GEMINI_API_KEY: 'fake-key', APP_TOKEN: 'private-test-token',
-    BUDGET_FILE: join(directory, 'allowance.json'), MAX_LIVE_REQUESTS: '5' });
-  const budget = new Budget(settings.budgetPath, 5);
+    MAX_LIVE_REQUESTS: '1', REQUESTS_PER_MINUTE: '1' });
   const transport = fake(
     payload(decision({ action: 'search_online', argument: 'filter manual' })), searchPayload(),
     payload(decision({ action: 'read_source', argument: 's1' })), readPayload(),
     payload(decision({ sourceIds: ['s1'], targetLabel: 'Filter', box: [100, 200, 400, 600] })),
   );
-  const server = createApp(settings, { budget, agent: (input, config, session) => runAgent(input, config, session, transport.fetcher) });
+  const server = createApp(settings, { agent: (input, config, session) => runAgent(input, config, session, transport.fetcher) });
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
   t.after(() => new Promise((resolve) => { server.close(resolve); server.closeAllConnections(); }));
   const input = request();
@@ -258,8 +230,9 @@ test('full HTTP search/read/refresh flow charges exactly five model calls and re
   assert.equal(third.value.frameId, 'fresh-3');
   assert.equal(third.value.target.label, 'Filter');
   assert.equal(third.value.researchReports.length, 2);
-  assert.equal(budget.used, 5);
   assert.equal(transport.calls.length, 5);
-  assert.equal((await send({ frameId: 'next-question' })).status, 429);
-  assert.equal(transport.calls.length, 5);
+  const next = fake(payload(decision()));
+  transport.fetcher = next.fetcher;
+  assert.equal((await send({ frameId: 'next-question' })).status, 200);
+  assert.equal(next.calls.length, 1);
 });

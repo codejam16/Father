@@ -12,15 +12,30 @@ struct AnalysisClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if !token.isEmpty { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
         request.httpBody = try JSONEncoder().encode(input)
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let data: Data
+        let response: URLResponse
+        do { (data, response) = try await URLSession.shared.data(for: request) }
+        catch let error as URLError {
+            if error.code == .cancelled { throw CancellationError() }
+            if error.code == .timedOut { throw TaskLensError.message("That took too long. Please try again.") }
+            throw TaskLensError.message("I can't reach the server. Please check your connection and try again.")
+        }
         guard let response = response as? HTTPURLResponse else { throw TaskLensError.message("The backend did not respond.") }
         guard response.statusCode == 200 else {
             struct ErrorEnvelope: Decodable {
-                struct Detail: Decodable { let message: String }
+                struct Detail: Decodable { let userMessage: String? }
                 let error: Detail
             }
-            let message = (try? JSONDecoder().decode(ErrorEnvelope.self, from: data).error.message)
-                ?? "Backend error (\(response.statusCode)). Check Connection settings."
+            // Older servers may return technical text in `message`; never read it aloud.
+            let friendly = try? JSONDecoder().decode(ErrorEnvelope.self, from: data).error.userMessage
+            let fallback: String
+            switch response.statusCode {
+            case 401, 403: fallback = "I couldn't connect. Please check the app's connection settings."
+            case 429: fallback = "The AI service is limiting requests right now. Please try again later."
+            case 504: fallback = "That took too long. Please try again."
+            default: fallback = "I couldn't get an answer this time. Please try again."
+            }
+            let message = friendly ?? fallback
             throw TaskLensError.message(message)
         }
         let result = try JSONDecoder().decode(AnalysisResponse.self, from: data)

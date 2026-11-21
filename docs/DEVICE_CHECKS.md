@@ -36,8 +36,8 @@ These are acceptance checks, not completed test results. Native compilation and 
 - Measure capture-to-response latency. The frame ring is bounded; a response older than the retained frames should show no stale pointer. Confirm the explanation remains available.
 - Deliberately move during a model call; inspect whether buffered replay catches up to the current scene correctly. This behavior is experimental until measured on-device.
 - Cancel a request and start a new one. A late response must not overwrite the new conversation or pointer.
-- Exhaust a small request allowance and restart the backend. Further live calls must remain blocked.
-- Check provider usage before/after rehearsal; do not assume the request allowance is a monetary cap.
+- Verify that historical allowance files and legacy local quota settings do not block requests. Google quota errors must remain distinguishable from validation or connectivity failures.
+- Check provider usage before/after rehearsal; Google enforces the project/model quotas.
 
 ## Honest demo scope
 
@@ -53,5 +53,5 @@ Use one clear, low-risk task and distinctive objects. Confirm that identifying a
 - Move the camera during research. Confirm a fresh frame is sent after research and old selected-image coordinates are never drawn on the new view. Keep in mind the existing frame-ring tracking lifetime.
 - Check a task plan in settings. It must not mark suggested steps complete automatically. Mark one completed, ask another question and confirm its state persists. Start a new task/change notes and confirm old context/sources clear.
 - Turn online research off. Camera answers and memory should still work without search calls. Demo mode must make zero provider calls regardless of this toggle.
-- Test bad source metadata, exhausted allowance, expired continuations/backend restart, cancellation, network loss, and backgrounding during research. Do not automatically retry failed provider calls. Errors should be spoken (if enabled) and visible under Last issue.
+- Test bad source metadata, Google quota errors, expired continuations/backend restart, cancellation, network loss, and backgrounding during research. Do not automatically retry failed provider calls. Errors should be spoken (if enabled) and visible under Last issue.
 - Measure the calls and latency for direct identification vs search plus document reading. Budget per model call, not per spoken question. Do not promise free research without verifying the account's tool quota/pricing.

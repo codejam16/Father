@@ -5,7 +5,11 @@ try {
   const server = createApp(config);
   server.listen(config.port, config.host, () => {
     console.log(`TaskLens backend: http://${config.host}:${config.port} (${config.mode})`);
-    console.log(config.mode === 'mock' ? 'Demo replies only; no AI API requests.' : `Persistent request allowance: ${config.maxRequests}. No automatic provider retries.`);
+    if (config.mode === 'gemini') {
+      console.log(`Google model: ${config.model}`);
+      console.log(`Google error log: ${config.diagnosticLogPath}`);
+    }
+    console.log(config.mode === 'mock' ? 'Demo replies only; no AI API requests.' : 'Google enforces API quotas; no local request allowance or rate limit. No automatic provider retries.');
   });
 } catch (error) {
   console.error(error.message);

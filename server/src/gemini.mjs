@@ -1,4 +1,5 @@
 import { APIError, answerSchema, validateAnswer } from './contract.mjs';
+import { randomUUID } from 'node:crypto';
 import { geminiHTTPError } from './provider-error.mjs';
 
 const instruction = `You are TaskLens, a conversational visual task assistant.
@@ -46,6 +47,13 @@ export function buildGeminiBody(request, maxOutputTokens) {
 }
 
 export async function generateContent(body, config, fetcher = fetch) {
+  const callId = randomUUID().slice(0, 8);
+  const requestId = config.trace?.requestId ?? 'diagnostic';
+  const callNumber = config.trace ? ++config.trace.calls : 1;
+  const operation = body.tools?.some((tool) => tool.google_search) ? 'search_online'
+    : body.tools?.some((tool) => tool.url_context) ? 'read_source' : 'camera_decision';
+  const started = Date.now();
+  console.log(`[${requestId}] Google call ${callNumber} (${callId}) START model=${config.model} action=${operation}`);
   let response;
   try {
     response = await fetcher(
@@ -59,11 +67,12 @@ export async function generateContent(body, config, fetcher = fetch) {
       },
     );
   } catch {
+    console.warn(`[${requestId}] Google call ${callNumber} (${callId}) NETWORK/TIMEOUT after ${Date.now() - started}ms; no HTTP response`);
     throw new APIError(504, 'provider_unavailable', 'The AI service did not respond. No automatic retry was made.');
   }
+  console.log(`[${requestId}] Google call ${callNumber} (${callId}) HTTP ${response.status ?? (response.ok ? 200 : 'unknown')} (${Date.now() - started}ms)`);
   if (!response.ok) {
-    console.warn(`Gemini HTTP ${response.status}`);
-    throw await geminiHTTPError(response);
+    throw await geminiHTTPError(response, config, { requestId, callId, callNumber, operation });
   }
   let payload;
   try { payload = await response.json(); } catch {
@@ -72,6 +81,8 @@ export async function generateContent(body, config, fetcher = fetch) {
   if (payload.candidates?.[0]?.finishReason !== 'STOP') {
     throw new APIError(502, 'incomplete_model_output', 'The AI could not finish a usable answer. Try a simpler question.');
   }
+  const usage = providerUsage(payload);
+  console.log(`[${requestId}] Google call ${callNumber} (${callId}) DONE inputTokens=${usage.inputTokens} outputTokens=${usage.outputTokens}`);
   return payload;
 }
 

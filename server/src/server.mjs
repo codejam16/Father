@@ -1,11 +1,32 @@
 import { createServer } from 'node:http';
-import { timingSafeEqual } from 'node:crypto';
+import { timingSafeEqual, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { APIError, validateRequest } from './contract.mjs';
 import { analyzeWithGemini, demoAnswer } from './gemini.mjs';
-import { Budget } from './budget.mjs';
 import { TaskSessions } from './task-session.mjs';
 import { runAgent } from './agent.mjs';
+
+// Developer diagnostics stay in logs; these short messages are safe to read aloud.
+function userErrorMessage(error) {
+  if (error.userMessage) return error.userMessage;
+  const messages = {
+    unauthorized: "I couldn't connect. Please check the app's connection settings.",
+    provider_unavailable: 'The AI service is taking too long to respond. Please try again.',
+    request_timeout: 'That took too long. Please try again.',
+    source_unavailable: "I couldn't open that document. Please try another source.",
+    search_unverified: "I couldn't find a useful source. Could you give me a little more detail?",
+    tool_limit: "I couldn't finish researching that. Try a more specific question.",
+    task_expired: "I've lost the previous task context. Please ask your question again.",
+    research_expired: 'That research session expired. Please ask your question again.',
+    task_changed: 'The task changed. Please ask your question again.',
+    fresh_frame_required: 'Please show me the object again.',
+    task_busy: "I'm still working on your previous question. Please wait a moment.",
+    tasks_busy: "I'm busy right now. Please try again in a moment.",
+    invalid_request: "I couldn't use that camera view or question. Please try again.",
+    request_too_large: "I couldn't use that camera view. Please try showing it again.",
+  };
+  return messages[error.code] ?? "I couldn't finish that request. Please try again.";
+}
 
 function integer(value, fallback, max) {
   const number = value === undefined ? fallback : Number(value);
@@ -21,12 +42,10 @@ export function loadConfig(env = process.env) {
   const config = {
     mode, model, apiKey: env.GEMINI_API_KEY ?? '', appToken: env.APP_TOKEN ?? '',
     port: integer(env.PORT, 8787, 65535), host: env.HOST ?? '127.0.0.1',
-    maxRequests: integer(env.MAX_LIVE_REQUESTS, 50, 1000),
-    requestsPerMinute: integer(env.REQUESTS_PER_MINUTE, 10, 60),
     maxOutputTokens: integer(env.MAX_OUTPUT_TOKENS, 2048, 4096),
+    diagnosticLogPath: fileURLToPath(new URL('../.data/provider-errors.jsonl', import.meta.url)),
     webResearchEnabled: env.ENABLE_WEB_RESEARCH !== 'false',
     maxResearchSteps: integer(env.MAX_RESEARCH_STEPS, 2, 2),
-    budgetPath: env.BUDGET_FILE ?? fileURLToPath(new URL('../.data/allowance.json', import.meta.url)),
   };
   if (mode === 'gemini' && (!config.apiKey || config.appToken.length < 16)) {
     throw new Error('Gemini mode requires GEMINI_API_KEY and an APP_TOKEN of at least 16 characters.');
@@ -67,16 +86,16 @@ async function readJSON(request) {
 
 export function createApp(config, {
   analyze = analyzeWithGemini, agent = runAgent,
-  budget = new Budget(config.budgetPath, config.maxRequests), sessions = new TaskSessions(),
+  sessions = new TaskSessions(),
 } = {}) {
-  let recent = [];
   const server = createServer(async (request, response) => {
     const started = Date.now();
+    const trace = { requestId: randomUUID().slice(0, 8), calls: 0 };
     const controller = new AbortController();
     const deadline = setTimeout(() => controller.abort(), 45_000);
     response.on('finish', () => clearTimeout(deadline));
     const route = request.url === '/analyze' ? '/analyze' : request.url === '/health' ? '/health' : '/other';
-    console.log(`[${new Date().toISOString()}] Request received: ${route}`);
+    console.log(`[${new Date().toISOString()}] Request received: ${route} [${trace.requestId}]`);
     response.on('close', () => {
       clearTimeout(deadline);
       if (!response.writableFinished) {
@@ -85,7 +104,7 @@ export function createApp(config, {
       }
     });
     const send = (status, data) => {
-      console.log(`Request completed: ${route} HTTP ${status} ${data.error?.code ?? 'ok'} (${Date.now() - started}ms)`);
+      console.log(`Request completed: ${route} [${trace.requestId}] googleCalls=${trace.calls} HTTP ${status} ${data.error?.code ?? 'ok'} (${Date.now() - started}ms)`);
       if (response.destroyed) return;
       response.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
       response.end(JSON.stringify(data));
@@ -99,35 +118,32 @@ export function createApp(config, {
       }
       if (!authorized(request, config.appToken)) throw new APIError(401, 'unauthorized', 'Check the connection token in Settings.');
       if (!request.headers['content-type']?.startsWith('application/json')) throw new APIError(415, 'invalid_content_type', 'Use application/json.');
-      const now = Date.now();
-      recent = recent.filter((time) => now - time < 60_000);
-      if (recent.length >= config.requestsPerMinute) throw new APIError(429, 'rate_limited', 'Please wait before asking another question.');
-      recent.push(now);
       const input = validateRequest(await readJSON(request));
       let result;
       if (config.mode === 'gemini') {
-        const callConfig = { ...config, signal: controller.signal, reserveAdditionalCall: () => budget.reserve() };
+        const callConfig = { ...config, signal: controller.signal, trace };
         if (input.sessionId) {
           result = await sessions.run(input, async (session) => {
-            budget.reserve();
             const result = await agent(input, callConfig, session);
             controller.signal.throwIfAborted();
             return result;
           });
         } else {
-          budget.reserve();
           result = await analyze(input, callConfig);
         }
       } else { result = demoAnswer(input); }
       return send(200, { frameId: input.frameId, mode: config.mode, ...result });
     } catch (error) {
       if (controller.signal.aborted) {
-        return send(504, { error: { code: 'request_timeout', message: 'The request was cancelled or timed out. No automatic retry was made.' } });
+        return send(504, { error: { code: 'request_timeout', message: 'That took too long. Please try again.', userMessage: 'That took too long. Please try again.' } });
       }
       if (error instanceof APIError && error.code === 'provider_error') console.error(error.message);
-      if (error instanceof APIError) return send(error.status, { error: { code: error.code, message: error.message } });
+      if (error instanceof APIError) {
+        const message = userErrorMessage(error);
+        return send(error.status, { error: { code: error.code, message, userMessage: message } });
+      }
       console.error('Request failed:', error?.name ?? 'UnknownError');
-      send(500, { error: { code: 'internal_error', message: 'The backend could not process this request.' } });
+      send(500, { error: { code: 'internal_error', message: "I couldn't finish that request. Please try again.", userMessage: "I couldn't finish that request. Please try again." } });
     }
   });
   server.requestTimeout = 55_000;

@@ -1,13 +1,24 @@
 import { APIError } from './contract.mjs';
+import { logGoogleError } from './diagnostics.mjs';
 
-// Classify Google's response locally. Never forward arbitrary upstream text,
-// project identifiers, URLs, or credential values to the app or terminal.
-export async function geminiHTTPError(response) {
-  let detail = '';
+// Original Google diagnostics stay on the backend; the phone gets a concise explanation.
+export async function geminiHTTPError(response, config = {}, context = {}) {
+  let payload = null;
+  let rawText = null;
   try {
-    const payload = await response.json();
-    detail = JSON.stringify(payload.error ?? {}).toLowerCase();
-  } catch { /* A proxy may return HTML or an empty body. Status still helps. */ }
+    if (typeof response.text === 'function') {
+      rawText = (await response.text()).slice(0, 65_536);
+      try { payload = JSON.parse(rawText); } catch { /* Preserve non-JSON error text below. */ }
+    } else { payload = await response.json(); }
+  } catch { /* Status and headers still help if the body cannot be read. */ }
+  const detail = JSON.stringify(payload?.error ?? {}).toLowerCase();
+  logGoogleError({
+    timestamp: new Date().toISOString(), ...context,
+    model: config.model ?? null, httpStatus: response.status,
+    retryAfter: response.headers?.get?.('retry-after') ?? null,
+    googleRequestId: response.headers?.get?.('x-request-id') ?? response.headers?.get?.('x-goog-request-id') ?? null,
+    googleResponse: payload ?? rawText ?? '[Response body unavailable]',
+  }, config);
   const status = response.status;
   let message;
   if (status === 401 || /api_key_invalid|api_key_expired|api key not valid|api key expired/.test(detail)) {
@@ -37,5 +48,17 @@ export async function geminiHTTPError(response) {
   } else {
     message = 'Google rejected the AI request. Check the project and model configuration in Google AI Studio.';
   }
-  return new APIError(status === 429 ? 429 : 502, 'provider_error', `Gemini HTTP ${status}: ${message} No automatic retry was made.`);
+  const error = new APIError(status === 429 ? 429 : 502, 'provider_error', `Gemini HTTP ${status}: ${message} No automatic retry was made.`);
+  if (status === 429) {
+    error.userMessage = 'The AI service is limiting requests right now. Please try again later.';
+  } else if (status >= 500) {
+    error.userMessage = 'The AI service is busy right now. Please try again in a moment.';
+  } else if (status === 400 && /image|jpeg|inline.?data/.test(detail)) {
+    error.userMessage = "I couldn't read that camera view. Please show it again.";
+  } else if ([401, 402, 403, 404].includes(status) || /api_key_invalid|api_key_expired/.test(detail)) {
+    error.userMessage = "I can't connect to the AI service right now. Please check the connection settings.";
+  } else {
+    error.userMessage = "I couldn't get an answer this time. Please try again.";
+  }
+  return error;
 }

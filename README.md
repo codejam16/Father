@@ -14,7 +14,7 @@ A starter for a moving-camera task assistant on iPhone. Keep the camera open, as
 - Experimental Apple Vision tracking for short-lived pointers, including replay of retained frames to compensate for delayed model responses. Lost/expired pointers are hidden, not drawn at stale coordinates.
 - Conversation context, task notes, cancellation, and pause-on-background behavior.
 - Clearly labelled, **zero-provider-call demo mode**, enabled by default. Demo replies do not identify objects.
-- Dependency-free Node.js proxy with structured-output validation, authentication for live calls, bounded input, timeout, rate limit, and persistent request allowance.
+- Dependency-free Node.js proxy with structured-output validation, authentication for live calls, bounded input and timeout handling; Google enforces API usage quotas.
 
 ## Start with the iPhone app
 
@@ -51,7 +51,7 @@ In live mode, the assistant chooses one validated action per decision: `respond`
 
 Research uses Gemini's built-in Google Search and URL Context tools in separate calls, without mixing tools with the structured camera response. Search returns source metadata; reading is limited to source IDs already returned by Google. A failed/paywalled retrieval is not treated as a read document. Relevant PDF diagrams can inform research notes, but this is not guaranteed pixel matching between a manual illustration and the camera view.
 
-After a successful research operation, the backend returns a short-lived continuation. The iPhone takes a fresh camera image, clears the old manual selection, and continues the same question before deciding what to highlight. At most two research operations and five model calls are allowed per question, with no automatic provider retries. Each model call reserves one slot from `MAX_LIVE_REQUESTS`, including failed attempts; a question with research can consume several slots. Google may execute multiple search queries inside one grounded call, so this is not a hard search-query or monetary cap. Research availability and charges depend on the model/project; no billing settings are changed by this app.
+After a successful research operation, the backend returns a short-lived continuation. The iPhone takes a fresh camera image, clears the old manual selection, and continues the same question before deciding what to highlight. At most two research operations and five model calls are allowed per question, with no automatic provider retries. A researched question can make several Google API calls. The backend imposes no total or per-minute usage limit. Google may execute multiple search queries inside one grounded call, so this is not a hard search-query or monetary cap. Research availability and charges depend on the model/project; no billing settings are changed by this app.
 
 The camera screen still has only mute and settings. Source-backed answers automatically open a secondary **Sources and research** sheet with source links, evidence excerpts, and Google's supplied Search suggestions. Dismiss it to resume listening. Sources and task memory are also available from settings. Errors are spoken when spoken replies are enabled and are available as **Last issue** in settings.
 
@@ -75,7 +75,6 @@ AI_MODE=gemini
 GEMINI_API_KEY=YOUR_PROVIDER_KEY
 GEMINI_MODEL=gemini-3.8-flash
 APP_TOKEN=YOUR_RANDOM_PRIVATE_TOKEN_AT_LEAST_16_CHARACTERS
-MAX_LIVE_REQUESTS=50
 ```
 
 Generate a proxy token locally if needed:
@@ -88,17 +87,30 @@ Restart the backend. In app settings, turn off **Demo responses**, enter the bac
 
 The default model is `gemini-3.8-flash`; `gemini-3.5-flash-lite` is also allowed by the proxy. Verify access in your own Google project. `gemini-2.5-flash` is not the starter's default because it is deprecated/restricted for new users as of November 2026. Localization quality still needs evaluation for each model and task.
 
-If an AI request fails, the app and backend terminal now show Google's HTTP status and a specific, credential-free explanation. From `server`, run `npm run doctor` to check model metadata without generating an answer or consuming the app's request allowance. A successful metadata check does **not** establish generation permission, image support, quota, or free-tier eligibility. Send one question from the app to see the generation result. For 401/403, review the key and project access in [Google AI Studio](https://aistudio.google.com/apikey); for 404, verify the selected model; for 400, the message identifies recognized image/schema/thinking or project setup problems. After changing `.env`, stop and restart the backend. Keep keys, tokens and `.env` private when sharing diagnostics.
+If an AI request fails, the app and backend terminal now show Google's HTTP status and a specific, credential-free explanation. From `server`, run `npm run doctor` to check model metadata without generating an answer. A successful metadata check does **not** establish generation permission, image support, quota, or free-tier eligibility. Send one question from the app to see the generation result. For 401/403, review the key and project access in [Google AI Studio](https://aistudio.google.com/apikey); for 404, verify the selected model; for 400, the message identifies recognized image/schema/thinking or project setup problems. After changing `.env`, stop and restart the backend. Keep keys, tokens and `.env` private when sharing diagnostics.
 
-## Keep within the $5 budget
+## Google error diagnostics
 
-- Demo mode makes **no provider calls**, even if a Gemini key happens to exist in the environment.
-- Real image analysis happens when a typed or automatically transcribed question is sent, and on bounded fresh-frame continuations after research. Camera preview/tracking remain on the phone. There is no continuous cloud video/audio stream.
-- `MAX_LIVE_REQUESTS` counts all live model calls, including research. It is a persistent total allowance stored in `server/.data/allowance.json`; restarts do not reset it. Failed/aborted attempts also consume a slot. Do not delete that file to bypass the limit unintentionally.
-- Limit image size, conversation length, output tokens, and rate. The backend makes no automatic provider retries.
-- This allowance is **not a guaranteed monetary cap**. Prices, image tokens, reasoning tokens, quota eligibility, and other project usage affect spending. Verify current provider pricing/billing, monitor usage, and leave headroom. An alerts-only cloud budget is not a hard spending limit.
-- For a strictly free run, keep billing disabled and use an eligible free-tier model after confirming your project's quotas. Avoid enabling paid services merely to make a demo work.
-- One backend process owns the allowance file. This is not a multi-instance production ledger.
+Each Google call logs the actual model, action, call number, HTTP status, elapsed time, and token usage when available. Calls for the same `/analyze` request share a request ID, so you can see whether one spoken question triggered a decision, search, or document-reading call.
+
+On a Google failure, Terminal prints **GOOGLE ERROR — original response** followed by Google's response JSON or error text, not a replacement explanation. Quota violation details (`quotaId`, `quotaMetric`, `quotaValue`, dimensions), retry information, and `Retry-After` are preserved when Google supplies them. API keys, the configured app token, and recognized credential fields are redacted. Successful image/question bodies and authentication headers are not logged.
+
+The same error record is saved to `server/.data/provider-errors.jsonl` with owner-only permissions, bounded to a 1 MB file plus one rotated backup. `.data` is excluded from Git. Errors may include Google project identifiers; review diagnostics before sharing them publicly. The app still receives a concise error, while the original provider details stay on your Mac.
+
+After restarting the server and reproducing the problem, inspect the newest saved error:
+
+```sh
+cd ~/Desktop/Father/server
+node --input-type=module -e 'import {readFileSync} from "node:fs"; const lines=readFileSync(".data/provider-errors.jsonl","utf8").trim().split("\n"); console.log(JSON.stringify(JSON.parse(lines.at(-1)), null, 2));'
+```
+
+## API usage and quotas
+
+- Google enforces API quotas and rate limits. The backend has no daily/total request allowance and no requests-per-minute cap. Old `MAX_LIVE_REQUESTS`, `REQUESTS_PER_MINUTE`, `BUDGET_FILE`, and historical allowance files are ignored.
+- Demo mode makes no provider calls, even when a Gemini key exists.
+- A spoken or typed question may trigger several model calls, including research and fresh-frame analysis. Google accounts for those calls and any search-tool usage according to the project/model's limits and billing configuration.
+- Each question has a bounded research workflow (at most two research operations and five model calls) to stop recursive tool loops. This is not a usage quota across questions.
+- Images, input context and output size remain bounded. The backend makes no automatic provider retries. A Google 429 is returned as `provider_error` with Google's status, without imposing a local cooldown or preventing the next user request.
 
 ## How pointing works
 
@@ -122,7 +134,7 @@ If an AI request fails, the app and backend terminal now show Google's HTTP stat
 | `ios/TaskLens/SpeechService.swift` | Push-to-talk and spoken replies |
 | `ios/TaskLens/AssistantViewModel.swift` | Context, selection, request lifecycle |
 | `ios/TaskLens/AnalysisClient.swift` | Backend client and local demo replies |
-| `server/src/` | Validation, Gemini adapter, proxy, allowance |
+| `server/src/` | Validation, Gemini adapter, research workflow and task memory |
 | `docs/API.md` | Shared mobile/backend contract |
 | `docs/DEVICE_CHECKS.md` | Required real-device acceptance checks |
 

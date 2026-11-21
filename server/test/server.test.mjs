@@ -1,10 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { once } from 'node:events';
-import { Budget } from '../src/budget.mjs';
 import { createApp, loadConfig } from '../src/server.mjs';
 import { validateAnswer, validateRequest } from '../src/contract.mjs';
 import { analyzeWithGemini, buildGeminiBody } from '../src/gemini.mjs';
@@ -17,11 +13,7 @@ const input = (extra = {}) => ({
   history: [], ...extra,
 });
 
-function config(t, extra = {}) {
-  const directory = mkdtempSync(join(tmpdir(), 'tasklens-'));
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
-  return { ...loadConfig({ BUDGET_FILE: join(directory, 'allowance.json') }), ...extra };
-}
+function config(_t, extra = {}) { return { ...loadConfig({}), diagnosticLogPath: null, diagnosticLogger: () => {}, ...extra }; }
 
 async function running(t, settings, dependencies) {
   const server = createApp(settings, dependencies);
@@ -85,41 +77,43 @@ test('frame identity, selected region, task and history reach the model', () => 
   assert.equal(body.contents.at(-1).parts[1].inlineData.mimeType, 'image/jpeg');
 });
 
-test('authentication happens before an allowance is consumed', async (t) => {
+test('authentication and input validation happen before provider access', async (t) => {
   const settings = config(t, { mode: 'gemini', appToken: 'a-private-test-token', apiKey: 'never-used' });
-  const budget = new Budget(settings.budgetPath, 1);
-  const url = await running(t, settings, { budget, analyze: async () => { throw new Error('Must not run'); } });
+  let calls = 0;
+  const url = await running(t, settings, { analyze: async () => { calls++; throw new Error('Must not run'); } });
   assert.equal((await post(url)).status, 401);
-  assert.equal(budget.used, 0);
   assert.equal((await post(url, input({ selection: [0, 0, 0, 0] }), settings.appToken)).status, 400);
-  assert.equal(budget.used, 0);
+  assert.equal(calls, 0);
 });
 
-test('live allowance is reserved once per call and survives restart', async (t) => {
-  const settings = config(t, { mode: 'gemini', appToken: 'a-private-test-token', apiKey: 'never-used', maxRequests: 1 });
+test('legacy local quota settings are ignored and more than fifty calls can succeed', async (t) => {
+  const settings = { ...loadConfig({ MAX_LIVE_REQUESTS: '1', REQUESTS_PER_MINUTE: '1', BUDGET_FILE: '/unused/allowance.json' }),
+    mode: 'gemini', appToken: 'a-private-test-token', apiKey: 'never-used' };
+  assert.equal(settings.maxRequests, undefined);
+  assert.equal(settings.requestsPerMinute, undefined);
+  assert.equal(settings.budgetPath, undefined);
   let calls = 0;
   const url = await running(t, settings, { analyze: async () => {
     calls++;
     return { answer: 'A test answer.', target: null, needsClearerView: false, usage: {} };
   } });
-  assert.equal((await post(url, input(), settings.appToken)).status, 200);
-  assert.equal((await post(url, input(), settings.appToken)).status, 429);
-  assert.equal(calls, 1);
-  assert.throws(() => new Budget(settings.budgetPath, 1).reserve(), /allowance/);
+  for (let i = 0; i < 60; i++) assert.equal((await post(url, input(), settings.appToken)).status, 200);
+  assert.equal(calls, 60);
 });
 
-test('provider failures consume the reserved allowance and are not retried', async (t) => {
-  const settings = config(t, { mode: 'gemini', appToken: 'a-private-test-token', apiKey: 'never-used', maxRequests: 1 });
+test('Google quota failures are forwarded without retry and do not block later requests locally', async (t) => {
+  const settings = config(t, { mode: 'gemini', appToken: 'a-private-test-token', apiKey: 'never-used' });
   let calls = 0;
   const url = await running(t, settings, { analyze: async () => {
     calls++;
     return analyzeWithGemini(input(), settings, async () => ({ ok: false, status: 429 }));
   } });
-  const first = await post(url, input(), settings.appToken);
-  assert.equal(first.status, 429);
-  assert.equal((await first.json()).error.code, 'provider_error');
-  assert.equal((await post(url, input(), settings.appToken)).status, 429);
-  assert.equal(calls, 1);
+  for (let i = 0; i < 2; i++) {
+    const response = await post(url, input(), settings.appToken);
+    assert.equal(response.status, 429);
+    assert.equal((await response.json()).error.code, 'provider_error');
+  }
+  assert.equal(calls, 2);
 });
 
 test('upstream errors do not expose provider credentials', async (t) => {
@@ -171,7 +165,6 @@ test('doctor checks metadata only and does not claim generation access', async (
     return { ok: true, json: async () => ({ supportedGenerationMethods: ['generateContent'] }) };
   });
   assert.match(result, /does not verify generation permission/);
-  assert.equal(new Budget(settings.budgetPath, settings.maxRequests).used, 0);
   assert.doesNotMatch(result, /private-key-do-not-print/);
 });
 
@@ -203,27 +196,31 @@ test('provider reasoning text is excluded from the answer JSON', async (t) => {
   assert.equal(result.usage.outputTokens, 12);
 });
 
-test('global rate limit applies across clients and keys', async (t) => {
-  const url = await running(t, config(t, { requestsPerMinute: 1 }));
-  assert.equal((await post(url)).status, 200);
-  const response = await post(url);
-  assert.equal(response.status, 429);
-  assert.equal((await response.json()).error.code, 'rate_limited');
-});
-
 test('oversized HTTP bodies receive 413 without contacting the provider', async (t) => {
   const settings = config(t, { mode: 'gemini', appToken: 'a-private-test-token', apiKey: 'never-used' });
-  const budget = new Budget(settings.budgetPath, 1);
-  const url = await running(t, settings, { budget, analyze: () => { throw new Error('Must not run'); } });
+  const url = await running(t, settings, { analyze: () => { throw new Error('Must not run'); } });
   const response = await post(url, { padding: 'x'.repeat(2_200_001) }, settings.appToken);
   assert.equal(response.status, 413);
-  assert.equal(budget.used, 0);
 });
 
-test('invalid JSON produces a useful error without consuming an allowance', async (t) => {
+test('invalid JSON produces a useful error', async (t) => {
   const settings = config(t);
   const url = await running(t, settings);
   const response = await fetch(`${url}/analyze`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{' });
   assert.equal(response.status, 400);
   assert.equal((await response.json()).error.code, 'invalid_json');
+});
+
+test('HTTP errors expose friendly speech text rather than developer diagnostics', async (t) => {
+  const settings = config(t, { mode: 'gemini', apiKey: 'fake-key', appToken: 'private-test-token' });
+  const url = await running(t, settings, { analyze: async () => analyzeWithGemini(input(), settings, async () => ({
+    ok: false, status: 429, json: async () => ({ error: { message: 'quotaMetric: private-project request limit' } }),
+  })) });
+  const response = await post(url, input(), settings.appToken);
+  const value = await response.json();
+  assert.equal(response.status, 429);
+  assert.equal(value.error.code, 'provider_error');
+  assert.equal(value.error.message, value.error.userMessage);
+  assert.match(value.error.userMessage, /limiting requests/);
+  assert.doesNotMatch(JSON.stringify(value), /Gemini HTTP|quotaMetric|private-project|GEMINI_API_KEY/);
 });

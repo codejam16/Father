@@ -82,8 +82,6 @@ export async function runAgent(request, config, session, fetcher = fetch) {
       toolArgument = source.url;
     }
     config.signal?.throwIfAborted();
-    // The initial decision call is reserved by the HTTP handler; reserve each additional call separately.
-    config.reserveAdditionalCall?.();
     console.log(`Agent action: ${decision.action}`);
     const result = await generateContent(researchBody(decision.action, toolArgument, request, config.maxOutputTokens, session.memory), config, fetcher);
     const extracted = extractResearch(result, candidateText(result), session.sources, decision.action, toolArgument);

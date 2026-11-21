@@ -12,7 +12,7 @@ export async function checkGemini(config, fetcher = fetch) {
   } catch {
     throw new Error('Could not reach Google. Check the Mac internet connection and try again.');
   }
-  if (!response.ok) throw await geminiHTTPError(response);
+  if (!response.ok) throw await geminiHTTPError(response, config, { operation: 'model_metadata' });
   let model;
   try { model = await response.json(); } catch { throw new Error('Google returned unreadable model metadata.'); }
   if (!model.supportedGenerationMethods?.includes('generateContent')) {
@@ -23,7 +23,7 @@ export async function checkGemini(config, fetcher = fetch) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
-    console.log('Checking Google model metadata only. No answer generation or app allowance usage.');
+    console.log('Checking Google model metadata only. No answer generation.');
     console.log(await checkGemini(loadConfig()));
   } catch (error) {
     console.error(error.message);

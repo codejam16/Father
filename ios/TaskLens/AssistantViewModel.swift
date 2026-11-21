@@ -169,8 +169,11 @@ final class AssistantViewModel: ObservableObject {
                 // Explicit cancellation/backgrounding should not surface as a failed task.
             } catch {
                 guard workID == id else { return }
-                errorMessage = error.localizedDescription
-                if settings.spokenReplies { speech.speak("I couldn't finish that request. " + error.localizedDescription) }
+                // Unexpected decoding/system errors must not become a spoken stack of technical details.
+                let message = (error as? TaskLensError)?.localizedDescription
+                    ?? "I couldn't finish that request. Please try again."
+                errorMessage = message
+                if settings.spokenReplies { speech.speak(message) }
             }
         }
     }

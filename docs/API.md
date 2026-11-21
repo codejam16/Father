@@ -58,7 +58,7 @@ If highlighting is useful, `target` is `{ "label": "USB connector", "box": [100,
 
 ## Errors
 
-`{ "error": { "code": "rate_limited", "message": "Please wait before asking another question." } }`
+`{ "error": { "code": "provider_error", "message": "Gemini HTTP 429: Google quota or rate limit reached." } }`
 
 | Status | Typical cause |
 | --- | --- |
@@ -66,11 +66,11 @@ If highlighting is useful, `target` is `{ "label": "USB connector", "box": [100,
 | 401 | Missing/wrong proxy token |
 | 413 | HTTP body too large |
 | 415 | Content type is not JSON |
-| 429 | Rate limit, persistent request allowance or provider quota |
+| 429 | Google provider quota or rate limit (no local usage quota) |
 | 502 | Upstream rejection, malformed/truncated model response |
 | 504 | Provider connection failure/timeout |
 
-No automatic retries. Cancellation on the phone does not guarantee cancellation of work already accepted by the provider, and does not refund a reserved request slot.
+No automatic retries. Cancellation on the phone does not guarantee cancellation of work already accepted by Google or reverse its usage accounting.
 
 
 ## Task-aware requests
@@ -94,6 +94,6 @@ Additional response fields are `action`, `continuationId`, `taskMemory`, `source
 
 For `refresh_camera`, no target is returned. Capture a new frame and repeat the same question, task, and session with the returned `continuationId`. Clear any previous selection. A continuation lasts two minutes, cannot reuse the preceding frame ID, is consumed on success, and cannot be shared across sessions/questions. The client follows at most two refreshes. Do not add intermediate research progress messages to chat history as completed answers.
 
-Each HTTP request permits at most two model calls (decision plus research), with a 45-second backend deadline and a 55-second phone timeout. Across a question and its continuations, there are at most five calls. Every call consumes persistent allowance before contacting Gemini. Search can internally use multiple queries; quotas and charges apply separately according to Google's project/model terms. Cancellation aborts outstanding backend fetches when the phone disconnects, but cannot refund work already accepted by Google.
+Each HTTP request permits at most two model calls (decision plus research), with a 45-second backend deadline and a 55-second phone timeout. Across a question and its continuations, there are at most five calls. There is no backend total request allowance or per-minute usage quota; Google enforces API limits. Search can internally use multiple queries; quotas and charges apply separately according to Google's project/model terms. Cancellation aborts outstanding backend fetches when the phone disconnects, but cannot refund work already accepted by Google.
 
 Sessions are process-local, capped at 100, and expire after 30 minutes of inactivity. They contain bounded task notes, sources and research excerpts, not images or API keys. Use an unguessable, per-task UUID. One active operation per session prevents out-of-order state updates. Changing task notes resets state; new tasks should use new UUIDs. A backend restart loses memory and invalidates continuations. Expired or overlapping tasks return 409. No client-supplied research text is accepted as verified evidence.
