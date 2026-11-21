@@ -1,0 +1,12 @@
+.DS_Store
+.env
+server/.data/
+node_modules/
+DerivedData/
+build/
+*.xcuserstate
+xcuserdata/
+.swiftpm/
+.build/
+*.ipa
+*.xcarchive

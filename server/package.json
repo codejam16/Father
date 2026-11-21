@@ -1,0 +1,11 @@
+{
+  "name": "tasklens-server",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.9" },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env src/index.mjs",
+    "dev": "node --env-file-if-exists=.env --watch src/index.mjs",
+    "test": "node --test"
+  }
+}
