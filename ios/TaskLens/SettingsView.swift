@@ -70,6 +70,11 @@ struct SettingsView: View {
                 } footer: {
                     Text("When connected, questions send a camera image, recent conversation, and task context to your backend and AI provider. Research may generate web searches. Task memory expires on the backend after inactivity and resets when you start a new task. Demo mode stays on the phone.")
                 }
+                Section {
+                    Toggle("Captions", isOn: $settings.captionsEnabled)
+                    Toggle("Web info", isOn: $settings.webInfoEnabled)
+                } header: { Text("Camera overlays") }
+                footer: { Text("Captions show both sides of the conversation over the camera. Web info adds optional source cards, price details when found, and online page previews. Search online when needed controls whether the assistant can research; turning Web info off hides the cards without disabling task research. Research can add latency and provider charges. Opening previews contacts the source websites.") }
             }
             .navigationTitle("TaskLens settings")
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } } }

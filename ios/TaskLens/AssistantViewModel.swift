@@ -22,6 +22,8 @@ final class AssistantViewModel: ObservableObject {
     private var sessionID = UUID().uuidString.lowercased()
     private var sessionTask: String?
     private var confirmedStepIDs = Set<String>()
+    @Published private(set) var pendingQuestion: String?
+    @Published private(set) var webInfo: WebInfo?
     private var isActive = false
     private var voiceSuspended = false
     private let client = AnalysisClient()
@@ -97,6 +99,8 @@ final class AssistantViewModel: ObservableObject {
             sessionTask = settings.task
         }
         isBusy = true
+        pendingQuestion = text
+        webInfo = nil
         updateListening()
         speech.stopSpeaking()
         errorMessage = nil
@@ -111,11 +115,13 @@ final class AssistantViewModel: ObservableObject {
         let researchEnabled = settings.researchEnabled
         let sessionID = self.sessionID
         let confirmations = Array(confirmedStepIDs)
+        let includeWebInfo = settings.webInfoEnabled
         work = Task {
             defer {
                 if workID == id {
                     isBusy = false
                     workID = nil
+                    pendingQuestion = nil
                     updateListening()
                 }
             }
@@ -133,7 +139,7 @@ final class AssistantViewModel: ObservableObject {
                     let request = AnalysisRequest(frame: frame, question: text, task: task,
                                                   history: history, selection: currentSelection,
                                                   sessionId: sessionID, continuationId: continuationID,
-                                                  researchEnabled: researchEnabled, confirmedStepIds: confirmations)
+                                                  researchEnabled: researchEnabled, confirmedStepIds: confirmations, includeWebInfo: includeWebInfo)
                     if demoMode { response = try await client.demo(request) }
                     else { response = try await client.analyze(request, endpoint: endpoint, token: token) }
                     try Task.checkCancellation()
@@ -156,6 +162,8 @@ final class AssistantViewModel: ObservableObject {
                 citedSourceIds = response.sourceIds ?? []
                 messages.append(ChatMessage(role: .user, content: text))
                 messages.append(ChatMessage(role: .assistant, content: response.answer))
+                pendingQuestion = nil
+                webInfo = response.webInfo
                 if messages.count > 40 { messages.removeFirst(messages.count - 40) }
                 question = ""
                 clearSelection()
@@ -183,6 +191,7 @@ final class AssistantViewModel: ObservableObject {
         work?.cancel()
         work = nil
         isBusy = false
+        pendingQuestion = nil
         speech.setListening(false)
         speech.stopSpeaking()
         updateListening()
@@ -201,6 +210,7 @@ final class AssistantViewModel: ObservableObject {
         question = ""
         clearTaskContext()
         sessionTask = settings.task
+        webInfo = nil
         errorMessage = nil
     }
 
@@ -213,6 +223,8 @@ final class AssistantViewModel: ObservableObject {
     private func clearTaskContext() {
         sessionID = UUID().uuidString.lowercased()
         messages.removeAll()
+        pendingQuestion = nil
+        webInfo = nil
         taskMemory = .empty
         sources = []
         researchReports = []

@@ -5,6 +5,7 @@ import { createApp, loadConfig } from '../src/server.mjs';
 import { validateAnswer, validateRequest } from '../src/contract.mjs';
 import { analyzeWithGemini, buildGeminiBody } from '../src/gemini.mjs';
 import { checkGemini } from '../src/doctor.mjs';
+import { extractWebInfo, publicHTTPS } from '../src/web-info.mjs';
 
 // Minimal JPEG envelope for transport validation. No test calls a real model.
 const input = (extra = {}) => ({
@@ -132,6 +133,7 @@ test('Google failures produce actionable messages without forwarding upstream de
     [429, '', /quota or rate limit/],
     [400, 'FAILED_PRECONDITION', /project setup/],
     [400, 'thinkingLevel unsupported', /thinking settings/],
+    [400, 'Tool use with response mime type not supported', /Turn off Web info/],
     [400, 'responseJsonSchema unsupported', /structured response/],
     [400, 'image could not be decoded', /camera image/],
     [400, 'invalid argument', /request format/],
@@ -223,4 +225,89 @@ test('HTTP errors expose friendly speech text rather than developer diagnostics'
   assert.equal(value.error.message, value.error.userMessage);
   assert.match(value.error.userMessage, /limiting requests/);
   assert.doesNotMatch(JSON.stringify(value), /Gemini HTTP|quotaMetric|private-project|GEMINI_API_KEY/);
+});
+
+test('web lookup is explicit, opt-in and validated for old and new clients', async (t) => {
+  const oldRequest = validateRequest(input());
+  assert.equal(oldRequest.includeWebInfo, false);
+  assert.equal(buildGeminiBody(oldRequest, 1024).tools, undefined);
+  assert.equal(buildGeminiBody(oldRequest, 1024).generationConfig.responseJsonSchema.properties.webSummary, undefined);
+  assert.throws(() => validateRequest(input({ includeWebInfo: 'true' })), /boolean/);
+  const newRequest = validateRequest(input({ includeWebInfo: true }));
+  const body = buildGeminiBody(newRequest, 1024);
+  assert.deepEqual(body.tools, [{ googleSearch: {} }]);
+  assert.ok(body.generationConfig.responseJsonSchema.required.includes('webSummary'));
+  assert.match(body.systemInstruction.parts[0].text, /SIMILAR products/);
+  const settings = config(t, { mode: 'gemini', appToken: 'a-private-test-token' });
+  const url = await running(t, settings, { analyze: async (request) => {
+    assert.equal(request.includeWebInfo, true);
+    return { answer: 'A bottle.', target: null, needsClearerView: false, webInfo: null };
+  } });
+  assert.equal((await post(url, input({ includeWebInfo: true }), settings.appToken)).status, 200);
+});
+
+test('web cards use actual grounding links and suppress unsupported summaries', () => {
+  const candidate = { groundingMetadata: {
+    groundingChunks: [
+      { web: { title: 'Bottle listing', uri: 'https://shop.example.com/bottle' } },
+      { web: { title: 'Duplicate', uri: 'https://shop.example.com/bottle' } },
+      { web: { title: 'Unsafe', uri: 'javascript:alert(1)' } },
+    ],
+    groundingSupports: [{ groundingChunkIndices: [0], segment: { text: 'Similar bottle costs CAD 25.' } }],
+    searchEntryPoint: { renderedContent: '<div>Google search suggestions</div>' },
+  } };
+  const answer = { webSummary: 'A similar bottle costs CAD 25 at the listed retailer.', url: 'https://invented.example.com' };
+  const info = extractWebInfo(candidate, answer);
+  assert.equal(info.sources.length, 1);
+  assert.equal(info.sources[0].url, 'https://shop.example.com/bottle');
+  assert.equal(info.summary, answer.webSummary);
+  assert.match(info.searchSuggestionHTML, /Google search suggestions/);
+  assert.doesNotMatch(JSON.stringify(info), /invented/);
+  assert.equal(extractWebInfo({}, answer), null);
+  candidate.groundingMetadata.groundingSupports = [];
+  assert.equal(extractWebInfo(candidate, answer).summary, null);
+  candidate.groundingMetadata.groundingSupports = [null];
+  assert.equal(extractWebInfo(candidate, answer).summary, null);
+  candidate.groundingMetadata.groundingChunks = [{ web: { uri: 'http://localhost/admin' } }];
+  assert.equal(extractWebInfo(candidate, answer), null);
+});
+
+test('source URLs reject local, credential-bearing and executable destinations', () => {
+  for (const url of ['javascript:alert(1)', 'file:///etc/hosts', 'http://example.com',
+    'https://localhost/a', 'https://box.local/a', 'https://box.internal/a', 'https://127.0.0.1/a',
+    'https://169.254.169.254/a', 'https://[::1]/a', 'https://user:password@example.com',
+    'https://example.com:8787/', 'https://0x7f000001/']) {
+    assert.equal(publicHTTPS(url), null, url);
+  }
+  assert.equal(publicHTTPS('https://shop.example.com/bottle'), 'https://shop.example.com/bottle');
+});
+
+test('Gemini returns grounded cards only when this request opted in, with one provider call', async (t) => {
+  const settings = config(t);
+  for (const enabled of [false, true]) {
+    let calls = 0;
+    const result = await analyzeWithGemini(input({ includeWebInfo: enabled }), settings, async (_, options) => {
+      calls++;
+      assert.equal(Boolean(JSON.parse(options.body).tools), enabled);
+      return { ok: true, json: async () => ({ candidates: [{ finishReason: 'STOP', content: { parts: [{ text: JSON.stringify({
+        answer: 'A bottle.', targetLabel: null, box: null, needsClearerView: false, webSummary: 'Similar bottles cost CAD 25.',
+      }) }] }, groundingMetadata: {
+        groundingChunks: [{ web: { title: 'Bottle', uri: 'https://shop.example.com/bottle' } }],
+        groundingSupports: [{ groundingChunkIndices: [0] }],
+      } }] }) };
+    });
+    assert.equal(calls, 1);
+    assert.equal(result.webInfo !== null, enabled);
+    if (enabled) assert.match(result.webInfo.summary, /CAD 25/);
+  }
+});
+
+test('mock mode never searches even when Web info was requested', async (t) => {
+  const settings = config(t);
+  const url = await running(t, settings, { analyze: () => { throw new Error('Must not call Gemini'); } });
+  const response = await post(url, input({ includeWebInfo: true }));
+  assert.equal(response.status, 200);
+  const result = await response.json();
+  assert.equal(result.mode, 'mock');
+  assert.equal(result.webInfo, null);
 });

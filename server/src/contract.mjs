@@ -50,6 +50,7 @@ export function validateRequest(value) {
     return { role: message.role, content: text(message.content, 'history content', 2000) };
   });
   const selection = value.selection == null ? null : validateBox(value.selection);
+  if (value.includeWebInfo !== undefined && typeof value.includeWebInfo !== 'boolean') invalid('includeWebInfo must be a boolean.');
   const sessionId = value.sessionId ?? null;
   const continuationId = value.continuationId ?? null;
   const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -60,7 +61,7 @@ export function validateRequest(value) {
   if (!Array.isArray(confirmedStepIds) || confirmedStepIds.length > 10 ||
       !confirmedStepIds.every((id) => typeof id === 'string' && /^[a-zA-Z0-9_-]{1,40}$/.test(id))) invalid('Invalid confirmedStepIds.');
   return { frameId, capturedAt, question, task, image, history: normalizedHistory, selection,
-    sessionId, continuationId, researchEnabled: value.researchEnabled ?? true, confirmedStepIds };
+    sessionId, continuationId, researchEnabled: value.researchEnabled ?? true, confirmedStepIds, includeWebInfo: value.includeWebInfo === true };
 }
 
 // A schema constrains shape; validate the model's values again before using them.

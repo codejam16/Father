@@ -152,10 +152,11 @@ struct AnalysisRequest: Encodable {
     let continuationId: String?
     let researchEnabled: Bool
     let confirmedStepIds: [String]
+    let includeWebInfo: Bool
 
     init(frame: CapturedFrame, question: String, task: String, history: [ChatMessage], selection: NormalizedBox?,
          sessionId: String? = nil, continuationId: String? = nil,
-         researchEnabled: Bool = true, confirmedStepIds: [String] = []) {
+         researchEnabled: Bool = true, confirmedStepIds: [String] = [], includeWebInfo: Bool = false) {
         self.frameId = frame.id
         self.capturedAt = ISO8601DateFormatter().string(from: frame.capturedAt)
         self.question = question
@@ -167,6 +168,7 @@ struct AnalysisRequest: Encodable {
         self.continuationId = continuationId
         self.researchEnabled = researchEnabled
         self.confirmedStepIds = confirmedStepIds
+        self.includeWebInfo = includeWebInfo
     }
 }
 
@@ -187,6 +189,19 @@ struct AnalysisResponse: Decodable {
     var sources: [ResearchSource]? = nil
     var researchReports: [ResearchReport]? = nil
     var sourceIds: [String]? = nil
+    var webInfo: WebInfo? = nil
+}
+
+struct WebSource: Decodable, Identifiable {
+    let title: String
+    let url: URL
+    var id: String { url.absoluteString }
+}
+
+struct WebInfo: Decodable {
+    let summary: String?
+    let sources: [WebSource]
+    let searchSuggestionHTML: String?
 }
 
 struct Highlight {

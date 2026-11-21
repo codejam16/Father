@@ -29,8 +29,11 @@ After research, you receive a fresh camera frame. Use the actual frame to identi
 Your sourceIds list identifies the sources supporting THIS answer. Do not cite sources for visual observations alone. Return all requested schema fields. For general/ambiguous answers return null targetLabel and box.`;
 
 export function buildAgentBody(request, config, session, canResearch) {
-  const body = buildGeminiBody(request, config.maxOutputTokens);
+  const body = buildGeminiBody({ ...request, includeWebInfo: false }, config.maxOutputTokens);
   body.systemInstruction.parts.push({ text: agentInstruction });
+  if (request.includeWebInfo) {
+    body.systemInstruction.parts.push({ text: 'Optional web info cards are enabled. When product prices, shopping details, or further reading would help, choose a research action if researchAllowed. Return a concise source-backed webSummary for the optional card, or null when unnecessary or ungrounded. For uncertain product identification, label results as similar products, never an exact match. Prices require current source evidence, currency and retailer. Do not invent prices, availability, links, or make purchases.' });
+  }
   body.contents.at(-1).parts[0].text = JSON.stringify({
     ...JSON.parse(body.contents.at(-1).parts[0].text),
     taskMemory: session.memory,
@@ -49,7 +52,22 @@ export function buildAgentBody(request, config, session, canResearch) {
     },
     required: [...answerSchema.required, 'action', 'argument', 'sourceIds', 'memory'],
   };
+  if (request.includeWebInfo) {
+    body.generationConfig.responseJsonSchema.properties.webSummary = { type: ['string', 'null'] };
+    body.generationConfig.responseJsonSchema.required.push('webSummary');
+  }
   return body;
+}
+
+function taskWebInfo(request, session, decision) {
+  if (!request.includeWebInfo || !decision.sourceIds.length) return null;
+  const sources = session.sources.filter((source) => decision.sourceIds.includes(source.id));
+  if (!sources.length) return null;
+  return {
+    summary: typeof decision.webSummary === 'string' ? decision.webSummary.slice(0, 1600) : null,
+    sources: sources.slice(0, 6).map(({ title, url }) => ({ title, url })),
+    searchSuggestionHTML: session.reports.findLast((report) => report.searchSuggestionsHTML)?.searchSuggestionsHTML ?? null,
+  };
 }
 
 export async function runAgent(request, config, session, fetcher = fetch) {
@@ -102,6 +120,7 @@ export async function runAgent(request, config, session, fetcher = fetch) {
   session.pending = null;
   return {
     ...answer, action: decision.action, continuationId: null,
+    webInfo: taskWebInfo(request, session, decision),
     taskMemory: session.memory, sources: session.sources, researchReports: session.reports,
     sourceIds: [...new Set(decision.sourceIds)], usage,
   };

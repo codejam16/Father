@@ -2,6 +2,20 @@ import XCTest
 @testable import TaskLens
 
 final class GeometryTests: XCTestCase {
+    func testOlderBackendResponseWithoutWebInfoStillDecodes() throws {
+        let json = #"{"frameId":"test","mode":"gemini","answer":"A bottle.","target":null,"needsClearerView":false}"#
+        let response = try JSONDecoder().decode(AnalysisResponse.self, from: Data(json.utf8))
+        XCTAssertNil(response.webInfo)
+        XCTAssertEqual(response.answer, "A bottle.")
+    }
+
+    func testGroundedWebSourcesDecodeAlongsideCameraAnswer() throws {
+        let json = #"{"frameId":"test","mode":"gemini","answer":"A bottle.","target":null,"needsClearerView":false,"webInfo":{"summary":"Similar bottle: CAD 25.","sources":[{"title":"Bottle listing","url":"https://example.com/bottle"}],"searchSuggestionHTML":null}}"#
+        let response = try JSONDecoder().decode(AnalysisResponse.self, from: Data(json.utf8))
+        XCTAssertEqual(response.webInfo?.sources.first?.url.host, "example.com")
+        XCTAssertEqual(response.webInfo?.summary, "Similar bottle: CAD 25.")
+    }
+
     func testVisionConversionFlipsOriginAndRoundTrips() throws {
         let original = try XCTUnwrap(NormalizedBox([100, 200, 400, 600]))
         XCTAssertEqual(original.visionRect.minX, 0.2, accuracy: 0.0001)

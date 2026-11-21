@@ -1,6 +1,7 @@
 import { APIError, answerSchema, validateAnswer } from './contract.mjs';
 import { randomUUID } from 'node:crypto';
 import { geminiHTTPError } from './provider-error.mjs';
+import { webAnswerSchema, webInstruction, extractWebInfo } from './web-info.mjs';
 
 const instruction = `You are TaskLens, a conversational visual task assistant.
 You receive a single captured frame, NOT a continuously observed world. Use its timestamp.
@@ -17,7 +18,9 @@ Return the requested JSON object, with no markdown.`;
 
 export function buildGeminiBody(request, maxOutputTokens) {
   return {
-    systemInstruction: { parts: [{ text: instruction }] },
+    systemInstruction: { parts: [{ text: instruction + (request.includeWebInfo ? '\n' + webInstruction
+      : '\nWeb lookup is disabled. Do not claim to have checked live prices, availability, or websites. If asked for current prices, explain that Web info can be enabled.') }] },
+    ...(request.includeWebInfo ? { tools: [{ googleSearch: {} }] } : {}),
     contents: [
       ...request.history.map((message) => ({
         role: message.role === 'assistant' ? 'model' : 'user',
@@ -39,7 +42,7 @@ export function buildGeminiBody(request, maxOutputTokens) {
     ],
     generationConfig: {
       responseMimeType: 'application/json',
-      responseJsonSchema: answerSchema,
+      responseJsonSchema: request.includeWebInfo ? webAnswerSchema : answerSchema,
       maxOutputTokens,
       thinkingConfig: { thinkingLevel: 'LOW' },
     },
@@ -50,7 +53,7 @@ export async function generateContent(body, config, fetcher = fetch) {
   const callId = randomUUID().slice(0, 8);
   const requestId = config.trace?.requestId ?? 'diagnostic';
   const callNumber = config.trace ? ++config.trace.calls : 1;
-  const operation = body.tools?.some((tool) => tool.google_search) ? 'search_online'
+  const operation = body.tools?.some((tool) => (tool.google_search || tool.googleSearch)) ? 'search_online'
     : body.tools?.some((tool) => tool.url_context) ? 'read_source' : 'camera_decision';
   const started = Date.now();
   console.log(`[${requestId}] Google call ${callNumber} (${callId}) START model=${config.model} action=${operation}`);
@@ -104,7 +107,7 @@ export async function analyzeWithGemini(request, config, fetcher = fetch) {
   try { answer = JSON.parse(candidateText(payload)); } catch {
     throw new APIError(502, 'invalid_model_output', 'The AI returned an unreadable answer.');
   }
-  return { ...validateAnswer(answer), usage: providerUsage(payload) };
+  return { ...validateAnswer(answer), webInfo: request.includeWebInfo ? extractWebInfo(payload.candidates[0], answer) : null, usage: providerUsage(payload) };
 }
 
 export function demoAnswer(request) {
@@ -114,6 +117,7 @@ export function demoAnswer(request) {
       : 'Demo response: the camera and conversation are ready. Point to an area to try highlighting, or connect Gemini for real visual assistance.',
     target: request.selection ? { label: 'Your selection — demo', box: request.selection } : null,
     needsClearerView: false,
+    webInfo: null,
     usage: { inputTokens: 0, outputTokens: 0 },
   };
 }

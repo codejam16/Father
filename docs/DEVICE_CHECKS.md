@@ -5,7 +5,7 @@ These are acceptance checks, not completed test results. Native compilation and 
 ## First: build and camera
 
 - Open the checked-in Xcode project, configure signing, and run on the actual demo iPhone.
-- Camera denial shows a useful message; typed input remains visible.
+- Camera denial shows a useful message; settings remain accessible.
 - Portrait rear-camera preview is upright and unmirrored. Confirm right/left with a printed asymmetric card.
 - Preview stays live while a question is processing. Switch apps and return; capture resumes and old highlights do not reappear.
 
@@ -38,6 +38,15 @@ These are acceptance checks, not completed test results. Native compilation and 
 - Cancel a request and start a new one. A late response must not overwrite the new conversation or pointer.
 - Verify that historical allowance files and legacy local quota settings do not block requests. Google quota errors must remain distinguishable from validation or connectivity failures.
 - Check provider usage before/after rehearsal; Google enforces the project/model quotas.
+
+## Captions and web info
+
+- With captions off, confirm the camera, pointer, listening and spoken replies still work. Turn on Captions in settings: user words should appear on the right while speaking, remain once submitted, and be followed by the assistant on the left. New messages scroll into view; older messages can be scrolled/read. Check long answers and larger accessibility text.
+- Turn captions off/on during listening, processing and playback. No request should be repeated or voice turn cancelled by changing the overlay. Check persistence after relaunch. Open the full conversation from the captions header; listening pauses while it is open and resumes on dismissal unless muted. Errors should remain visible with both overlays off.
+- Web info starts off. Verify that toggling it off hides optional cards. Disable Search online when needed to prevent task research. Turn it on and ask about a visible, clearly labelled product's price; confirm price text identifies currency/retailer, the sources open real pages, and the returned preview image comes from the online page. An unbranded object should yield similar-product wording or a clarification, not a confident exact match. Page images are best effort; blocked/missing metadata must leave a usable link.
+- Ask for further reading on a non-shopping topic. Confirm the cards work independently of captions. Check Google-provided search suggestions and their links. Rehearse using the actual project/key: supported models and search eligibility are provider-dependent; no live search was executed in the automated checks.
+- Hide Web info while a request or preview is loading. Cards disappear, preview fetching is cancelled, future questions omit optional card requests while task research follows its own setting, and an old response must not appear as sources for a newer question. Turning it back on must not automatically send another paid request. New conversation clears source cards. Demo mode must not show live-looking prices or perform searches/previews.
+- Confirm small-screen/landscape controls, caption scrolling, source-card scrolling, webpage opening and returning, privacy/network failures, and the 40-second search timeout on a physical iPhone. Existing native decoding tests cover old responses and new source payloads but still require Xcode execution.
 
 ## Honest demo scope
 

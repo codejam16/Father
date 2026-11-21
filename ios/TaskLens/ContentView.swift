@@ -1,49 +1,17 @@
 import SwiftUI
+import LinkPresentation
+import WebKit
 
 @MainActor
 struct ContentView: View {
     @StateObject private var model = AssistantViewModel()
     @Environment(\.scenePhase) private var scenePhase
-    private enum Sheet: String, Identifiable { case settings, sources; var id: String { rawValue } }
-    @State private var activeSheet: Sheet?
 
     var body: some View {
-        ZStack(alignment: .bottom) {
-            ImmersiveCamera(camera: model.camera, enabled: !model.isBusy, onSelect: model.select)
-                .ignoresSafeArea()
-
-                HStack(spacing: 24) {
-                    Button { model.toggleMicrophone() } label: {
-                        Image(systemName: model.isMuted ? "mic.slash.fill" : "mic.fill")
-                            .foregroundStyle(model.isMuted ? Color.red : Color.white)
-                    }
-                    .accessibilityLabel(model.isMuted ? "Unmute microphone" : "Mute microphone")
-                    .accessibilityValue(model.isMuted ? "Muted" : "Unmuted")
-
-                    Button { activeSheet = .settings } label: {
-                        Image(systemName: "gearshape.fill")
-                    }
-                    .accessibilityLabel("Settings")
-                }
-                .font(.system(size: 22, weight: .semibold))
-                .foregroundStyle(.white)
-                .buttonStyle(CameraControlStyle())
-                .padding(.bottom, 20)
-            }
-            .background(.black)
+        CameraExperience(model: model, speech: model.speech, settings: model.settings)
             .preferredColorScheme(.dark)
             .statusBarHidden()
-            .sheet(item: $activeSheet) { sheet in
-                if sheet == .settings { SettingsView(settings: model.settings, model: model) }
-                else { ResearchSourcesView(model: model) }
-            }
             .task { await model.resume() }
-            .onChange(of: activeSheet) { _, sheet in
-                model.setVoiceSuspended(sheet != nil, stopPlayback: sheet == .settings)
-            }
-            .onChange(of: model.researchReviewID) { _, review in
-                if review != nil { activeSheet = .sources }
-            }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active { Task { await model.resume() } }
                 else { model.pause() }
@@ -51,10 +19,92 @@ struct ContentView: View {
     }
 }
 
+@MainActor
+private struct CameraExperience: View {
+    @ObservedObject var model: AssistantViewModel
+    @ObservedObject var speech: SpeechService
+    @ObservedObject var settings: ConnectionSettings
+    private enum Sheet: String, Identifiable { case settings, conversation, sources; var id: String { rawValue } }
+    @State private var activeSheet: Sheet?
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .bottom) {
+                ImmersiveCamera(camera: model.camera, enabled: !model.isBusy, onSelect: model.select)
+                    .ignoresSafeArea()
+
+                VStack(spacing: 10) {
+                    if let error = model.errorMessage {
+                        ScrollView {
+                            Text(error).font(.caption).foregroundStyle(.orange)
+                                .frame(maxWidth: .infinity, alignment: .leading).padding(12)
+                        }
+                        .frame(maxHeight: 70)
+                        .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 14))
+                    }
+                    if model.selectedFrame != nil {
+                        HStack {
+                            Label("Selected view", systemImage: "scope").font(.caption)
+                            Spacer()
+                            Button("Clear", action: model.clearSelection).font(.caption.bold())
+                        }
+                        .padding(10).background(.ultraThinMaterial, in: Capsule())
+                    }
+                    if settings.captionsEnabled {
+                        CaptionsOverlay(model: model, speech: speech, showHistory: { activeSheet = .conversation })
+                            .frame(height: min(260, geometry.size.height * 0.30))
+                            .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    }
+                    if settings.webInfoEnabled {
+                        WebInfoPanel(info: model.webInfo, isBusy: model.isBusy, isDemo: settings.demoMode || (!model.messages.isEmpty && model.lastReplyWasDemo))
+                            .frame(maxHeight: min(260, geometry.size.height * 0.30))
+                            .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    }
+                    HStack(spacing: 24) {
+                        Button { model.toggleMicrophone() } label: {
+                            Image(systemName: model.isMuted ? "mic.slash.fill" : "mic.fill")
+                                .foregroundStyle(model.isMuted ? Color.red : Color.white)
+                        }
+                        .accessibilityLabel(model.isMuted ? "Unmute microphone" : "Mute microphone")
+                        .accessibilityValue(model.isMuted ? "Muted" : "Unmuted")
+                        Button { activeSheet = .settings } label: { Image(systemName: "gearshape.fill") }
+                            .accessibilityLabel("Settings")
+                    }
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(.white).buttonStyle(CameraControlStyle())
+                    .padding(.top, 4)
+                }
+                .padding(.horizontal, 16).padding(.bottom, 16)
+            }
+        }
+        .background(.black)
+        .sheet(item: $activeSheet) { sheet in
+            switch sheet {
+            case .settings: SettingsView(settings: settings, model: model)
+            case .conversation: ConversationView(model: model)
+            case .sources: ResearchSourcesView(model: model)
+            }
+        }
+        .onChange(of: activeSheet) { _, sheet in
+            model.setVoiceSuspended(sheet != nil, stopPlayback: sheet != .sources)
+        }
+        .onChange(of: model.researchReviewID) { _, review in
+            if review != nil { activeSheet = .sources }
+        }
+    }
+
+    private var voiceStatus: String {
+        if model.isBusy { return "Thinking…" }
+        if speech.isSpeaking { return "Speaking…" }
+        if model.isMuted { return "Microphone muted" }
+        return speech.isRecording ? "Listening" : "Preparing microphone…"
+    }
+}
+
 private struct CameraControlStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .frame(width: 58, height: 58)
+            .frame(width: 52, height: 52)
             .background(.ultraThinMaterial, in: Circle())
             .overlay(Circle().strokeBorder(.white.opacity(0.2), lineWidth: 1))
             .opacity(configuration.isPressed ? 0.65 : 1)
@@ -69,8 +119,7 @@ private struct ImmersiveCamera: View {
 
     var body: some View {
         GeometryReader { geometry in
-            // Enlarge the entire stage together, keeping selection and pointer
-            // coordinates aligned with the camera image after the edge crop.
+            // Enlarge preview, pointers and selection geometry together.
             let aspect = max(camera.aspectRatio, 0.01)
             let width = max(geometry.size.width, geometry.size.height * aspect)
             let height = width / aspect
@@ -82,80 +131,193 @@ private struct ImmersiveCamera: View {
     }
 }
 
-// Retained for a future transcript/typed-input interface; not mounted on the camera screen.
-
 @MainActor
-private struct AssistantControls: View {
+private struct CaptionsOverlay: View {
     @ObservedObject var model: AssistantViewModel
     @ObservedObject var speech: SpeechService
-    @ObservedObject var settings: ConnectionSettings
-    @FocusState private var questionFocused: Bool
+    let showHistory: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(spacing: 8) {
             HStack {
-                Label(model.isBusy ? "Looking…" : "Your assistant", systemImage: "sparkles")
-                    .font(.caption.weight(.semibold)).foregroundStyle(.mint)
+                Label("Live captions", systemImage: "captions.bubble").font(.caption.bold())
                 Spacer()
-                if settings.demoMode || (!model.messages.isEmpty && model.lastReplyWasDemo) {
-                    Text("DEMO REPLIES").font(.system(size: 9, weight: .bold, design: .monospaced))
-                        .foregroundStyle(.yellow)
+                Button(action: showHistory) { Image(systemName: "clock.arrow.circlepath") }
+                    .accessibilityLabel("Full conversation")
+            }
+            .foregroundStyle(.white.opacity(0.85))
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: 10) {
+                        if model.messages.isEmpty && model.pendingQuestion == nil && speech.transcript.isEmpty {
+                            Text("Your words appear on the right. TaskLens replies on the left.")
+                                .font(.caption).foregroundStyle(.secondary).padding(.vertical, 12)
+                        }
+                        ForEach(model.messages) { message in
+                            CaptionBubble(text: message.content, isUser: message.role == .user)
+                        }
+                        if let pending = model.pendingQuestion {
+                            CaptionBubble(text: pending, isUser: true)
+                        } else if speech.isRecording && !speech.transcript.isEmpty {
+                            CaptionBubble(text: speech.transcript, isUser: true, isDraft: true)
+                        }
+                        if model.isBusy {
+                            HStack { ProgressView().tint(.mint); Text("TaskLens is thinking…").font(.caption); Spacer() }
+                        }
+                        Color.clear.frame(height: 1).id("latest-caption").accessibilityHidden(true)
+                    }
                 }
-                Button { speech.stopSpeaking() } label: { Image(systemName: "speaker.slash") }
-                    .accessibilityLabel("Stop spoken reply").foregroundStyle(.secondary)
-            }
-            ScrollView {
-                Text(model.lastAnswer).font(.subheadline).frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .frame(maxHeight: 85)
-            if model.selectedFrame != nil {
-                HStack {
-                    Label("Selected view attached to next question", systemImage: "scope")
-                        .font(.caption2).foregroundStyle(.yellow)
-                    Spacer()
-                    Button("Clear") { model.clearSelection() }.font(.caption)
-                }
-            }
-            if let error = model.errorMessage {
-                Text(error).font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
-            }
-            if speech.isRecording {
-                Text(speech.transcript.isEmpty ? "Listening… pause to send your question." : speech.transcript)
-                    .font(.caption).foregroundStyle(.mint).lineLimit(3)
-            }
-            if !speech.isRecording {
-                Text(model.isMuted ? "Microphone muted" : speech.isSpeaking ? "Speaking… listening resumes after the reply." : model.isBusy ? "Thinking… listening resumes after the reply." : "Preparing microphone…")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            HStack(alignment: .bottom, spacing: 10) {
-                TextField("Ask about what you see…", text: $model.question, axis: .vertical)
-                    .lineLimit(1...3).font(.subheadline).padding(12)
-                    .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 14))
-                    .focused($questionFocused)
-                    .disabled(model.isBusy)
-                Button {
-                    questionFocused = false
-                    model.toggleMicrophone()
-                } label: {
-                    Image(systemName: model.isMuted ? "mic.slash.fill" : "mic.fill")
-                        .frame(width: 42, height: 44)
-                        .background(model.isMuted ? .white.opacity(0.1) : Color.mint.opacity(0.25), in: RoundedRectangle(cornerRadius: 13))
-                }
-                .accessibilityLabel(model.isMuted ? "Unmute microphone" : "Mute microphone")
-                Button {
-                    questionFocused = false
-                    if model.isBusy { model.cancel() } else { model.send() }
-                } label: {
-                    Image(systemName: model.isBusy ? "xmark" : "arrow.up")
-                        .fontWeight(.bold).frame(width: 42, height: 44)
-                        .foregroundStyle(.black).background(.mint, in: RoundedRectangle(cornerRadius: 13))
-                }
-                .disabled(!model.isBusy && model.question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .accessibilityLabel(model.isBusy ? "Cancel question" : "Send question")
+                .onAppear { proxy.scrollTo("latest-caption", anchor: .bottom) }
+                .onChange(of: model.messages.count) { _, _ in proxy.scrollTo("latest-caption", anchor: .bottom) }
+                .onChange(of: model.pendingQuestion) { _, _ in proxy.scrollTo("latest-caption", anchor: .bottom) }
+                .onChange(of: speech.transcript) { _, _ in proxy.scrollTo("latest-caption", anchor: .bottom) }
             }
         }
-        .padding(16)
-        .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 22))
+        .padding(12)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20))
+        .overlay(RoundedRectangle(cornerRadius: 20).stroke(.white.opacity(0.16), lineWidth: 1))
+    }
+}
+
+private struct CaptionBubble: View {
+    let text: String
+    let isUser: Bool
+    var isDraft = false
+
+    var body: some View {
+        HStack {
+            if isUser { Spacer(minLength: 40) }
+            VStack(alignment: .leading, spacing: 4) {
+                Text(isUser ? (isDraft ? "You · listening" : "You") : "TaskLens")
+                    .font(.system(size: 10, weight: .semibold)).foregroundStyle(isUser ? Color.mint : .white.opacity(0.6))
+                Text(text).font(.subheadline).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+            }
+            .padding(.horizontal, 12).padding(.vertical, 9)
+            .background(isUser ? Color.mint.opacity(0.18) : Color.black.opacity(0.28), in: RoundedRectangle(cornerRadius: 14))
+            if !isUser { Spacer(minLength: 40) }
+        }
+    }
+}
+
+@MainActor
+private struct WebInfoPanel: View {
+    let info: WebInfo?
+    let isBusy: Bool
+    let isDemo: Bool
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                Label("From the web", systemImage: "globe").font(.caption.bold()).foregroundStyle(.mint)
+                if let info, !info.sources.isEmpty {
+                    if let summary = info.summary { Text(summary).font(.subheadline).textSelection(.enabled) }
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(alignment: .top, spacing: 10) {
+                            ForEach(info.sources) { source in
+                                VStack(alignment: .leading, spacing: 5) {
+                                    Link(destination: source.url) {
+                                        HStack(alignment: .top, spacing: 6) {
+                                            Text(source.title).font(.caption.bold()).lineLimit(2)
+                                            Image(systemName: "arrow.up.right").font(.caption2)
+                                        }
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                    }
+                                    // Native preview loads actual page imagery when the site supplies it.
+                                    SourcePreview(url: source.url).frame(width: 238, height: 110).clipped()
+                                }
+                                .frame(width: 238).padding(10)
+                                .background(.black.opacity(0.2), in: RoundedRectangle(cornerRadius: 14))
+                            }
+                        }
+                    }
+                    Text("Check the source for the current price and exact product match.")
+                        .font(.caption2).foregroundStyle(.secondary)
+                    if let html = info.searchSuggestionHTML, !html.isEmpty {
+                        SearchSuggestions(html: html).frame(height: 76).clipShape(RoundedRectangle(cornerRadius: 10))
+                    }
+                } else {
+                    Text(isBusy ? "Looking for useful sources…" : isDemo
+                         ? "Connect Gemini for live prices, shopping links and further reading. Demo mode does not search the web."
+                         : "Ask a question with Web info on. Relevant sources and price details appear here when found.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12)
+        }
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20))
+        .overlay(RoundedRectangle(cornerRadius: 20).stroke(.white.opacity(0.16), lineWidth: 1))
+    }
+}
+
+@MainActor
+private struct SourcePreview: UIViewRepresentable {
+    let url: URL
+    func makeCoordinator() -> Coordinator { Coordinator() }
+    func makeUIView(context: Context) -> LPLinkView {
+        let view = LPLinkView(url: url)
+        context.coordinator.load(url, into: view)
+        return view
+    }
+    func updateUIView(_ view: LPLinkView, context: Context) { context.coordinator.load(url, into: view) }
+    static func dismantleUIView(_ view: LPLinkView, coordinator: Coordinator) { coordinator.cancel() }
+
+    @MainActor final class Coordinator {
+        private var currentURL: URL?
+        private var provider: LPMetadataProvider?
+        func load(_ url: URL, into view: LPLinkView) {
+            guard url != currentURL, url.scheme == "https", url.host != nil, url.user == nil, url.password == nil else { return }
+            cancel()
+            currentURL = url
+            let provider = LPMetadataProvider()
+            provider.timeout = 8
+            self.provider = provider
+            provider.startFetchingMetadata(for: url) { [weak self, weak view] metadata, _ in
+                DispatchQueue.main.async {
+                    guard self?.currentURL == url, let metadata else { return }
+                    view?.metadata = metadata
+                }
+            }
+        }
+        func cancel() {
+            currentURL = nil
+            provider?.cancel()
+            provider = nil
+        }
+    }
+}
+
+@MainActor
+private struct SearchSuggestions: UIViewRepresentable {
+    let html: String
+    func makeCoordinator() -> Coordinator { Coordinator() }
+    func makeUIView(context: Context) -> WKWebView {
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = false
+        let view = WKWebView(frame: .zero, configuration: configuration)
+        view.isOpaque = false
+        view.backgroundColor = .clear
+        view.navigationDelegate = context.coordinator
+        return view
+    }
+    func updateUIView(_ view: WKWebView, context: Context) {
+        guard context.coordinator.html != html else { return }
+        context.coordinator.html = html
+        view.loadHTMLString("<meta name='viewport' content='width=device-width, initial-scale=1'>" + html, baseURL: nil)
+    }
+    static func dismantleUIView(_ view: WKWebView, coordinator: Coordinator) { view.stopLoading(); view.navigationDelegate = nil }
+    @MainActor final class Coordinator: NSObject, WKNavigationDelegate {
+        var html = ""
+        func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
+                     decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+            if navigationAction.navigationType == .linkActivated {
+                if let url = navigationAction.request.url, url.scheme == "https" { UIApplication.shared.open(url) }
+                decisionHandler(.cancel)
+            } else {
+                decisionHandler(navigationAction.request.url?.scheme == "about" ? .allow : .cancel)
+            }
+        }
     }
 }
 
@@ -166,17 +328,13 @@ private struct ConversationView: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                if model.messages.isEmpty {
-                    ContentUnavailableView("Start a conversation", systemImage: "bubble.left.and.bubble.right",
-                                           description: Text("Your questions and the assistant’s replies appear here."))
-                }
-                ForEach(model.messages) { message in
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(message.role == .user ? "You" : "TaskLens").font(.caption.bold()).foregroundStyle(.secondary)
-                        Text(message.content).textSelection(.enabled)
-                    }.padding(.vertical, 5)
-                }
+            ScrollView {
+                LazyVStack(spacing: 12) {
+                    if model.messages.isEmpty { Text("Start speaking to see your conversation here.").foregroundStyle(.secondary) }
+                    ForEach(model.messages) { message in
+                        CaptionBubble(text: message.content, isUser: message.role == .user)
+                    }
+                }.padding()
             }
             .navigationTitle("Conversation")
             .toolbar {

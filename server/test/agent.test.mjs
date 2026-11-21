@@ -236,3 +236,17 @@ test('full HTTP search/read/refresh flow uses five calls and retains the final s
   assert.equal((await send({ frameId: 'next-question' })).status, 200);
   assert.equal(next.calls.length, 1);
 });
+
+test('optional web cards reuse verified task research without adding implicit search to camera decisions', async () => {
+  const sessions = new TaskSessions(); const input = request({ includeWebInfo: true });
+  const transport = fake(payload(decision({ action: 'search_online', argument: 'filter manual', webSummary: null })),
+    searchPayload(), payload(decision({ sourceIds: ['s1'], webSummary: 'Manufacturer instructions describe a removable filter.' })));
+  const first = await execute(sessions, input, transport);
+  const final = await execute(sessions, { ...input, frameId: 'fresh', continuationId: first.continuationId }, transport);
+  assert.equal(transport.calls.length, 3);
+  assert.equal(transport.calls[0].body.tools, undefined);
+  assert.equal(transport.calls[2].body.tools, undefined);
+  assert.ok(transport.calls[0].body.generationConfig.responseJsonSchema.required.includes('webSummary'));
+  assert.equal(final.webInfo.sources[0].url, 'https://docs.vendor.com/manual.pdf');
+  assert.match(final.webInfo.summary, /removable filter/);
+});
