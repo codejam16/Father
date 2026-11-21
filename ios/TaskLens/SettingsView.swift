@@ -78,6 +78,9 @@ struct SettingsView: View {
             .navigationTitle("TaskLens settings")
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } } }
         }
+        .onAppear { model.speech.refreshVoices() }
+        .onChange(of: settings.voiceIdentifier) { _, _ in model.speech.stopSpeaking() }
+        .onDisappear { model.speech.stopSpeaking() }
     }
 }
 
@@ -116,9 +119,6 @@ private struct AssistantVoicePicker: View {
             Text("Optional: download an Enhanced or Premium English voice for more natural speech in iPhone Settings → Accessibility → Read & Speak → Voices, then return here. On older iOS, look for Spoken Content.")
                 .font(.caption).foregroundStyle(.secondary)
         }
-        .onAppear { speech.refreshVoices() }
-        .onChange(of: settings.voiceIdentifier) { _, _ in speech.stopSpeaking() }
-        .onDisappear { speech.stopSpeaking() }
     }
 }
 

@@ -221,8 +221,8 @@ final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     func voice(for identifier: String) -> AVSpeechSynthesisVoice? {
         if let saved = availableVoices.first(where: { $0.identifier == identifier }) { return saved }
         // A removed download falls back gracefully instead of breaking replies.
-        return availableVoices.first(where: { $0.quality == .premium || $0.quality == .enhanced })
-            ?? AVSpeechSynthesisVoice(language: "en-US") ?? availableVoices.first
+        // The list already ranks quality and the preferred English dialect.
+        return availableVoices.first ?? AVSpeechSynthesisVoice(language: "en-US")
     }
 
     static func voiceLabel(_ voice: AVSpeechSynthesisVoice) -> String {
