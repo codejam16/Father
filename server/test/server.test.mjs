@@ -265,9 +265,9 @@ test('web cards use actual grounding links and suppress unsupported summaries', 
   assert.doesNotMatch(JSON.stringify(info), /invented/);
   assert.equal(extractWebInfo({}, answer), null);
   candidate.groundingMetadata.groundingSupports = [];
-  assert.equal(extractWebInfo(candidate, answer).summary, null);
+  assert.equal(extractWebInfo(candidate, answer), null);
   candidate.groundingMetadata.groundingSupports = [null];
-  assert.equal(extractWebInfo(candidate, answer).summary, null);
+  assert.equal(extractWebInfo(candidate, answer), null);
   candidate.groundingMetadata.groundingChunks = [{ web: { uri: 'http://localhost/admin' } }];
   assert.equal(extractWebInfo(candidate, answer), null);
 });
@@ -310,4 +310,14 @@ test('mock mode never searches even when Web info was requested', async (t) => {
   const result = await response.json();
   assert.equal(result.mode, 'mock');
   assert.equal(result.webInfo, null);
+});
+
+test('incidental search results do not create an automatic web info strip', () => {
+  const candidate = { groundingMetadata: {
+    groundingChunks: [{ web: { title: 'Incidental result', uri: 'https://example.com/page' } }],
+    groundingSupports: [{ groundingChunkIndices: [0] }],
+  } };
+  for (const webSummary of [undefined, null, '', '   ']) {
+    assert.equal(extractWebInfo(candidate, { webSummary }), null);
+  }
 });

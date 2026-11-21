@@ -24,8 +24,10 @@ private struct CameraExperience: View {
     @ObservedObject var model: AssistantViewModel
     @ObservedObject var speech: SpeechService
     @ObservedObject var settings: ConnectionSettings
-    private enum Sheet: String, Identifiable { case settings, conversation, sources; var id: String { rawValue } }
-    @State private var activeSheet: Sheet?
+    @State private var showingSettings = false
+    @State private var showingConversation = false
+    @State private var dismissedWebReply: UUID?
+    @AppStorage("captionHeightFraction") private var captionHeightFraction = 0.22
 
     var body: some View {
         GeometryReader { geometry in
@@ -51,14 +53,15 @@ private struct CameraExperience: View {
                         .padding(10).background(.ultraThinMaterial, in: Capsule())
                     }
                     if settings.captionsEnabled {
-                        CaptionsOverlay(model: model, speech: speech, showHistory: { activeSheet = .conversation })
-                            .frame(height: min(260, geometry.size.height * 0.30))
+                        CaptionsOverlay(model: model, speech: speech, heightFraction: $captionHeightFraction,
+                                        availableHeight: geometry.size.height, showHistory: { showingConversation = true })
                             .transition(.opacity.combined(with: .move(edge: .bottom)))
                     }
-                    if settings.webInfoEnabled {
-                        WebInfoPanel(info: model.webInfo, isBusy: model.isBusy, isDemo: settings.demoMode || (!model.messages.isEmpty && model.lastReplyWasDemo))
-                            .frame(maxHeight: min(260, geometry.size.height * 0.30))
-                            .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    if settings.webInfoEnabled, let info = model.webInfo, !info.sources.isEmpty,
+                       let replyID = model.messages.last?.id, dismissedWebReply != replyID {
+                        WebInfoStrip(info: info) { dismissedWebReply = replyID }
+                            .id(replyID)
+                            .transition(.opacity)
                     }
                     HStack(spacing: 24) {
                         Button { model.toggleMicrophone() } label: {
@@ -75,6 +78,34 @@ private struct CameraExperience: View {
                     .padding(.top, 4)
                 }
                 .padding(.horizontal, 16).padding(.bottom, 16)
+            }
+            .overlay(alignment: .topLeading) {
+                Text(settings.demoMode ? "DEMO · \(voiceStatus)" : voiceStatus)
+                    .font(.caption.weight(.semibold)).padding(.horizontal, 12).padding(.vertical, 8)
+                    .background(.ultraThinMaterial, in: Capsule()).padding(16)
+                    .allowsHitTesting(false)
+            }
+            .overlay(alignment: .topTrailing) {
+                VStack(spacing: 12) {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) { settings.captionsEnabled.toggle() }
+                    } label: {
+                        Image(systemName: settings.captionsEnabled ? "text.bubble.fill" : "text.bubble")
+                            .foregroundStyle(settings.captionsEnabled ? Color.mint : Color.white)
+                    }
+                    .accessibilityLabel(settings.captionsEnabled ? "Hide captions" : "Show captions")
+                    .accessibilityValue(settings.captionsEnabled ? "On" : "Off")
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) { settings.webInfoEnabled.toggle() }
+                    } label: {
+                        Image(systemName: settings.webInfoEnabled ? "info.circle.fill" : "info.circle")
+                            .foregroundStyle(settings.webInfoEnabled ? Color.mint : Color.white)
+                    }
+                    .accessibilityLabel(settings.webInfoEnabled ? "Disable automatic web info" : "Enable automatic web info")
+                    .accessibilityValue(settings.webInfoEnabled ? "On" : "Off")
+                }
+                .font(.system(size: 20, weight: .semibold))
+                .buttonStyle(CameraControlStyle()).padding(.trailing, 16).padding(.top, 60)
             }
         }
         .background(.black)
@@ -135,23 +166,53 @@ private struct ImmersiveCamera: View {
 private struct CaptionsOverlay: View {
     @ObservedObject var model: AssistantViewModel
     @ObservedObject var speech: SpeechService
+    @Binding var heightFraction: Double
+    let availableHeight: CGFloat
     let showHistory: () -> Void
+    @GestureState private var resizeOffset: CGFloat = 0
+
+    private var minimumFraction: Double { min(0.55, 112 / Double(max(availableHeight, 1))) }
+    private func clamped(_ fraction: Double) -> Double {
+        min(0.55, max(minimumFraction, fraction.isFinite ? fraction : 0.22))
+    }
+    private var currentHeight: CGFloat {
+        CGFloat(clamped(heightFraction - Double(resizeOffset / max(availableHeight, 1)))) * availableHeight
+    }
 
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 3) {
             HStack {
-                Label("Live captions", systemImage: "captions.bubble").font(.caption.bold())
+                Text("Captions").font(.system(size: 10, weight: .medium)).foregroundStyle(.white.opacity(0.5))
                 Spacer()
-                Button(action: showHistory) { Image(systemName: "clock.arrow.circlepath") }
-                    .accessibilityLabel("Full conversation")
+                Capsule().fill(.white.opacity(0.4)).frame(width: 32, height: 3)
+                    .frame(maxWidth: .infinity, minHeight: 28)
+                    .contentShape(Rectangle())
+                    .gesture(DragGesture(minimumDistance: 2)
+                        .updating($resizeOffset) { value, state, _ in state = value.translation.height }
+                        .onEnded { value in
+                            heightFraction = clamped(heightFraction - Double(value.translation.height / max(availableHeight, 1)))
+                        })
+                    .accessibilityElement()
+                    .accessibilityLabel("Caption height")
+                    .accessibilityValue("\(Int(clamped(heightFraction) * 100)) percent of screen")
+                    .accessibilityHint("Drag up to make captions taller or down to make them shorter.")
+                    .accessibilityAdjustableAction { direction in
+                        switch direction {
+                        case .increment: heightFraction = clamped(heightFraction + 0.05)
+                        case .decrement: heightFraction = clamped(heightFraction - 0.05)
+                        @unknown default: break
+                        }
+                    }
+                Spacer()
+                Button(action: showHistory) { Image(systemName: "clock.arrow.circlepath").font(.caption).frame(width: 36, height: 32) }
+                    .foregroundStyle(.white.opacity(0.6)).accessibilityLabel("Full conversation")
             }
-            .foregroundStyle(.white.opacity(0.85))
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(spacing: 10) {
+                    LazyVStack(spacing: 7) {
                         if model.messages.isEmpty && model.pendingQuestion == nil && speech.transcript.isEmpty {
-                            Text("Your words appear on the right. TaskLens replies on the left.")
-                                .font(.caption).foregroundStyle(.secondary).padding(.vertical, 12)
+                            Text("Speak to start captions.").font(.caption).foregroundStyle(.white.opacity(0.55))
+                                .padding(.vertical, 8)
                         }
                         ForEach(model.messages) { message in
                             CaptionBubble(text: message.content, isUser: message.role == .user)
@@ -162,7 +223,11 @@ private struct CaptionsOverlay: View {
                             CaptionBubble(text: speech.transcript, isUser: true, isDraft: true)
                         }
                         if model.isBusy {
-                            HStack { ProgressView().tint(.mint); Text("TaskLens is thinking…").font(.caption); Spacer() }
+                            HStack(spacing: 6) {
+                                ProgressView().controlSize(.mini).tint(.white.opacity(0.6))
+                                Text("Thinking…").font(.caption2).foregroundStyle(.white.opacity(0.6))
+                                Spacer()
+                            }
                         }
                         Color.clear.frame(height: 1).id("latest-caption").accessibilityHidden(true)
                     }
@@ -173,9 +238,10 @@ private struct CaptionsOverlay: View {
                 .onChange(of: speech.transcript) { _, _ in proxy.scrollTo("latest-caption", anchor: .bottom) }
             }
         }
-        .padding(12)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20))
-        .overlay(RoundedRectangle(cornerRadius: 20).stroke(.white.opacity(0.16), lineWidth: 1))
+        .padding(.horizontal, 10).padding(.bottom, 9)
+        .frame(height: currentHeight)
+        .background(Color(white: 0.18).opacity(0.10), in: RoundedRectangle(cornerRadius: 18))
+        .clipShape(RoundedRectangle(cornerRadius: 18))
     }
 }
 
@@ -186,67 +252,100 @@ private struct CaptionBubble: View {
 
     var body: some View {
         HStack {
-            if isUser { Spacer(minLength: 40) }
-            VStack(alignment: .leading, spacing: 4) {
+            if isUser { Spacer(minLength: 42) }
+            VStack(alignment: .leading, spacing: 3) {
                 Text(isUser ? (isDraft ? "You · listening" : "You") : "TaskLens")
-                    .font(.system(size: 10, weight: .semibold)).foregroundStyle(isUser ? Color.mint : .white.opacity(0.6))
-                Text(text).font(.subheadline).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                    .font(.system(size: 9, weight: .medium)).foregroundStyle(.white.opacity(0.55))
+                Text(text).font(.subheadline).foregroundStyle(.white.opacity(0.95))
+                    .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                    .shadow(color: .black.opacity(0.6), radius: 2, y: 1)
             }
-            .padding(.horizontal, 12).padding(.vertical, 9)
-            .background(isUser ? Color.mint.opacity(0.18) : Color.black.opacity(0.28), in: RoundedRectangle(cornerRadius: 14))
-            if !isUser { Spacer(minLength: 40) }
+            .padding(.horizontal, 10).padding(.vertical, 7)
+            .background(Color(white: isUser ? 0.30 : 0.20).opacity(0.32), in: RoundedRectangle(cornerRadius: 13))
+            if !isUser { Spacer(minLength: 42) }
         }
     }
 }
 
 @MainActor
-private struct WebInfoPanel: View {
-    let info: WebInfo?
-    let isBusy: Bool
-    let isDemo: Bool
+private struct WebInfoStrip: View {
+    let info: WebInfo
+    let dismiss: () -> Void
+    @State private var expanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 8) {
+                Image(systemName: "globe").font(.caption2).foregroundStyle(.white.opacity(0.6))
+                Text(info.summary ?? "Related sources")
+                    .font(.caption).foregroundStyle(.white.opacity(0.85)).lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() }
+                } label: {
+                    Image(systemName: expanded ? "chevron.down" : "chevron.up").font(.caption2)
+                        .frame(width: 32, height: 32)
+                }
+                .accessibilityLabel(expanded ? "Collapse web details" : "Expand web details and images")
+                Button(action: dismiss) { Image(systemName: "xmark").font(.system(size: 10)).frame(width: 32, height: 32) }
+                    .accessibilityLabel("Dismiss these sources")
+            }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 7) {
+                    ForEach(info.sources) { source in
+                        Link(destination: source.url) {
+                            HStack(spacing: 4) {
+                                Text(source.title).lineLimit(1)
+                                Image(systemName: "arrow.up.right").font(.system(size: 8))
+                            }
+                            .font(.system(size: 11)).foregroundStyle(.white.opacity(0.85))
+                            .padding(.horizontal, 9).padding(.vertical, 6)
+                            .background(.white.opacity(0.07), in: Capsule())
+                        }
+                        .frame(maxWidth: 170)
+                    }
+                }
+            }
+            if expanded {
+                WebInfoDetails(info: info)
+                    .transition(.opacity)
+            }
+        }
+        .padding(.horizontal, 11).padding(.vertical, 5)
+        .background(Color(white: 0.15).opacity(0.48), in: RoundedRectangle(cornerRadius: 16))
+        .foregroundStyle(.white.opacity(0.7))
+    }
+}
+
+@MainActor
+private struct WebInfoDetails: View {
+    let info: WebInfo
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
-                Label("From the web", systemImage: "globe").font(.caption.bold()).foregroundStyle(.mint)
-                if let info, !info.sources.isEmpty {
-                    if let summary = info.summary { Text(summary).font(.subheadline).textSelection(.enabled) }
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(alignment: .top, spacing: 10) {
-                            ForEach(info.sources) { source in
-                                VStack(alignment: .leading, spacing: 5) {
-                                    Link(destination: source.url) {
-                                        HStack(alignment: .top, spacing: 6) {
-                                            Text(source.title).font(.caption.bold()).lineLimit(2)
-                                            Image(systemName: "arrow.up.right").font(.caption2)
-                                        }
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                    }
-                                    // Native preview loads actual page imagery when the site supplies it.
-                                    SourcePreview(url: source.url).frame(width: 238, height: 110).clipped()
-                                }
-                                .frame(width: 238).padding(10)
-                                .background(.black.opacity(0.2), in: RoundedRectangle(cornerRadius: 14))
+            VStack(alignment: .leading, spacing: 9) {
+                if let summary = info.summary { Text(summary).font(.caption).textSelection(.enabled) }
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(info.sources) { source in
+                            VStack(alignment: .leading, spacing: 5) {
+                                Link(source.title, destination: source.url).font(.caption).lineLimit(2)
+                                SourcePreview(url: source.url).frame(width: 220, height: 100).clipped()
                             }
+                            .frame(width: 220)
                         }
                     }
-                    Text("Check the source for the current price and exact product match.")
-                        .font(.caption2).foregroundStyle(.secondary)
-                    if let html = info.searchSuggestionHTML, !html.isEmpty {
-                        SearchSuggestions(html: html).frame(height: 76).clipShape(RoundedRectangle(cornerRadius: 10))
-                    }
-                } else {
-                    Text(isBusy ? "Looking for useful sources…" : isDemo
-                         ? "Connect Gemini for live prices, shopping links and further reading. Demo mode does not search the web."
-                         : "Ask a question with Web info on. Relevant sources and price details appear here when found.")
-                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Text("Check the source for the current price and exact product match.")
+                    .font(.caption2).foregroundStyle(.secondary)
+                if let html = info.searchSuggestionHTML, !html.isEmpty {
+                    SearchSuggestions(html: html).frame(height: 76).clipShape(RoundedRectangle(cornerRadius: 10))
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12)
+            .padding(.vertical, 5)
         }
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20))
-        .overlay(RoundedRectangle(cornerRadius: 20).stroke(.white.opacity(0.16), lineWidth: 1))
+        // Only explicitly expanded details scroll; the automatic strip sizes to its content.
+        .frame(maxHeight: 230)
     }
 }
 
