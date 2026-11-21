@@ -26,11 +26,14 @@ Use `Content-Type: application/json`. Supply `Authorization: Bearer <APP_TOKEN>`
     { "role": "user", "content": "Help me identify these connectors." },
     { "role": "assistant", "content": "Show me the connectors and identify the device." }
   ],
-  "selection": [100, 200, 400, 600]
+  "selection": [100, 200, 400, 600],
+  "includeWebInfo": false
 }
 ```
 
 `selection` is optional/null. It refers to the supplied image, not a future camera frame. Only the current image is sent; historical messages contain text, not historical images. Keep any required visual comparison explicit in future contract changes.
+
+`includeWebInfo` is an optional boolean, default `false` for older clients. Only explicit `true` enables `tools: [{ googleSearch: {} }]` in the single Gemini analysis request and adds a nullable `webSummary` to its response schema. Captions are entirely local and are not part of this flag. With the flag off or in mock mode, the backend does not request Google Search.
 
 Limits: 1,500-character question, 4,000-character task notes, eight history messages of up to 2,000 characters each, JPEG up to 1.5 MB, declared dimensions up to 2048 per side, total HTTP body up to 2.2 MB. The proxy checks encoding and JPEG envelope, not a full image decode. Invalid images may still be rejected by the provider.
 
@@ -41,11 +44,24 @@ Limits: 1,500-character question, 4,000-character task notes, eight history mess
   "answer": "The selected region appears to contain a USB connector.",
   "target": null,
   "needsClearerView": false,
+  "webInfo": null,
   "usage": { "inputTokens": 400, "outputTokens": 120 }
 }
 ```
 
 The usage values above are illustrative. Backend-reported output includes provider reasoning tokens when returned.
+
+When Google returns usable grounding metadata for a Web info request, `webInfo` may instead be:
+
+```json
+{
+  "summary": "A similar bottle is listed for CAD 25 at the linked retailer. This is not a confirmed exact match.",
+  "sources": [{ "title": "Bottle listing", "url": "https://example.com/bottle" }],
+  "searchSuggestionHTML": null
+}
+```
+
+These are illustrative values, not an actual price. The summary is omitted unless there is a grounding support referencing a valid source. The summary may contain price/currency/retailer text; no price is inferred from preview imagery. Sources are deduplicated public HTTPS links from actual `groundingChunks[].web` metadata, capped at six, never generated JSON links. Non-web grounding chunks, executable/local URLs, credential-bearing URLs, and non-default ports are ignored. The backend does not fetch source pages. The phone's Link Presentation loads online previews only while the panel is visible, with a link fallback if metadata is unavailable. `searchSuggestionHTML` is Google's bounded `searchEntryPoint.renderedContent`, rendered in a nonpersistent, JavaScript-disabled webview; user link taps open HTTPS destinations externally. Without sources, `webInfo` is null. Search support is not proof that every claim or product match is correct. Updated iOS clients accept older responses without `webInfo`.
 
 If highlighting is useful, `target` is `{ "label": "USB connector", "box": [100, 200, 400, 600] }`.
 

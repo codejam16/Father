@@ -8,6 +8,8 @@ final class ConnectionSettings: ObservableObject {
     @Published var serverURL: String { didSet { defaults.set(serverURL, forKey: "serverURL") } }
     @Published var task: String { didSet { defaults.set(task, forKey: "task") } }
     @Published var spokenReplies: Bool { didSet { defaults.set(spokenReplies, forKey: "spokenReplies") } }
+    @Published var captionsEnabled: Bool { didSet { defaults.set(captionsEnabled, forKey: "captionsEnabled") } }
+    @Published var webInfoEnabled: Bool { didSet { defaults.set(webInfoEnabled, forKey: "webInfoEnabled") } }
     @Published var token: String { didSet { saveToken() } }
     @Published private(set) var credentialError: String?
     private let defaults = UserDefaults.standard
@@ -20,6 +22,8 @@ final class ConnectionSettings: ObservableObject {
         serverURL = defaults.string(forKey: "serverURL") ?? "http://localhost:8787"
         task = defaults.string(forKey: "task") ?? ""
         spokenReplies = defaults.object(forKey: "spokenReplies") as? Bool ?? true
+        captionsEnabled = defaults.object(forKey: "captionsEnabled") as? Bool ?? false
+        webInfoEnabled = defaults.object(forKey: "webInfoEnabled") as? Bool ?? false
         var item: CFTypeRef?
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
                                    kSecAttrService as String: service,

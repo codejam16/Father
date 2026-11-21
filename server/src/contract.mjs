@@ -50,7 +50,8 @@ export function validateRequest(value) {
     return { role: message.role, content: text(message.content, 'history content', 2000) };
   });
   const selection = value.selection == null ? null : validateBox(value.selection);
-  return { frameId, capturedAt, question, task, image, history: normalizedHistory, selection };
+  if (value.includeWebInfo !== undefined && typeof value.includeWebInfo !== 'boolean') invalid('includeWebInfo must be a boolean.');
+  return { frameId, capturedAt, question, task, image, history: normalizedHistory, selection, includeWebInfo: value.includeWebInfo === true };
 }
 
 // A schema constrains shape; validate the model's values again before using them.

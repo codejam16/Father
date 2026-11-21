@@ -14,6 +14,8 @@ final class AssistantViewModel: ObservableObject {
     @Published private(set) var errorMessage: String?
     @Published private(set) var lastReplyWasDemo = true
     @Published private(set) var isMuted = false
+    @Published private(set) var pendingQuestion: String?
+    @Published private(set) var webInfo: WebInfo?
     private var isActive = false
     private var voiceSuspended = false
     private let client = AnalysisClient()
@@ -85,6 +87,8 @@ final class AssistantViewModel: ObservableObject {
         guard !isBusy, !text.isEmpty else { return }
         guard text.count <= 1500 else { errorMessage = "Please shorten your question to 1,500 characters."; return }
         isBusy = true
+        pendingQuestion = text
+        webInfo = nil
         updateListening()
         speech.stopSpeaking()
         errorMessage = nil
@@ -96,11 +100,13 @@ final class AssistantViewModel: ObservableObject {
         let endpoint = settings.serverURL
         let token = settings.token
         let task = settings.task
+        let includeWebInfo = settings.webInfoEnabled
         work = Task {
             defer {
                 if workID == id {
                     isBusy = false
                     workID = nil
+                    pendingQuestion = nil
                     updateListening()
                 }
             }
@@ -110,7 +116,7 @@ final class AssistantViewModel: ObservableObject {
                 else { frame = try await camera.snapshot() }
                 try Task.checkCancellation()
                 let request = AnalysisRequest(frame: frame, question: text, task: task,
-                                              history: history, selection: attachment?.box)
+                                              history: history, selection: attachment?.box, includeWebInfo: includeWebInfo)
                 let response: AnalysisResponse
                 if demoMode { response = try await client.demo(request) }
                 else { response = try await client.analyze(request, endpoint: endpoint, token: token) }
@@ -118,6 +124,8 @@ final class AssistantViewModel: ObservableObject {
                 guard workID == id else { return }
                 messages.append(ChatMessage(role: .user, content: text))
                 messages.append(ChatMessage(role: .assistant, content: response.answer))
+                pendingQuestion = nil
+                webInfo = response.webInfo
                 if messages.count > 40 { messages.removeFirst(messages.count - 40) }
                 question = ""
                 clearSelection()
@@ -140,6 +148,7 @@ final class AssistantViewModel: ObservableObject {
         work?.cancel()
         work = nil
         isBusy = false
+        pendingQuestion = nil
         speech.setListening(false)
         speech.stopSpeaking()
         updateListening()
@@ -157,6 +166,7 @@ final class AssistantViewModel: ObservableObject {
         clearSelection()
         question = ""
         messages.removeAll()
+        webInfo = nil
         errorMessage = nil
     }
 }

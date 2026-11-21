@@ -116,8 +116,9 @@ struct AnalysisRequest: Encodable {
     let image: ImagePayload
     let history: [HistoryMessage]
     let selection: NormalizedBox?
+    let includeWebInfo: Bool
 
-    init(frame: CapturedFrame, question: String, task: String, history: [ChatMessage], selection: NormalizedBox?) {
+    init(frame: CapturedFrame, question: String, task: String, history: [ChatMessage], selection: NormalizedBox?, includeWebInfo: Bool = false) {
         self.frameId = frame.id
         self.capturedAt = ISO8601DateFormatter().string(from: frame.capturedAt)
         self.question = question
@@ -125,6 +126,7 @@ struct AnalysisRequest: Encodable {
         self.image = ImagePayload(base64: frame.jpeg.base64EncodedString(), width: frame.width, height: frame.height)
         self.history = history.suffix(8).map { HistoryMessage(role: $0.role, content: String($0.content.prefix(2000))) }
         self.selection = selection
+        self.includeWebInfo = includeWebInfo
     }
 }
 
@@ -139,6 +141,19 @@ struct AnalysisResponse: Decodable {
     let answer: String
     let target: Target?
     let needsClearerView: Bool
+    var webInfo: WebInfo? = nil
+}
+
+struct WebSource: Decodable, Identifiable {
+    let title: String
+    let url: URL
+    var id: String { url.absoluteString }
+}
+
+struct WebInfo: Decodable {
+    let summary: String?
+    let sources: [WebSource]
+    let searchSuggestionHTML: String?
 }
 
 struct Highlight {

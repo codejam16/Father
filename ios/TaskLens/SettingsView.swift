@@ -37,6 +37,11 @@ struct SettingsView: View {
                 } footer: {
                     Text("When connected, asking a question sends the selected camera view and recent conversation to your backend and AI provider. Demo mode stays on the phone. Camera frames are held temporarily in memory.")
                 }
+                Section {
+                    Toggle("Captions", isOn: $settings.captionsEnabled)
+                    Toggle("Web info", isOn: $settings.webInfoEnabled)
+                } header: { Text("Camera overlays") }
+                footer: { Text("Captions show both sides of the conversation over the camera. Web info enables Google Search for future questions and shows source links, price details when found, and online page previews. Search can add latency and provider charges. Turning it off hides the cards and disables search on future questions; an already sent request may finish. Opening previews contacts the source websites.") }
             }
             .navigationTitle("TaskLens settings")
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } } }
