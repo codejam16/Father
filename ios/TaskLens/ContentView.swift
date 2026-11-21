@@ -150,24 +150,46 @@ private struct CameraExperience: View {
         .overlay(alignment: .bottom) { webInfoStrip(availableSize: availableSize) }
         .overlay(alignment: .top) { statusBadge }
         .overlay(alignment: .topTrailing) {
-            if webPanelHeight < availableSize.height * 0.96 { overlayControls }
+            if !infoIsLarge(in: availableSize) { overlayControls }
         }
         .overlay(alignment: .topLeading) {
-            if webPanelHeight < availableSize.height * 0.96 { selectionIndicator }
+            if !infoIsLarge(in: availableSize) { selectionIndicator }
         }
     }
 
+    // Includes the panel's bottom clearance, measured after layout rather than
+    // estimated from its saved size. Hidden or cleared results reserve no space.
+    private var infoOccupiedHeight: CGFloat {
+        guard settings.webInfoEnabled && hasWebResults else { return 0 }
+        // Reserve room on the first render, before the compact bubble is measured.
+        return webPanelHeight > 0 ? webPanelHeight : 224
+    }
+
+    private func infoIsLarge(in size: CGSize) -> Bool {
+        infoOccupiedHeight >= size.height * 0.65
+    }
+
+    private func captionSpace(in size: CGSize) -> CGFloat {
+        let issueHeight: CGFloat = model.errorMessage == nil ? 0 : 80
+        // Leave the centered badge clear, and keep a gap between both bubbles.
+        return max(0, size.height - 76 - max(72, infoOccupiedHeight) - 10 - issueHeight)
+    }
+
     private func cameraOverlays(availableSize: CGSize) -> some View {
-        VStack(spacing: 10) {
+        let captionRoom = captionSpace(in: availableSize)
+        let showCaptions = settings.captionsEnabled && !infoIsLarge(in: availableSize) && captionRoom >= 112
+        return VStack(spacing: 10) {
             VStack(spacing: 10) {
                 errorBanner
-                if settings.captionsEnabled {
+                if showCaptions {
                     CaptionsOverlay(model: model, speech: speech, heightFraction: $captionHeightFraction,
-                                    availableHeight: availableSize.height, showHistory: { activeSheet = .conversation })
-                        .transition(.opacity.combined(with: .move(edge: .bottom)))
+                                    availableHeight: availableSize.height, maximumHeight: captionRoom,
+                                    showHistory: { activeSheet = .conversation })
                 }
             }
-            .padding(.bottom, min(webPanelHeight, availableSize.height * 0.4))
+            // The controls already occupy 72pt below this stack. Reserve only
+            // the extra space, placing captions 10pt above the actual info box.
+            .padding(.bottom, max(0, infoOccupiedHeight - 72))
             primaryControls
         }
         .padding(.horizontal, 16).padding(.bottom, 16)
@@ -337,6 +359,7 @@ private struct CaptionsOverlay: View {
     @ObservedObject var speech: SpeechService
     @Binding var heightFraction: Double
     let availableHeight: CGFloat
+    let maximumHeight: CGFloat
     let showHistory: () -> Void
     @GestureState private var resizeOffset: CGFloat = 0
 
@@ -345,13 +368,13 @@ private struct CaptionsOverlay: View {
         min(0.55, max(minimumFraction, fraction.isFinite ? fraction : 0.22))
     }
     private var currentHeight: CGFloat {
-        CGFloat(clamped(heightFraction - Double(resizeOffset / max(availableHeight, 1)))) * availableHeight
+        min(maximumHeight, CGFloat(clamped(heightFraction - Double(resizeOffset / max(availableHeight, 1)))) * availableHeight)
     }
 
     var body: some View {
         VStack(spacing: 3) {
             HStack {
-                Text("Captions").font(.system(size: 10, weight: .medium)).foregroundStyle(.white.opacity(0.5))
+                Text("Captions").font(.system(size: 10, weight: .medium)).foregroundStyle(.white.opacity(0.65))
                 Spacer()
                 Capsule().fill(.white.opacity(0.4)).frame(width: 32, height: 3)
                     .frame(maxWidth: .infinity, minHeight: 28)
@@ -409,7 +432,7 @@ private struct CaptionsOverlay: View {
         }
         .padding(.horizontal, 10).padding(.bottom, 9)
         .frame(height: currentHeight)
-        .background(Color(white: 0.18).opacity(0.10), in: RoundedRectangle(cornerRadius: 18))
+        .background(Color(white: 0.18).opacity(0.20), in: RoundedRectangle(cornerRadius: 18))
         .clipShape(RoundedRectangle(cornerRadius: 18))
     }
 }
@@ -430,7 +453,7 @@ private struct CaptionBubble: View {
                     .shadow(color: .black.opacity(0.6), radius: 2, y: 1)
             }
             .padding(.horizontal, 10).padding(.vertical, 7)
-            .background(Color(white: isUser ? 0.30 : 0.20).opacity(0.32), in: RoundedRectangle(cornerRadius: 13))
+            .background(Color(white: isUser ? 0.30 : 0.20).opacity(0.44), in: RoundedRectangle(cornerRadius: 13))
             if !isUser { Spacer(minLength: 42) }
         }
     }
@@ -449,23 +472,25 @@ private struct WebInfoStrip: View {
 
     private var usableWidth: CGFloat { max(1, availableSize.width - 32) }
     private var screenHeight: CGFloat { max(1, availableSize.height) }
+    // Even at maximum size, leave a camera margin and room for the status badge.
+    private var maximumPanelHeight: CGFloat { max(1, screenHeight - 76) }
+    private var maximumFraction: Double { Double(maximumPanelHeight / screenHeight) }
     private func clampedHeight(_ value: Double) -> Double {
-        let minimum = min(1, 170 / Double(screenHeight))
-        return min(1, max(minimum, value.isFinite ? value : 0.25))
+        let minimum = min(maximumFraction, 170 / Double(screenHeight))
+        return min(maximumFraction, max(minimum, value.isFinite ? value : 0.25))
     }
     private func clampedWidth(_ value: Double) -> Double {
         min(1, max(0.55, value.isFinite ? value : 1))
     }
     private var panelWidth: CGFloat {
         let fraction = clampedWidth(widthFraction + Double(resizeOffset.width * 2 / usableWidth))
-        return fullScreen ? availableSize.width : CGFloat(fraction) * usableWidth
+        return CGFloat(fullScreen ? 1 : fraction) * usableWidth
     }
     private var panelHeight: CGFloat {
-        CGFloat(clampedHeight(heightFraction - Double(resizeOffset.height / screenHeight))) * screenHeight
+        CGFloat(clampedHeight(clampedHeight(heightFraction) - Double(resizeOffset.height / screenHeight))) * screenHeight
     }
-    private var fullScreen: Bool { expanded && panelHeight >= screenHeight * 0.96 }
-    private var bottomInset: CGFloat { expanded ? min(88, max(0, screenHeight - panelHeight)) : 88 }
-    private var reportedHeight: CGFloat { expanded ? panelHeight : 112 }
+    private var fullScreen: Bool { expanded && panelHeight >= maximumPanelHeight * 0.96 }
+    private var bottomInset: CGFloat { expanded ? min(88, max(16, screenHeight - panelHeight - 60)) : 88 }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -477,14 +502,23 @@ private struct WebInfoStrip: View {
             }
         }
         .padding(.horizontal, 11).padding(.bottom, 8)
-        .padding(.top, fullScreen ? 52 : 0)
+        .padding(.top, 2)
         .frame(width: panelWidth, height: expanded ? panelHeight : nil)
-        .background(Color(white: 0.15).opacity(fullScreen ? 0.72 : 0.32), in: RoundedRectangle(cornerRadius: fullScreen ? 0 : 16))
-        .clipShape(RoundedRectangle(cornerRadius: fullScreen ? 0 : 16))
+        .background(Color(white: 0.15).opacity(fullScreen ? 0.48 : 0.32),
+                    in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous)
+            .strokeBorder(.white.opacity(0.10), lineWidth: 0.75))
+        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .shadow(color: .black.opacity(0.18), radius: 12, y: 4)
         .foregroundStyle(.white.opacity(0.8))
         .padding(.bottom, bottomInset)
-        .onAppear { reportHeight(reportedHeight) }
-        .onChange(of: reportedHeight) { _, height in reportHeight(height) }
+        .background {
+            GeometryReader { geometry in
+                Color.clear
+                    .onAppear { reportHeight(geometry.size.height) }
+                    .onChange(of: geometry.size.height) { _, height in reportHeight(height) }
+            }
+        }
     }
 
     private var resizeHandles: some View {
@@ -531,8 +565,8 @@ private struct WebInfoStrip: View {
             .updating($resizeOffset) { value, state, _ in state = CGSize(width: 0, height: value.translation.height) }
             .onChanged { _ in expanded = true }
             .onEnded { value in
-                let next = clampedHeight(heightFraction - Double(value.translation.height / screenHeight))
-                heightFraction = next >= 0.9 ? 1 : next
+                let next = clampedHeight(clampedHeight(heightFraction) - Double(value.translation.height / screenHeight))
+                heightFraction = next >= maximumFraction * 0.9 ? maximumFraction : next
             }
     }
 
@@ -541,8 +575,8 @@ private struct WebInfoStrip: View {
             .updating($resizeOffset) { value, state, _ in state = value.translation }
             .onChanged { _ in expanded = true }
             .onEnded { value in
-                let next = clampedHeight(heightFraction - Double(value.translation.height / screenHeight))
-                heightFraction = next >= 0.9 ? 1 : next
+                let next = clampedHeight(clampedHeight(heightFraction) - Double(value.translation.height / screenHeight))
+                heightFraction = next >= maximumFraction * 0.9 ? maximumFraction : next
                 widthFraction = clampedWidth(widthFraction + Double(value.translation.width * 2 / usableWidth))
             }
     }
@@ -555,7 +589,7 @@ private struct WebInfoStrip: View {
             Button {
                 withAnimation(.easeInOut(duration: 0.2)) {
                     if fullScreen { heightFraction = 0.3 }
-                    else { expanded = true; heightFraction = 1; widthFraction = 1 }
+                    else { expanded = true; heightFraction = maximumFraction; widthFraction = 1 }
                 }
             } label: {
                 Image(systemName: fullScreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")

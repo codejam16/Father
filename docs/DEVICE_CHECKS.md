@@ -81,3 +81,10 @@ Use one clear, low-risk task and distinctive objects. Confirm that identifying a
 - The centered colored status badge stays in place, with no old top-left status text. Captions keep their independent height adjustment. Test both resize handles with VoiceOver. Only explicit Settings/history navigation or tapping a website link should open another screen. Native layout and gestures require real-device verification.
 
 - Region selection starts off. Camera touches must not select or freeze a frame until the viewfinder button is enabled. Disable it with an active selection and verify the focus chip and selection clear; the next question uses a fresh frame. Automatic assistant boxes still work with manual selection off. Verify the lighter pointer, small focus chip, VoiceOver labels, and drag cancellation during a request.
+
+## Caption and info bubble spacing
+
+- Start with captions on and make them tall. Expand the info bubble slowly, resize its width, and test long source titles and larger text. Captions stay above the measured bubble with a gap and shrink to the available space; they must not overlap.
+- Enlarge info past roughly two thirds of the camera area: captions temporarily disappear without changing their saved toggle or height. Shrink/collapse/hide info and verify captions return. Repeat with captions off beforehand: they must stay off. Repeat while new messages arrive, after rotating, and on a small phone.
+- At maximum size, info retains continuous rounded corners, horizontal and bottom camera margins, and a translucent grey fill. The centered status stays clear and restore/close/drag controls remain usable. There is no modal presentation or listening interruption.
+- Check captions against bright and moving backgrounds: the slightly stronger grey bubble fill should improve readability while leaving the camera visible. Native geometry and gestures require Xcode/device verification.
