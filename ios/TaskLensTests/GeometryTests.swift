@@ -526,3 +526,29 @@ final class SpeechAudioWorkerTests: XCTestCase {
         XCTAssertFalse(SpeechBufferPolicy.canAppend(frames: 256, sampleRate: 48000, channels: 1, bytes: 1024, hasData: false))
     }
 }
+
+final class WebSearchPermissionTests: XCTestCase {
+    private func frame() -> CapturedFrame {
+        CapturedFrame(id: "frame", capturedAt: Date(), jpeg: Data([255, 216, 255, 217]), width: 480, height: 640)
+    }
+    func testInfoOffDisablesResearchEvenIfCallerSuppliesOldForcedSearchFlag() {
+        let request = AnalysisRequest(frame: frame(), question: "What does it cost?", task: "", history: [], selection: nil,
+            researchEnabled: true, includeWebInfo: false, searchEveryQuestion: true)
+        XCTAssertFalse(request.researchEnabled)
+        XCTAssertFalse(request.includeWebInfo)
+        XCTAssertFalse(request.searchEveryQuestion)
+    }
+    func testInfoOnAllowsOptionalResearchWithoutForcingIt() {
+        let request = AnalysisRequest(frame: frame(), question: "Where is the bottle?", task: "", history: [], selection: nil,
+            researchEnabled: true, includeWebInfo: true, searchEveryQuestion: true)
+        XCTAssertTrue(request.researchEnabled)
+        XCTAssertTrue(request.includeWebInfo)
+        XCTAssertFalse(request.searchEveryQuestion)
+    }
+    func testAnExplicitResearchOptOutStillWinsWithInfoOn() {
+        let request = AnalysisRequest(frame: frame(), question: "Find a manual", task: "", history: [], selection: nil,
+            researchEnabled: false, includeWebInfo: true)
+        XCTAssertFalse(request.researchEnabled)
+        XCTAssertFalse(request.searchEveryQuestion)
+    }
+}

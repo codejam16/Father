@@ -46,7 +46,7 @@ These are acceptance checks, not completed test results. Native compilation and 
 - With captions off, confirm the camera, pointer, listening and spoken replies still work. Turn on the side text-bubble button: user words should appear on the right while speaking, remain once submitted, and be followed by the assistant on the left. New messages scroll into view; older messages can be scrolled/read. Check long answers and larger accessibility text.
 - Turn captions off/on during listening, processing and playback. No request should be repeated or voice turn cancelled by changing the overlay. Check persistence after relaunch. Open the full conversation from the captions header; listening pauses while it is open and resumes on dismissal unless muted. Errors should remain visible with both overlays off.
 - Show web info defaults on. Hide it and verify new live questions still search via Serper and receive source cards. A mint dot appears on the info button when hidden links are available. Tap it to show those same results without another request; relaunch and confirm visibility persists. Ask about a visible, clearly labelled product's price; confirm price text identifies currency/retailer, the sources open real pages, and the returned preview image comes from the online page. An unbranded object should yield similar-product wording or a clarification, not a confident exact match. Page images are best effort; blocked/missing metadata must leave a usable link.
-- Ask for further reading on a non-shopping topic. Confirm cited results create a small strip; empty results and thinking states reserve no space. Every new live question requests an initial lookup when connected. Links must work with captions off. Expand/collapse details, then send a new question and confirm the new strip starts collapsed. Hide a strip with × and confirm its links remain available via the dotted info button. Check the Serper source links; no Google Search suggestions widget should be fabricated. Rehearse using the actual project/key: supported models and search eligibility are provider-dependent; no live search was executed in the automated checks.
+- Ask for further reading on a non-shopping topic. Confirm cited results create a small strip; empty results and thinking states reserve no space. Only questions needing outside information should search, and only with the info toggle enabled. Links must work with captions off. Expand/collapse details, then send a new question and confirm the new strip starts collapsed. Hide a strip with × and confirm its links remain available via the dotted info button. Check the Serper source links; no Google Search suggestions widget should be fabricated. Rehearse using the actual project/key: supported models and search eligibility are provider-dependent; no live search was executed in the automated checks.
 - Hide Web info while a request or preview is loading. Cards disappear, preview fetching is cancelled, future questions still request research, and an old response must not appear as sources for a newer question. Turning it back on must not automatically send another paid request. New conversation clears source cards. Demo mode must not show live-looking prices or perform searches/previews.
 - Confirm small-screen/landscape controls, caption scrolling, source-card scrolling, webpage opening and returning, privacy/network failures, and Gemini timeouts (40 seconds per model call), cancellation, and the 95-second backend/105-second phone deadlines on a physical iPhone. Existing native decoding tests cover old responses and new source payloads but still require Xcode execution.
 
@@ -57,7 +57,7 @@ Use one clear, low-risk task and distinctive objects. Confirm that identifying a
 
 ## Research and memory
 
-- Keep the camera screen free of transcripts. Ask for ordinary object identification: verify the initial lookup runs for each new live question.
+- Keep the camera screen free of transcripts. Ask for ordinary object identification: verify there is no Serper lookup with info either on or off.
 - Ask a task that needs exact product documentation. Confirm uncertain searches use qualified categories and the assistant asks for missing model/version details instead of claiming an exact match and retains your answer after earlier messages fall out of chat history.
 - Inspect Terminal for `Agent action: search_online` / `read_source`. Receiving a researched answer must not automatically open Sources and research, cover the camera, stop playback, or pause/resume the microphone. Useful links appear only in the transparent camera-local info box when its display toggle is enabled. Full evidence is available from Settings only on explicit navigation.
 - Compare an accessible manual with a paywalled/unreachable document. The latter must not be claimed as read. Uncertain diagram-to-camera matches must ask for a clearer view instead of producing a speculative box.
@@ -70,7 +70,7 @@ Use one clear, low-risk task and distinctive objects. Confirm that identifying a
 ## Serper search integration
 
 - Set a real `SERPER_API_KEY` locally and restart the backend; confirm startup says `Web search: Serper`. Keep Gemini configured as before. No native code changes are required.
-- With research enabled, ask for a product price or manufacturer manual. Confirm one `Serper search` request per search action, source links/snippets returned, a fresh-frame continuation, and a cited final answer. No Google `search_online` model calls or Google Search widgets should appear. Normal identification from the updated app also starts with one Serper lookup; older clients without searchEveryQuestion retain the optional search policy.
+- With research enabled, ask for a product price or manufacturer manual. Confirm one `Serper search` request per search action, source links/snippets returned, a fresh-frame continuation, and a cited final answer. No Google `search_online` model calls or Google Search widgets should appear. Normal identification must not start a Serper lookup. Turning info off must prohibit search/read actions even for older clients that send searchEveryQuestion=true.
 - Test missing/invalid key, empty search results, exhausted credits, slow network, and cancellation. The assistant must not fabricate a live price or claim to have read a full page from a snippet. Search failures should finish cleanly and allow the next camera question.
 - Hide results in Settings and verify lookups continue. Then set `ENABLE_WEB_RESEARCH=false` globally and verify no Serper queries are sent. Mock mode must remain entirely offline. Test old clients without task sessions as well as the task-aware client.
 - Serper credits are finite and separate from Gemini quotas. Verify actual result quality, product match, images and latency using the team's account; the automated checks use mocked responses and spend no search credits.
@@ -179,3 +179,17 @@ These replace the rectangle/appearance-recovery checks on this branch. Rebuild a
 - Run the SpeechAudioWorkerTests suite in Xcode. These injected-session tests
   cover ordering/cancellation without opening the microphone; they do not
   replace the physical-device checks above. See AUDIO.md for the implementation.
+
+## Info-toggle search permission
+
+- With info OFF, ask for a current price or a manual. Confirm zero Serper or
+  document-read requests; the assistant should explain any need for live data.
+- With info ON, ask where the bottle is, how many bottles are visible, or which
+  visible button opens it. These should be camera-only, single-decision answers.
+- With info ON, ask for current retailer prices or an exact manufacturer's manual.
+  Confirm one search action as needed, linked evidence and fresh-frame continuation.
+- Start a research request and turn info OFF while waiting. No further research
+  steps should start; a cancelled question can be resent without search. A request
+  already sent to a provider may still count against its usage.
+- Turning info ON alone must not submit a question. Saved links can be reopened
+  without a new search, and saved OFF preferences must survive app relaunches.

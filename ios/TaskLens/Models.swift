@@ -172,10 +172,11 @@ struct AnalysisRequest: Encodable {
         self.selection = selection
         self.sessionId = sessionId
         self.continuationId = continuationId
-        self.researchEnabled = researchEnabled
+        self.researchEnabled = researchEnabled && includeWebInfo
         self.confirmedStepIds = confirmedStepIds
         self.includeWebInfo = includeWebInfo
-        self.searchEveryQuestion = searchEveryQuestion
+        // Retained in the wire format for older backends; never force a lookup.
+        self.searchEveryQuestion = false
         self.knownTargets = frame.trackedObjects
         self.selections = selections
     }

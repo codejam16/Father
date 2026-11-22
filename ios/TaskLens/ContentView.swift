@@ -298,8 +298,8 @@ private struct CameraExperience: View {
                         }
                     }
             }
-            .accessibilityLabel(settings.webInfoEnabled ? "Hide web info" : "Show web info")
-            .accessibilityValue(!settings.webInfoEnabled && hasWebResults ? "Hidden, results available" : settings.webInfoEnabled ? "Visible" : "Hidden")
+            .accessibilityLabel(settings.webInfoEnabled ? "Turn off web info and search" : "Turn on web info and search")
+            .accessibilityValue(!settings.webInfoEnabled && hasWebResults ? "Search off, saved results available" : settings.webInfoEnabled ? "Search allowed when needed" : "Search off")
             Button {
                 withAnimation(.easeInOut(duration: 0.2)) { settings.selectionEnabled.toggle() }
             } label: {
@@ -604,7 +604,7 @@ private struct WebInfoStrip: View {
             }
             .accessibilityLabel(expanded ? "Collapse web details" : "Expand web details inside the camera view")
             Button(action: dismiss) { Image(systemName: "xmark").font(.system(size: 10)).frame(width: 30, height: 30) }
-                .accessibilityLabel("Hide web info; keep results available")
+                .accessibilityLabel("Turn off web info and search; keep saved results available")
         }
     }
 

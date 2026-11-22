@@ -103,7 +103,8 @@ export function validateRequest(value) {
       !confirmedStepIds.every((id) => typeof id === 'string' && /^[a-zA-Z0-9_-]{1,40}$/.test(id))) invalid('Invalid confirmedStepIds.');
   return { frameId, capturedAt, question, task, image, history: normalizedHistory, selection,
     knownTargets, selections, sessionId, continuationId, researchEnabled: value.researchEnabled ?? true, confirmedStepIds, includeWebInfo: value.includeWebInfo === true,
-    searchEveryQuestion: value.searchEveryQuestion === true };
+    // Accepted for older clients, but forced searches are no longer supported.
+    searchEveryQuestion: false };
 }
 
 // A schema constrains shape; validate the model's values again before using them.

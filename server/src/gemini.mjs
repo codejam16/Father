@@ -30,7 +30,7 @@ export function buildGeminiBody(request, maxOutputTokens, { researchAvailable = 
   return {
     systemInstruction: { parts: [{ text: instruction + (request.includeWebInfo ? '\n' + webInstruction
       : researchAvailable ? '\nExternal research is controlled by researchAllowed in the task context.'
-        : '\nWeb lookup is disabled. Do not claim to have checked live prices, availability, or websites. If asked for current prices, explain that Web info can be enabled.')
+        : '\nWeb lookup is unavailable for this request. Help from the current camera and supplied evidence; do not claim to have checked fresh prices, availability or websites.')
       + (request.includeWebInfo ? '\nFor this response, use searchQuery for one concise query only when researchAvailable=true and external facts help; otherwise return null. Return sourceIds only from supplied researchEvidence. With researchEvidence, use it to answer and return searchQuery=null. Without evidence, answer from the visible scene and do not claim checked prices or sources.' : '') }] },
     contents: [
       ...request.history.map((message) => ({

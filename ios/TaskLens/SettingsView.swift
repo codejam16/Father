@@ -94,10 +94,10 @@ struct SettingsView: View {
                 }
                 Section {
                     Toggle("Captions", isOn: $settings.captionsEnabled)
-                    Toggle("Show web info", isOn: $settings.webInfoEnabled)
+                    Toggle("Web info & search", isOn: $settings.webInfoEnabled)
                     Toggle("Select a region", isOn: $settings.selectionEnabled)
                 } header: { Text("Camera overlays") }
-                footer: { Text("Every new question requests a web lookup when search is connected, even when web info is hidden. The info button shows a dot when hidden results are available. Drag the info handle upward to fill the screen, down to shrink it, or use its corner to adjust width. Captions have their own height handle. Turn on Select a region to tap or drag over the camera. Opening results does not search again.") }
+                footer: { Text("Web search runs only when this toggle is on and the question needs outside information. Visual questions use the camera without searching. Turning it off stops further research; an already-started provider request cannot be undone. The info button shows a dot when hidden results are available. Drag the info handle upward to fill the screen, down to shrink it, or use its corner to adjust width. Captions have their own height handle. Turn on Select a region to tap or drag over the camera. Opening results does not search again.") }
             }
             .navigationTitle("TaskLens settings")
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } } }

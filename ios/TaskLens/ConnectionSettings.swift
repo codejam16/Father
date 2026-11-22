@@ -27,12 +27,7 @@ final class ConnectionSettings: ObservableObject {
         voiceIdentifier = defaults.string(forKey: "voiceIdentifier") ?? ""
         captionsEnabled = defaults.object(forKey: "captionsEnabled") as? Bool ?? false
         selectionEnabled = defaults.object(forKey: "selectionEnabled") as? Bool ?? false
-        // Adopt the new automatic default once, including existing installations.
-        // Later explicit opt-outs remain saved across launches.
-        if !defaults.bool(forKey: "automaticWebInfoDefaultV1") {
-            defaults.set(true, forKey: "webInfoEnabled")
-            defaults.set(true, forKey: "automaticWebInfoDefaultV1")
-        }
+        // Respect saved search permission; never overwrite an explicit opt-out.
         webInfoEnabled = defaults.object(forKey: "webInfoEnabled") as? Bool ?? true
         var item: CFTypeRef?
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,

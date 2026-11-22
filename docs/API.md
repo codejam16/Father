@@ -98,13 +98,13 @@ The updated iPhone app adds these optional fields to `POST /analyze`:
   "sessionId": "c1d43987-6b55-4258-9742-a4bfccdb50ed",
   "continuationId": null,
   "researchEnabled": true,
-  "searchEveryQuestion": true,
+  "searchEveryQuestion": false,
   "includeWebInfo": true,
   "confirmedStepIds": []
 }
 ```
 
-`searchEveryQuestion` is an optional boolean, default `false` for older clients. With a task session, `true` requires an initial lookup for each new question when research is available. The model supplies a concise public `searchQuery`; the backend dispatches that lookup independently of the model’s selected action. Older `search_online`/`argument` plans remain accepted. Continuations do not repeat that requirement. Existing session evidence does not replace the next question’s initial lookup. Missing search credentials and the global research switch still permit camera-only answers. The updated iPhone always sends this flag, `researchEnabled: true`, and `includeWebInfo: true`; its display toggle is entirely local and never triggers a new request.
+`searchEveryQuestion` is deprecated: it remains type-checked for old clients but is always normalized to false and cannot force a lookup. Web search/read actions require BOTH `includeWebInfo: true` (the info toggle) and `researchEnabled: true`, plus server permission, credentials and remaining research steps. Enabling info permits research; it does not require one. The model should answer visual questions directly and select research only when outside information is needed. The native client sends both permission fields from its saved info toggle, never forces searches, and cancels in-flight research-enabled work when the toggle is turned off. Provider requests already dispatched cannot be undone; subsequent steps are cancelled. Previously fetched links may remain cached locally.
 
 `sessionId` enables the bounded action workflow in live mode. Legacy clients without it retain single-call camera analysis unless an explicit Web info request produces a Serper lookup and a second model call. Demo mode remains provider-free. Confirmations must reference an existing plan step; new/edited model-proposed steps are never completed automatically.
 

@@ -11,7 +11,7 @@ import { createApp, loadConfig } from '../src/server.mjs';
 const config = { model: 'test-model', maxOutputTokens: 2048, apiKey: 'not-real', serperApiKey: 'fake-serper-key', maxResearchSteps: 2 };
 const request = (extra = {}) => validateRequest({
   sessionId: randomUUID(), frameId: randomUUID(), capturedAt: new Date().toISOString(),
-  task: 'Identify and use this product', question: 'How do I clean this filter?',
+  task: 'Identify and use this product', question: 'How do I clean this filter?', includeWebInfo: true,
   image: { mimeType: 'image/jpeg', base64: Buffer.from([255, 216, 255, 217]).toString('base64'), width: 480, height: 640 },
   ...extra,
 });
@@ -255,9 +255,9 @@ test('optional web cards reuse verified task research without adding implicit se
   assert.match(final.webInfo.summary, /removable filter/);
 });
 
-test('always-search questions fetch links even when the UI keeps them hidden, without repeating on continuation', async () => {
+test('eligible questions search only when the model selects research, without repeating on continuation', async () => {
   const sessions = new TaskSessions();
-  // Overlay visibility stays on the phone; both visible and hidden modes request cards.
+  // The enabled info toggle permits research but never forces it.
   const input = request({ searchEveryQuestion: true, includeWebInfo: true });
   const transport = fake(
     payload(decision({ action: 'search_online', argument: 'filter cleaning manufacturer manual' })), searchPayload(),
@@ -265,7 +265,7 @@ test('always-search questions fetch links even when the UI keeps them hidden, wi
     payload(decision({ action: 'search_online', argument: 'filter replacement intervals manufacturer' })), searchPayload(),
   );
   const first = await execute(sessions, input, transport);
-  assert.ok(transport.calls[0].body.generationConfig.responseJsonSchema.required.includes('searchQuery'));
+  assert.ok(!transport.calls[0].body.generationConfig.responseJsonSchema.required.includes('searchQuery'));
   assert.equal(transport.calls[0].body.generationConfig.responseJsonSchema.properties.sourceIds.maxItems, 0);
   const final = await execute(sessions, { ...input, continuationId: first.continuationId, frameId: 'fresh' }, transport);
   assert.equal(final.action, 'respond');
@@ -278,14 +278,15 @@ test('always-search questions fetch links even when the UI keeps them hidden, wi
   assert.equal(transport.calls.filter((call) => call.url === 'https://google.serper.dev/search').length, 2);
 });
 
-test('always-search policy is independent of whether source cards are requested', async () => {
-  const transport = fake(payload(decision({ action: 'search_online', argument: 'filter manual' })), searchPayload());
-  const result = await execute(new TaskSessions(), request({ searchEveryQuestion: true, includeWebInfo: false }), transport);
-  assert.equal(result.action, 'refresh_camera');
-  assert.equal(transport.calls[1].url, 'https://google.serper.dev/search');
+test('info off blocks search even when a stale client requests always-search', async () => {
+  const transport = fake(payload(decision({ action: 'search_online', argument: 'filter manual' })));
+  await assert.rejects(execute(new TaskSessions(), request({ searchEveryQuestion: true, includeWebInfo: false }), transport), /research limit/);
+  assert.equal(transport.calls.length, 1);
+  assert.deepEqual(transport.calls[0].body.generationConfig.responseJsonSchema.properties.action.enum,
+    ['respond', 'ask_clarification', 'request_view']);
 });
 
-test('always-search does not bypass missing credentials or an administrator research switch', async () => {
+test('optional search does not bypass missing credentials or an administrator research switch', async () => {
   for (const extra of [{ serperApiKey: '' }, { webResearchEnabled: false }]) {
     const transport = fake(payload(decision()));
     const result = await execute(new TaskSessions(), request({ searchEveryQuestion: true }), transport, { ...config, ...extra });
@@ -296,13 +297,15 @@ test('always-search does not bypass missing credentials or an administrator rese
   }
 });
 
-test('always-search rejects a missing public query without inventing one or automatically retrying', async () => {
-  const transport = fake(payload(decision()));
-  await assert.rejects(execute(new TaskSessions(), request({ searchEveryQuestion: true }), transport), /usable public search query/);
+test('a camera answer is accepted without a search query even with info enabled', async () => {
+  const transport = fake(payload(decision({ answer: 'The bottle is on your left.' })));
+  const result = await execute(new TaskSessions(), request({ searchEveryQuestion: true, question: 'Where is the bottle?' }), transport);
+  assert.equal(result.action, 'respond');
+  assert.equal(result.answer, 'The bottle is on your left.');
   assert.equal(transport.calls.length, 1);
 });
 
-test('always-search ends cleanly on empty results rather than continuing to search', async () => {
+test('a chosen search ends cleanly on empty results rather than continuing to search', async () => {
   const transport = fake(payload(decision({ action: 'search_online', argument: 'uncertain object' })), { organic: [] });
   const result = await execute(new TaskSessions(), request({ searchEveryQuestion: true }), transport);
   assert.equal(result.action, 'respond');
@@ -328,27 +331,13 @@ test('uncited search links remain available as related results without becoming 
   assert.equal(later.webInfo, null);
 });
 
-test('a new-question respond action still searches its public query and the final answer accepts an unused argument', async () => {
-  const sessions = new TaskSessions();
+test('a respond action cannot be turned into a search by an unused legacy query', async () => {
   const input = request({ searchEveryQuestion: true, includeWebInfo: true });
-  const transport = fake(
-    payload(decision({ action: 'respond', searchQuery: 'manufacturer filter cleaning', sourceIds: ['invented'],
-      answer: 'This answer has not been researched yet.', targetLabel: 'Old target', box: [100, 100, 300, 300] })),
-    searchPayload(),
-    payload(decision({ action: 'respond', argument: '', sourceIds: ['s1'], webSummary: 'Cleaning instructions.' })),
-  );
-  const first = await execute(sessions, input, transport);
-  assert.equal(first.action, 'refresh_camera');
-  assert.equal(first.target, null);
-  assert.equal(first.answer, 'Let me look that up.');
-  assert.deepEqual(first.sourceIds, []);
-  assert.equal(transport.calls[1].body.q, 'manufacturer filter cleaning');
-  const final = await execute(sessions, { ...input, frameId: 'fresh', continuationId: first.continuationId }, transport);
-  assert.equal(final.action, 'respond');
-  assert.equal(final.answer, 'A bottle.');
-  assert.deepEqual(final.sourceIds, ['s1']);
-  assert.equal(transport.calls.length, 3);
-  assert.deepEqual(transport.calls[2].body.generationConfig.responseJsonSchema.properties.sourceIds.items.enum, ['s1']);
+  const transport = fake(payload(decision({ action: 'respond', searchQuery: 'unused filter cleaning', answer: 'Press the visible latch.' })));
+  const result = await execute(new TaskSessions(), input, transport);
+  assert.equal(result.action, 'respond');
+  assert.equal(result.answer, 'Press the visible latch.');
+  assert.equal(transport.calls.length, 1);
 });
 
 test('unused arguments on final answers cannot execute a tool or suppress a usable answer', async () => {
@@ -361,11 +350,36 @@ test('unused arguments on final answers cannot execute a tool or suppress a usab
   }
 });
 
-test('invalid initial queries do not fall back to sending private user text to search', async () => {
-  for (const searchQuery of ['', ' ', 'x'.repeat(501), null]) {
-    const transport = fake(payload(decision({ searchQuery })));
-    await assert.rejects(execute(new TaskSessions(), request({ searchEveryQuestion: true,
-      question: 'Private question with account credentials' }), transport), /usable public search query/);
+test('invalid explicit search arguments never fall back to sending private user text', async () => {
+  for (const argument of ['', ' ', 'x'.repeat(501), null]) {
+    const transport = fake(payload(decision({ action: 'search_online', argument })));
+    await assert.rejects(execute(new TaskSessions(), request({
+      question: 'Private question with account credentials' }), transport), /invalid research arguments/);
     assert.equal(transport.calls.length, 1);
+  }
+});
+
+test('turning info off on a continuation forbids additional searches and document reads', async () => {
+  for (const action of ['search_online', 'read_source']) {
+    const sessions = new TaskSessions(), input = request();
+    const firstCalls = fake(payload(decision({ action: 'search_online', argument: 'manufacturer manual' })), searchPayload());
+    const first = await execute(sessions, input, firstCalls);
+    const disabled = fake(payload(decision({ action, argument: action === 'read_source' ? 's1' : 'more details' })));
+    await assert.rejects(execute(sessions, { ...input, frameId: 'fresh-disabled', includeWebInfo: false,
+      researchEnabled: false, continuationId: first.continuationId }, disabled), /research limit/);
+    assert.equal(disabled.calls.length, 1);
+  }
+});
+
+test('visual questions and ordinary conversation remain single-call answers with either toggle state', async () => {
+  for (const includeWebInfo of [false, true]) {
+    for (const question of ['Where is the bottle?', 'Find all bottles.', 'How do I press this visible button?', 'Hello']) {
+      const transport = fake(payload(decision()));
+      await execute(new TaskSessions(), request({ includeWebInfo, question }), transport);
+      assert.equal(transport.calls.length, 1);
+      const context = JSON.parse(transport.calls[0].body.contents.at(-1).parts[0].text);
+      assert.equal(context.researchAllowed, includeWebInfo);
+      assert.match(transport.calls[0].body.systemInstruction.parts.at(-1).text, includeWebInfo ? /web info/i : /permitted only/);
+    }
   }
 });

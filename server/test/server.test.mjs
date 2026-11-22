@@ -330,9 +330,9 @@ test('incidental search results do not create an automatic web info strip', () =
   }
 });
 
-test('per-question search is an explicit boolean opt-in for compatible clients', () => {
+test('legacy per-question search flag is type-checked but cannot force searching', () => {
   assert.equal(validateRequest(input()).searchEveryQuestion, false);
-  assert.equal(validateRequest(input({ searchEveryQuestion: true })).searchEveryQuestion, true);
+  assert.equal(validateRequest(input({ searchEveryQuestion: true })).searchEveryQuestion, false);
   assert.equal(validateRequest(input({ searchEveryQuestion: false })).searchEveryQuestion, false);
   assert.throws(() => validateRequest(input({ searchEveryQuestion: 'true' })), /searchEveryQuestion/);
 });

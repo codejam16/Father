@@ -33,6 +33,8 @@ final class AssistantViewModel: ObservableObject {
     private var work: Task<Void, Never>?
     private var workID: UUID?
     private var selectionID = UUID()
+    private var webPreferenceObserver: AnyCancellable?
+    private var workMayResearch = false
 
     init() {
         sessionTask = settings.task
@@ -45,6 +47,15 @@ final class AssistantViewModel: ObservableObject {
             self?.isMuted = true
             self?.errorMessage = message
         }
+        webPreferenceObserver = settings.$webInfoEnabled.dropFirst().removeDuplicates().sink { [weak self] enabled in
+            guard !enabled else { return }
+            Task { @MainActor [weak self] in
+                guard let self, !self.settings.webInfoEnabled, self.isBusy, self.workMayResearch else { return }
+                self.cancel()
+                self.errorMessage = "Web search turned off. Send the question again to continue without searching."
+            }
+        }
+
     }
 
     func resume() async {
@@ -135,15 +146,17 @@ final class AssistantViewModel: ObservableObject {
         let endpoint = settings.serverURL
         let token = settings.token
         let task = settings.task
-        let researchEnabled = true
+        let researchEnabled = settings.webInfoEnabled
+        workMayResearch = researchEnabled
         let sessionID = self.sessionID
         let confirmations = Array(confirmedStepIDs)
-        // Visibility is local: always fetch evidence and cards, even while hidden.
-        let includeWebInfo = true
+        // The info toggle is also permission to use web research.
+        let includeWebInfo = researchEnabled
         work = Task {
             defer {
                 if workID == id {
                     isBusy = false
+                    workMayResearch = false
                     workID = nil
                     pendingQuestion = nil
                     updateListening()
@@ -165,7 +178,7 @@ final class AssistantViewModel: ObservableObject {
                                                   history: history, selection: currentSelection,
                                                   sessionId: sessionID, continuationId: continuationID,
                                                   researchEnabled: researchEnabled, confirmedStepIds: confirmations, includeWebInfo: includeWebInfo,
-                                                  searchEveryQuestion: true,
+                                                  searchEveryQuestion: false,
                                                   selections: attachment == nil ? [] : frame.trackedObjects.compactMap { object in
                                                       guard object.source == "user", object.state == "visible", let box = object.box else { return nil }
                                                       return Target(label: object.label, box: box, id: object.id, parentId: object.parentId)
@@ -193,6 +206,7 @@ final class AssistantViewModel: ObservableObject {
                     frame = try await camera.snapshot()
                     currentSelection = nil
                 }
+                workMayResearch = false // Final response: no further research can start.
                 confirmedStepIDs.subtract(confirmations)
                 citedSourceIds = response.sourceIds ?? []
                 messages.append(ChatMessage(role: .user, content: text))
@@ -228,6 +242,7 @@ final class AssistantViewModel: ObservableObject {
         work?.cancel()
         work = nil
         isBusy = false
+        workMayResearch = false
         pendingQuestion = nil
         speech.setListening(false)
         speech.stopSpeaking()
