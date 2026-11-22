@@ -6,6 +6,8 @@ import { analyzeWithGemini, demoAnswer } from './gemini.mjs';
 import { TaskSessions } from './task-session.mjs';
 import { runAgent } from './agent.mjs';
 import { checkStepWithGemini, demoCheck, validateCheckRequest } from './step-check.mjs';
+import { ANALYSIS_TIMEOUT_MS } from './timeouts.mjs';
+import { redactDiagnostic } from './diagnostics.mjs';
 
 // Developer diagnostics stay in logs; these short messages are safe to read aloud.
 function userErrorMessage(error) {
@@ -24,6 +26,9 @@ function userErrorMessage(error) {
     task_busy: "I'm still working on your previous question. Please wait a moment.",
     tasks_busy: "I'm busy right now. Please try again in a moment.",
     invalid_request: "I couldn't use that camera view or question. Please try again.",
+    invalid_action: "I couldn't interpret the AI's response. Please ask your question again.",
+    invalid_task_state: "I couldn't update the task details. Please ask your question again.",
+    invalid_model_output: "The AI returned an unreadable answer. Please ask again.",
     request_too_large: "I couldn't use that camera view. Please try showing it again.",
   };
   return messages[error.code] ?? "I couldn't finish that request. Please try again.";
@@ -46,8 +51,14 @@ export function loadConfig(env = process.env) {
     maxOutputTokens: integer(env.MAX_OUTPUT_TOKENS, 2048, 4096),
     diagnosticLogPath: fileURLToPath(new URL('../.data/provider-errors.jsonl', import.meta.url)),
     webResearchEnabled: env.ENABLE_WEB_RESEARCH !== 'false',
+    serperApiKey: env.SERPER_API_KEY?.trim() ?? '',
+    serperCountry: env.SERPER_COUNTRY ?? 'ca',
+    serperLanguage: env.SERPER_LANGUAGE ?? 'en',
     maxResearchSteps: integer(env.MAX_RESEARCH_STEPS, 2, 2),
   };
+  if (!/^[a-z]{2}$/.test(config.serperCountry) || !/^[a-z]{2}(-[a-zA-Z]{2})?$/.test(config.serperLanguage)) {
+    throw new Error('Use a two-letter SERPER_COUNTRY and a valid SERPER_LANGUAGE code.');
+  }
   if (mode === 'gemini' && (!config.apiKey || config.appToken.length < 16)) {
     throw new Error('Gemini mode requires GEMINI_API_KEY and an APP_TOKEN of at least 16 characters.');
   }
@@ -91,9 +102,9 @@ export function createApp(config, {
 } = {}) {
   const server = createServer(async (request, response) => {
     const started = Date.now();
-    const trace = { requestId: randomUUID().slice(0, 8), calls: 0 };
+    const trace = { requestId: randomUUID().slice(0, 8), calls: 0, searchCalls: 0 };
     const controller = new AbortController();
-    const deadline = setTimeout(() => controller.abort(), 45_000);
+    const deadline = setTimeout(() => controller.abort(), ANALYSIS_TIMEOUT_MS);
     response.on('finish', () => clearTimeout(deadline));
     const route = ['/analyze', '/check', '/health'].includes(request.url) ? request.url : '/other';
     console.log(`[${new Date().toISOString()}] Request received: ${route} [${trace.requestId}]`);
@@ -107,7 +118,7 @@ export function createApp(config, {
     const send = (status, data) => {
       const circle = data.error ? '' : data.target ? ` circle="${String(data.target.label).slice(0, 60)}"` : ' circle=none';
       const step = data.status ? ` step=${data.status}` : '';
-      console.log(`Request completed: ${route} [${trace.requestId}] googleCalls=${trace.calls} HTTP ${status} ${data.error?.code ?? 'ok'}${step}${circle} (${Date.now() - started}ms)`);
+      console.log(`Request completed: ${route} [${trace.requestId}] googleCalls=${trace.calls} serperSearches=${trace.searchCalls} HTTP ${status} ${data.error?.code ?? 'ok'}${step}${circle} (${Date.now() - started}ms)`);
       if (response.destroyed) return;
       response.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
       response.end(JSON.stringify(data));
@@ -147,8 +158,11 @@ export function createApp(config, {
       if (controller.signal.aborted) {
         return send(504, { error: { code: 'request_timeout', message: 'That took too long. Please try again.', userMessage: 'That took too long. Please try again.' } });
       }
-      if (error instanceof APIError && error.code === 'provider_error') console.error(error.message);
       if (error instanceof APIError) {
+        // Fixed validation messages, not model replies, query text or images.
+        const detail = redactDiagnostic({ code: error.code, reason: error.message },
+          [config.apiKey, config.appToken, config.serperApiKey]);
+        console.warn(`[${trace.requestId}] Request rejected: ${JSON.stringify(detail)}`);
         const message = userErrorMessage(error);
         return send(error.status, { error: { code: error.code, message, userMessage: message } });
       }
@@ -156,6 +170,7 @@ export function createApp(config, {
       send(500, { error: { code: 'internal_error', message: "I couldn't finish that request. Please try again.", userMessage: "I couldn't finish that request. Please try again." } });
     }
   });
+  // This limits receiving the upload; ANALYSIS_TIMEOUT_MS bounds processing.
   server.requestTimeout = 55_000;
   server.headersTimeout = 10_000;
   return server;

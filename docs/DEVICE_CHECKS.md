@@ -11,7 +11,7 @@ These are acceptance checks, not completed test results. Native compilation and 
 
 ## Pointing, before provider access
 
-- Keep Demo responses enabled. Drag a region near each of the four corners and center. Check that the yellow box follows the finger and accounts for black letterboxing.
+- Keep Demo responses enabled and turn on the viewfinder button. Drag a region near each of the four corners and center. Check that the yellow box follows the finger and accounts for black letterboxing.
 - Tap instead of dragging; a small region should be selected. It must not claim to have detected an object.
 - Move the phone slowly while the selected region remains visible. Evaluate the Vision tracker; record failures, including drift to similar items.
 - Occlude the object or move it out of view. Confirm a lost/expired pointer clears. A high tracker confidence is not proof that it still follows the intended item.
@@ -44,10 +44,10 @@ These are acceptance checks, not completed test results. Native compilation and 
 - Drag the captions handle upward/downward: height changes without selecting a camera object or scrolling the transcript. Release, relaunch and confirm the height persists. Test minimum/maximum height, rotation, small screens and VoiceOver adjustment. Check the grey bubbles stay transparent and readable over bright/dark scenes.
 - With captions off, confirm the camera, pointer, listening and spoken replies still work. Turn on the side text-bubble button: user words should appear on the right while speaking, remain once submitted, and be followed by the assistant on the left. New messages scroll into view; older messages can be scrolled/read. Check long answers and larger accessibility text.
 - Turn captions off/on during listening, processing and playback. No request should be repeated or voice turn cancelled by changing the overlay. Check persistence after relaunch. Open the full conversation from the captions header; listening pauses while it is open and resumes on dismissal unless muted. Errors should remain visible with both overlays off.
-- Automatic web info starts on after installing this version, including existing installs. Disable it and verify future questions omit Google Search; relaunch and confirm the explicit opt-out persists. Re-enable it and ask about a visible, clearly labelled product's price; confirm price text identifies currency/retailer, the sources open real pages, and the returned preview image comes from the online page. An unbranded object should yield similar-product wording or a clarification, not a confident exact match. Page images are best effort; blocked/missing metadata must leave a usable link.
-- Ask for further reading on a non-shopping topic. Confirm only useful grounded results create a small strip; greetings, purely visual answers, empty results and thinking states reserve no space. Links must work with captions off. Expand/collapse details, then send a new question and confirm the new strip starts collapsed. Dismiss a strip with × and confirm the next relevant reply can still show its own sources. Check Google-provided search suggestions and their links. Rehearse using the actual project/key: supported models and search eligibility are provider-dependent; no live search was executed in the automated checks.
-- Hide Web info while a request or preview is loading. Cards disappear, preview fetching is cancelled, future questions omit the search tool, and an old response must not appear as sources for a newer question. Turning it back on must not automatically send another paid request. New conversation clears source cards. Demo mode must not show live-looking prices or perform searches/previews.
-- Confirm small-screen/landscape controls, caption scrolling, source-card scrolling, webpage opening and returning, privacy/network failures, and the 40-second search timeout on a physical iPhone. Existing native decoding tests cover old responses and new source payloads but still require Xcode execution.
+- Show web info defaults on. Hide it and verify new live questions still search via Serper and receive source cards. A mint dot appears on the info button when hidden links are available. Tap it to show those same results without another request; relaunch and confirm visibility persists. Ask about a visible, clearly labelled product's price; confirm price text identifies currency/retailer, the sources open real pages, and the returned preview image comes from the online page. An unbranded object should yield similar-product wording or a clarification, not a confident exact match. Page images are best effort; blocked/missing metadata must leave a usable link.
+- Ask for further reading on a non-shopping topic. Confirm cited results create a small strip; empty results and thinking states reserve no space. Every new live question requests an initial lookup when connected. Links must work with captions off. Expand/collapse details, then send a new question and confirm the new strip starts collapsed. Hide a strip with × and confirm its links remain available via the dotted info button. Check the Serper source links; no Google Search suggestions widget should be fabricated. Rehearse using the actual project/key: supported models and search eligibility are provider-dependent; no live search was executed in the automated checks.
+- Hide Web info while a request or preview is loading. Cards disappear, preview fetching is cancelled, future questions still request research, and an old response must not appear as sources for a newer question. Turning it back on must not automatically send another paid request. New conversation clears source cards. Demo mode must not show live-looking prices or perform searches/previews.
+- Confirm small-screen/landscape controls, caption scrolling, source-card scrolling, webpage opening and returning, privacy/network failures, and Gemini timeouts (40 seconds per model call), cancellation, and the 95-second backend/105-second phone deadlines on a physical iPhone. Existing native decoding tests cover old responses and new source payloads but still require Xcode execution.
 
 ## Honest demo scope
 
@@ -56,13 +56,13 @@ Use one clear, low-risk task and distinctive objects. Confirm that identifying a
 
 ## Research and memory
 
-- Keep the camera screen free of transcripts. Ask for ordinary object identification: no research should be performed unnecessarily.
-- Ask a task that needs exact product documentation. Confirm the assistant asks for missing model/version details before researching and retains your answer after earlier messages fall out of chat history.
-- With an eligible Gemini project, inspect Terminal for `Agent action: search_online` / `read_source`. Verify source links, manufacturer relevance, grounded excerpts, and Google's supplied Search suggestions appear in the secondary sheet. Dismissing it resumes listening; playback must not be transcribed.
+- Keep the camera screen free of transcripts. Ask for ordinary object identification: verify the initial lookup runs for each new live question.
+- Ask a task that needs exact product documentation. Confirm uncertain searches use qualified categories and the assistant asks for missing model/version details instead of claiming an exact match and retains your answer after earlier messages fall out of chat history.
+- Inspect Terminal for `Agent action: search_online` / `read_source`. Receiving a researched answer must not automatically open Sources and research, cover the camera, stop playback, or pause/resume the microphone. Useful links appear only in the transparent camera-local info box when its display toggle is enabled. Full evidence is available from Settings only on explicit navigation.
 - Compare an accessible manual with a paywalled/unreachable document. The latter must not be claimed as read. Uncertain diagram-to-camera matches must ask for a clearer view instead of producing a speculative box.
 - Move the camera during research. Confirm a fresh frame is sent after research and old selected-image coordinates are never drawn on the new view. Keep in mind the existing frame-ring tracking lifetime.
 - Check a task plan in settings. It must not mark suggested steps complete automatically. Mark one completed, ask another question and confirm its state persists. Start a new task/change notes and confirm old context/sources clear.
-- Turn online research off. Camera answers and memory should still work without search calls. Demo mode must make zero provider calls regardless of this toggle.
+- Set ENABLE_WEB_RESEARCH=false on the server. Camera answers and memory should still work without search calls. Demo mode must always make zero provider calls.
 - Test bad source metadata, Google quota errors, expired continuations/backend restart, cancellation, network loss, and backgrounding during research. Only Google 500/503 "busy" responses are retried automatically (twice, about 1 s and 2 s apart); quota, auth, request and timeout failures are not retried. Errors should be spoken (if enabled) and visible under Last issue.
 - Measure the calls and latency for direct identification vs search plus document reading. Budget per model call, not per spoken question. Do not promise free research without verifying the account's tool quota/pricing.
 
@@ -72,3 +72,34 @@ Use one clear, low-risk task and distinctive objects. Confirm that identifying a
 - Say “wait” mid-reply: playback stops within about a second and nothing is sent. Ask a real question mid-reply: playback stops and the question is sent after the usual pause.
 - Repeat with AirPods/Bluetooth, in a noisy room, and with the phone muted (muted must never listen during replies). Check reply volume and quality with voice processing on.
 
+
+## Serper search integration
+
+- Set a real `SERPER_API_KEY` locally and restart the backend; confirm startup says `Web search: Serper`. Keep Gemini configured as before. No native code changes are required.
+- With research enabled, ask for a product price or manufacturer manual. Confirm one `Serper search` request per search action, source links/snippets returned, a fresh-frame continuation, and a cited final answer. No Google `search_online` model calls or Google Search widgets should appear. Normal identification from the updated app also starts with one Serper lookup; older clients without searchEveryQuestion retain the optional search policy.
+- Test missing/invalid key, empty search results, exhausted credits, slow network, and cancellation. The assistant must not fabricate a live price or claim to have read a full page from a snippet. Search failures should finish cleanly and allow the next camera question.
+- Hide results in Settings and verify lookups continue. Then set `ENABLE_WEB_RESEARCH=false` globally and verify no Serper queries are sent. Mock mode must remain entirely offline. Test old clients without task sessions as well as the task-aware client.
+- Serper credits are finite and separate from Gemini quotas. Verify actual result quality, product match, images and latency using the team's account; the automated checks use mocked responses and spend no search credits.
+
+## Resizable inline info box
+
+- With real search results visible, drag the info box's top handle vertically and its corner horizontally/vertically. Height and width change without selecting camera objects, sending another question, opening a modal or interrupting speech. Drag upward until the box fills the screen, including when captions are also tall. Drag down to shrink it. Confirm the centered status remains visible, the close/restore controls work, and voice listening continues.
+- Collapse/expand using the chevron: details, images and scrolling remain inside the box. New replies start compact, saved dimensions apply on expansion, and × hides the box and its saved results can be reopened with the dotted info button. Test size persistence after relaunch and orientation changes, smaller phones and larger text.
+- The centered colored status badge stays in place, with no old top-left status text. Captions keep their independent height adjustment. Test both resize handles with VoiceOver. Only explicit Settings/history navigation or tapping a website link should open another screen. Native layout and gestures require real-device verification.
+
+- Region selection starts off. Camera touches must not select or freeze a frame until the viewfinder button is enabled. Disable it with an active selection and verify the focus chip and selection clear; the next question uses a fresh frame. Automatic assistant boxes still work with manual selection off. Verify the lighter pointer, small focus chip, VoiceOver labels, and drag cancellation during a request.
+
+## Caption and info bubble spacing
+
+- Start with captions on and make them tall. Expand the info bubble slowly, resize its width, and test long source titles and larger text. Captions stay above the measured bubble with a gap and shrink to the available space; they must not overlap.
+- Enlarge info past roughly two thirds of the camera area: captions temporarily disappear without changing their saved toggle or height. Shrink/collapse/hide info and verify captions return. Repeat with captions off beforehand: they must stay off. Repeat while new messages arrive, after rotating, and on a small phone.
+- At maximum size, info retains continuous rounded corners, horizontal and bottom camera margins, and a translucent grey fill. The centered status stays clear and restore/close/drag controls remain usable. There is no modal presentation or listening interruption.
+- Check captions against bright and moving backgrounds: the slightly stronger grey bubble fill should improve readability while leaving the camera visible. Native geometry and gestures require Xcode/device verification.
+
+## Assistant voice
+
+- In Settings → Assistant voice, preview Automatic and an installed English voice. Automatic prefers Premium, then Enhanced; explicit choices persist after relaunch and apply to replies and spoken errors. Previews must not send camera questions, search, or change conversation/task history.
+- Download an Enhanced/Premium English voice in iPhone accessibility settings and return. The picker refreshes on foregrounding. Delete a selected download and verify the app falls back to Automatic without a broken Picker selection or failed reply. With no higher-quality voice installed, a basic English voice still works; do not claim that code alone upgrades a missing voice download.
+- Stop a preview, switch voices during playback, dismiss settings during a preview, interrupt audio, and mute/unmute. Speech playback must stop as appropriate and listening must resume only when the camera screen is active, unmuted and not busy. Confirm captions and the colored speaking/listening badge still follow playback. Preview and voice quality require a physical iPhone and were not executable in the Linux authoring environment.
+
+- While previewing a voice, scroll the voice rows and download instructions out of view: playback must continue. Closing Settings or changing the voice stops it. With only standard voices installed, Automatic should still prefer the phone’s English dialect where available.

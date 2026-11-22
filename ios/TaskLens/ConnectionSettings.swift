@@ -4,16 +4,15 @@ import Security
 
 @MainActor
 final class ConnectionSettings: ObservableObject {
-    @Published var researchEnabled: Bool { didSet { defaults.set(researchEnabled, forKey: "researchEnabled") } }
     @Published var demoMode: Bool { didSet { defaults.set(demoMode, forKey: "demoMode") } }
     @Published var serverURL: String { didSet { defaults.set(serverURL, forKey: "serverURL") } }
     @Published var task: String { didSet { defaults.set(task, forKey: "task") } }
+    @Published var voiceIdentifier: String { didSet { defaults.set(voiceIdentifier, forKey: "voiceIdentifier") } }
     @Published var spokenReplies: Bool { didSet { defaults.set(spokenReplies, forKey: "spokenReplies") } }
     @Published var guidedMode: Bool { didSet { defaults.set(guidedMode, forKey: "guidedMode") } }
     @Published var interruptionsEnabled: Bool { didSet { defaults.set(interruptionsEnabled, forKey: "interruptionsEnabled") } }
-    /// Empty means "Automatic": the most natural installed English voice.
-    @Published var voiceIdentifier: String { didSet { defaults.set(voiceIdentifier, forKey: "voiceIdentifier") } }
     @Published var captionsEnabled: Bool { didSet { defaults.set(captionsEnabled, forKey: "captionsEnabled") } }
+    @Published var selectionEnabled: Bool { didSet { defaults.set(selectionEnabled, forKey: "selectionEnabled") } }
     @Published var webInfoEnabled: Bool { didSet { defaults.set(webInfoEnabled, forKey: "webInfoEnabled") } }
     @Published var token: String { didSet { saveToken() } }
     @Published private(set) var credentialError: String?
@@ -23,7 +22,6 @@ final class ConnectionSettings: ObservableObject {
     init() {
         let defaults = UserDefaults.standard
         let service = "TaskLens.ProxyToken"
-        researchEnabled = defaults.object(forKey: "researchEnabled") as? Bool ?? true
         demoMode = defaults.object(forKey: "demoMode") as? Bool ?? true
         serverURL = defaults.string(forKey: "serverURL") ?? "http://localhost:8787"
         task = defaults.string(forKey: "task") ?? ""
@@ -32,6 +30,7 @@ final class ConnectionSettings: ObservableObject {
         interruptionsEnabled = defaults.object(forKey: "interruptionsEnabled") as? Bool ?? true
         voiceIdentifier = defaults.string(forKey: "voiceIdentifier") ?? ""
         captionsEnabled = defaults.object(forKey: "captionsEnabled") as? Bool ?? false
+        selectionEnabled = defaults.object(forKey: "selectionEnabled") as? Bool ?? false
         // Adopt the new automatic default once, including existing installations.
         // Later explicit opt-outs remain saved across launches.
         if !defaults.bool(forKey: "automaticWebInfoDefaultV1") {

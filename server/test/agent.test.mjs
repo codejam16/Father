@@ -8,7 +8,7 @@ import { extractResearch, publicURL } from '../src/research.mjs';
 import { validateRequest } from '../src/contract.mjs';
 import { createApp, loadConfig } from '../src/server.mjs';
 
-const config = { model: 'test-model', maxOutputTokens: 2048, apiKey: 'not-real', maxResearchSteps: 2 };
+const config = { model: 'test-model', maxOutputTokens: 2048, apiKey: 'not-real', serperApiKey: 'fake-serper-key', maxResearchSteps: 2 };
 const request = (extra = {}) => validateRequest({
   sessionId: randomUUID(), frameId: randomUUID(), capturedAt: new Date().toISOString(),
   task: 'Identify and use this product', question: 'How do I clean this filter?',
@@ -23,13 +23,10 @@ const payload = (value, candidate = {}) => ({
   candidates: [{ finishReason: 'STOP', content: { parts: [{ text: typeof value === 'string' ? value : JSON.stringify(value) }] }, ...candidate }],
   usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5 },
 });
-const searchPayload = () => payload('The manufacturer describes the removable filter.', {
-  groundingMetadata: {
-    groundingChunks: [{ web: { uri: 'https://docs.vendor.com/manual.pdf', title: 'Manufacturer manual' } }],
-    groundingSupports: [{ segment: { text: 'The filter is removable.' }, groundingChunkIndices: [0] }],
-    searchEntryPoint: { renderedContent: '<div>Google Search suggestions</div>' },
-  },
-});
+const searchPayload = () => ({ organic: [{
+  title: 'Manufacturer manual', link: 'https://docs.vendor.com/manual.pdf',
+  snippet: 'The manufacturer says the filter is removable.',
+}] });
 const readPayload = () => payload('The diagram shows the filter below the handle.', {
   urlContextMetadata: { urlMetadata: [{ retrievedUrl: 'https://docs.vendor.com/manual.pdf', urlRetrievalStatus: 'URL_RETRIEVAL_STATUS_SUCCESS' }] },
 });
@@ -73,9 +70,12 @@ test('search uses grounded metadata, then requires a fresh camera frame before h
   assert.equal(first.target, null);
   assert.equal(first.sources[0].id, 's1');
   assert.deepEqual(first.researchReports[0].supports[0].sourceIds, ['s1']);
-  assert.match(first.researchReports[0].searchSuggestionsHTML, /Google/);
-  assert.deepEqual(transport.calls[1].body.tools, [{ google_search: {} }]);
-  assert.equal(transport.calls[1].body.generationConfig.responseJsonSchema, undefined);
+  assert.equal(first.researchReports[0].searchSuggestionsHTML, null);
+  assert.equal(first.researchReports[0].provider, 'serper');
+  assert.equal(transport.calls[1].url, 'https://google.serper.dev/search');
+  assert.equal(transport.calls[1].body.q, 'manufacturer model A filter manual');
+  assert.equal(transport.calls[1].body.tools, undefined);
+  assert.equal(transport.calls[1].body.generationConfig, undefined);
   await assert.rejects(execute(sessions, { ...input, continuationId: first.continuationId }, transport), /fresh camera frame/);
   assert.equal(transport.calls.length, 2);
   const final = await execute(sessions, { ...input, frameId: 'fresh-frame', continuationId: first.continuationId }, transport, settings);
@@ -134,7 +134,11 @@ test('unknown actions, invented citations and arbitrary read URLs cannot execute
 test('search text without provider source metadata is never presented as verified research', async () => {
   const transport = fake(payload(decision({ action: 'search_online', argument: 'query' })),
     payload('I searched and found https://made-up.vendor.com'));
-  await assert.rejects(execute(new TaskSessions(), request(), transport), /usable source links/);
+  const result = await execute(new TaskSessions(), request(), transport);
+  assert.equal(result.action, 'respond');
+  assert.equal(result.webInfo, null);
+  assert.deepEqual(result.sources, []);
+  assert.equal(transport.calls.length, 2);
 });
 
 test('paywalled or failed URL retrieval cannot be claimed as a read document', () => {
@@ -204,7 +208,7 @@ test('invalid session and confirmation fields are rejected before provider acces
 
 test('full HTTP search/read/refresh flow uses five calls and retains the final source and frame', async (t) => {
   const settings = loadConfig({ AI_MODE: 'gemini', GEMINI_API_KEY: 'fake-key', APP_TOKEN: 'private-test-token',
-    MAX_LIVE_REQUESTS: '1', REQUESTS_PER_MINUTE: '1' });
+    SERPER_API_KEY: 'fake-serper-key', MAX_LIVE_REQUESTS: '1', REQUESTS_PER_MINUTE: '1' });
   const transport = fake(
     payload(decision({ action: 'search_online', argument: 'filter manual' })), searchPayload(),
     payload(decision({ action: 'read_source', argument: 's1' })), readPayload(),
@@ -259,4 +263,119 @@ test('steps the user says they finished are marked complete, unknown ids are ign
   const updated = applyUserCompletedSteps(memory, ['s1', 'nope', 42]);
   assert.deepEqual(updated.plan.map((step) => step.completed), [true, false]);
   assert.equal(applyUserCompletedSteps(memory, undefined), memory);
+});
+
+test('always-search questions fetch links even when the UI keeps them hidden, without repeating on continuation', async () => {
+  const sessions = new TaskSessions();
+  // Overlay visibility stays on the phone; both visible and hidden modes request cards.
+  const input = request({ searchEveryQuestion: true, includeWebInfo: true });
+  const transport = fake(
+    payload(decision({ action: 'search_online', argument: 'filter cleaning manufacturer manual' })), searchPayload(),
+    payload(decision({ sourceIds: ['s1'], webSummary: 'Manufacturer cleaning instructions.' })),
+    payload(decision({ action: 'search_online', argument: 'filter replacement intervals manufacturer' })), searchPayload(),
+  );
+  const first = await execute(sessions, input, transport);
+  assert.ok(transport.calls[0].body.generationConfig.responseJsonSchema.required.includes('searchQuery'));
+  assert.equal(transport.calls[0].body.generationConfig.responseJsonSchema.properties.sourceIds.maxItems, 0);
+  const final = await execute(sessions, { ...input, continuationId: first.continuationId, frameId: 'fresh' }, transport);
+  assert.equal(final.action, 'respond');
+  assert.equal(final.webInfo.sources[0].url, 'https://docs.vendor.com/manual.pdf');
+  assert.equal(final.webInfo.summary, 'Manufacturer cleaning instructions.');
+  assert.equal(transport.calls.filter((call) => call.url === 'https://google.serper.dev/search').length, 1);
+  assert.ok(transport.calls[2].body.generationConfig.responseJsonSchema.properties.action.enum.includes('respond'));
+  // A follow-up question in the same session gets its own search, even with older evidence present.
+  await execute(sessions, { ...input, question: 'When should I replace it?', frameId: 'next-question' }, transport);
+  assert.equal(transport.calls.filter((call) => call.url === 'https://google.serper.dev/search').length, 2);
+});
+
+test('always-search policy is independent of whether source cards are requested', async () => {
+  const transport = fake(payload(decision({ action: 'search_online', argument: 'filter manual' })), searchPayload());
+  const result = await execute(new TaskSessions(), request({ searchEveryQuestion: true, includeWebInfo: false }), transport);
+  assert.equal(result.action, 'refresh_camera');
+  assert.equal(transport.calls[1].url, 'https://google.serper.dev/search');
+});
+
+test('always-search does not bypass missing credentials or an administrator research switch', async () => {
+  for (const extra of [{ serperApiKey: '' }, { webResearchEnabled: false }]) {
+    const transport = fake(payload(decision()));
+    const result = await execute(new TaskSessions(), request({ searchEveryQuestion: true }), transport, { ...config, ...extra });
+    assert.equal(result.action, 'respond');
+    assert.equal(transport.calls.length, 1);
+    assert.deepEqual(transport.calls[0].body.generationConfig.responseJsonSchema.properties.action.enum,
+      ['respond', 'ask_clarification', 'request_view']);
+  }
+});
+
+test('always-search rejects a missing public query without inventing one or automatically retrying', async () => {
+  const transport = fake(payload(decision()));
+  await assert.rejects(execute(new TaskSessions(), request({ searchEveryQuestion: true }), transport), /usable public search query/);
+  assert.equal(transport.calls.length, 1);
+});
+
+test('always-search ends cleanly on empty results rather than continuing to search', async () => {
+  const transport = fake(payload(decision({ action: 'search_online', argument: 'uncertain object' })), { organic: [] });
+  const result = await execute(new TaskSessions(), request({ searchEveryQuestion: true }), transport);
+  assert.equal(result.action, 'respond');
+  assert.equal(result.continuationId, null);
+  assert.equal(result.webInfo, null);
+  assert.equal(transport.calls.length, 2);
+});
+
+test('uncited search links remain available as related results without becoming answer citations', async () => {
+  const input = request({ searchEveryQuestion: true, includeWebInfo: true });
+  const sessions = new TaskSessions();
+  const transport = fake(payload(decision({ action: 'search_online', argument: 'reusable water bottle' })),
+    searchPayload(), payload(decision({ answer: 'It looks like a bottle.', webSummary: null })));
+  const first = await execute(sessions, input, transport);
+  const final = await execute(sessions, { ...input, frameId: 'fresh', continuationId: first.continuationId }, transport);
+  assert.deepEqual(final.sourceIds, []);
+  assert.equal(final.webInfo.summary, 'Related search results');
+  assert.equal(final.webInfo.sources[0].url, 'https://docs.vendor.com/manual.pdf');
+  // No new research in a later camera-only turn must not revive old links as fresh results.
+  const offline = fake(payload(decision()));
+  const later = await execute(sessions, { ...input, frameId: 'later', question: 'What color is it?' }, offline,
+    { ...config, webResearchEnabled: false });
+  assert.equal(later.webInfo, null);
+});
+
+test('a new-question respond action still searches its public query and the final answer accepts an unused argument', async () => {
+  const sessions = new TaskSessions();
+  const input = request({ searchEveryQuestion: true, includeWebInfo: true });
+  const transport = fake(
+    payload(decision({ action: 'respond', searchQuery: 'manufacturer filter cleaning', sourceIds: ['invented'],
+      answer: 'This answer has not been researched yet.', targetLabel: 'Old target', box: [100, 100, 300, 300] })),
+    searchPayload(),
+    payload(decision({ action: 'respond', argument: '', sourceIds: ['s1'], webSummary: 'Cleaning instructions.' })),
+  );
+  const first = await execute(sessions, input, transport);
+  assert.equal(first.action, 'refresh_camera');
+  assert.equal(first.target, null);
+  assert.equal(first.answer, 'Let me look that up.');
+  assert.deepEqual(first.sourceIds, []);
+  assert.equal(transport.calls[1].body.q, 'manufacturer filter cleaning');
+  const final = await execute(sessions, { ...input, frameId: 'fresh', continuationId: first.continuationId }, transport);
+  assert.equal(final.action, 'respond');
+  assert.equal(final.answer, 'A bottle.');
+  assert.deepEqual(final.sourceIds, ['s1']);
+  assert.equal(transport.calls.length, 3);
+  assert.deepEqual(transport.calls[2].body.generationConfig.responseJsonSchema.properties.sourceIds.items.enum, ['s1']);
+});
+
+test('unused arguments on final answers cannot execute a tool or suppress a usable answer', async () => {
+  for (const argument of ['', 's1', 'https://internal.local/secret']) {
+    const transport = fake(payload(decision({ argument })));
+    const result = await execute(new TaskSessions(), request(), transport);
+    assert.equal(result.action, 'respond');
+    assert.equal(result.answer, 'A bottle.');
+    assert.equal(transport.calls.length, 1);
+  }
+});
+
+test('invalid initial queries do not fall back to sending private user text to search', async () => {
+  for (const searchQuery of ['', ' ', 'x'.repeat(501), null]) {
+    const transport = fake(payload(decision({ searchQuery })));
+    await assert.rejects(execute(new TaskSessions(), request({ searchEveryQuestion: true,
+      question: 'Private question with account credentials' }), transport), /usable public search query/);
+    assert.equal(transport.calls.length, 1);
+  }
 });

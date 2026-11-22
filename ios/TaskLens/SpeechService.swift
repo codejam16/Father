@@ -66,12 +66,11 @@ final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     @Published private(set) var isPreparing = false
     @Published private(set) var isSpeaking = false
     @Published private(set) var transcript = ""
+    @Published private(set) var availableVoices: [AVSpeechSynthesisVoice] = []
     var onUtterance: ((String) -> Void)?
     var onFailure: ((String) -> Void)?
     /// Set by the owner: whether talking over a reply may interrupt it.
     var allowsInterruption = true
-    /// Chosen voice identifier; empty means the most natural installed English voice.
-    var voiceIdentifier = ""
     /// True while `onUtterance` runs if that utterance interrupted a spoken reply.
     private(set) var lastUtteranceInterrupted = false
 
@@ -114,6 +113,7 @@ final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     override init() {
         super.init()
         synthesizer.delegate = self
+        refreshVoices()
         interruptionObserver = NotificationCenter.default.publisher(for: AVAudioSession.interruptionNotification)
             .sink { [weak self] notification in
                 let type = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
@@ -338,11 +338,12 @@ final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelega
 
     // MARK: Speaking
 
-    func speak(_ text: String) {
+    func speak(_ text: String, voiceIdentifier: String = "") {
         stopSpeaking(restartListening: false)
         let utterance = AVSpeechUtterance(string: Self.speakable(text))
-        utterance.voice = Self.voice(for: voiceIdentifier)
-        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+        refreshVoices()
+        utterance.voice = voice(for: voiceIdentifier)
+        utterance.rate = AVSpeechUtteranceDefaultSpeechRate * 0.96
         utterance.pitchMultiplier = 1.0
         // Use the voice chosen here, not the system's accessibility speech settings.
         utterance.prefersAssistiveTechnologySettings = false
@@ -469,33 +470,37 @@ final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelega
 
     // MARK: Voices
 
-    /// English voices, most natural first: Premium, then Enhanced, then the basic built-in voices.
-    /// Novelty voices (robots, whispers, bells) are excluded.
-    nonisolated static func availableVoices() -> [AVSpeechSynthesisVoice] {
-        AVSpeechSynthesisVoice.speechVoices()
+    func refreshVoices() {
+        let preferredLanguage = Locale.preferredLanguages.first(where: { $0.hasPrefix("en") }) ?? "en-US"
+        availableVoices = AVSpeechSynthesisVoice.speechVoices()
             .filter { $0.language.hasPrefix("en") && !$0.voiceTraits.contains(.isNoveltyVoice) }
-            .sorted { first, second in
-                if first.quality != second.quality { return first.quality.rawValue > second.quality.rawValue }
-                // Prefer the phone's own English region, then US English, then by name.
-                let preferred = Locale.current.language.region.map { "en-" + $0.identifier } ?? "en-US"
-                let firstScore = first.language == preferred ? 0 : first.language == "en-US" ? 1 : 2
-                let secondScore = second.language == preferred ? 0 : second.language == "en-US" ? 1 : 2
-                if firstScore != secondScore { return firstScore < secondScore }
-                return first.name < second.name
+            .sorted { left, right in
+                // Quality comes first, then the phone's English dialect.
+                if left.quality.rawValue != right.quality.rawValue { return left.quality.rawValue > right.quality.rawValue }
+                let leftMatches = left.language == preferredLanguage
+                let rightMatches = right.language == preferredLanguage
+                if leftMatches != rightMatches { return leftMatches }
+                if left.language != right.language { return left.language < right.language }
+                return left.name.localizedStandardCompare(right.name) == .orderedAscending
             }
     }
 
-    nonisolated static func voice(for identifier: String) -> AVSpeechSynthesisVoice? {
-        if !identifier.isEmpty, let chosen = AVSpeechSynthesisVoice(identifier: identifier) { return chosen }
-        return availableVoices().first ?? AVSpeechSynthesisVoice(language: "en-US")
+    func voice(for identifier: String) -> AVSpeechSynthesisVoice? {
+        if let saved = availableVoices.first(where: { $0.identifier == identifier }) { return saved }
+        // A removed download falls back gracefully instead of breaking replies.
+        // The list already ranks quality and the preferred English dialect.
+        return availableVoices.first ?? AVSpeechSynthesisVoice(language: "en-US")
     }
 
-    nonisolated static func qualityLabel(_ voice: AVSpeechSynthesisVoice) -> String {
+    static func voiceLabel(_ voice: AVSpeechSynthesisVoice) -> String {
+        let quality: String
         switch voice.quality {
-        case .premium: return "Premium"
-        case .enhanced: return "Enhanced"
-        default: return "Basic"
+        case .premium: quality = "Premium"
+        case .enhanced: quality = "Enhanced"
+        default: quality = "Standard"
         }
+        let name = voice.name.localizedCaseInsensitiveContains(quality) ? voice.name : "\(voice.name) · \(quality)"
+        return "\(name) · \(voice.language)"
     }
 
     /// Replies are written text: remove formatting that sounds odd when read aloud.
@@ -507,14 +512,6 @@ final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelega
         result = result.replacingOccurrences(of: #"[*_#`>]+"#, with: "", options: .regularExpression)
         result = result.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
         return result.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    /// Speaks a short sample, for choosing a voice.
-    func preview(identifier: String) {
-        let previous = voiceIdentifier
-        voiceIdentifier = identifier
-        speak("Hi! I can see what you're working on. What would you like help with?")
-        voiceIdentifier = previous
     }
 
     // MARK: Audio engine

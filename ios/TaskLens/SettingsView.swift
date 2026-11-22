@@ -7,7 +7,6 @@ struct SettingsView: View {
     @ObservedObject var settings: ConnectionSettings
     @ObservedObject var model: AssistantViewModel
     @Environment(\.dismiss) private var dismiss
-    private let voices = SpeechService.availableVoices()
 
     var body: some View {
         NavigationStack {
@@ -20,10 +19,6 @@ struct SettingsView: View {
                         NavigationLink("Sources and research") { ResearchDetails(model: model) }
                     }
                 }
-                Section {
-                    Toggle("Search online when needed", isOn: $settings.researchEnabled)
-                } header: { Text("Research") }
-                footer: { Text("The assistant can search for relevant information and read source pages or manuals. Research uses extra API calls and may have separate search charges. Results open with sources and Google Search suggestions; dismiss them to resume listening.") }
 
                 if !model.taskMemory.goal.isEmpty || !model.taskMemory.plan.isEmpty || !model.taskMemory.facts.isEmpty || !model.taskMemory.openQuestions.isEmpty {
                     Section("Current task") {
@@ -76,31 +71,60 @@ struct SettingsView: View {
                     Toggle("Read replies aloud", isOn: $settings.spokenReplies)
                     Toggle("Interrupt by talking", isOn: $settings.interruptionsEnabled)
                         .disabled(!settings.spokenReplies)
-                    Picker("Voice", selection: $settings.voiceIdentifier) {
-                        Text("Automatic (most natural)").tag("")
-                        ForEach(voices, id: \.identifier) { voice in
-                            Text("\(voice.name) · \(SpeechService.qualityLabel(voice)) · \(voice.language)").tag(voice.identifier)
-                        }
-                    }
-                    .disabled(!settings.spokenReplies)
-                    Button("Play sample") { model.speech.preview(identifier: settings.voiceIdentifier) }
-                        .disabled(!settings.spokenReplies)
-                    if !voices.contains(where: { $0.quality == .premium }) {
-                        Text("For a much more natural voice, download a Premium voice: iPhone Settings › Accessibility › Spoken Content › Voices › English (for example Ava, Zoe or Evan, Premium). Then come back and choose it here, or leave Automatic.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                } footer: {
+                    AssistantVoicePicker(settings: settings, speech: model.speech)
+                } header: { Text("Assistant voice") } footer: {
                     Text("With Interrupt by talking on, the microphone stays on while replies play (the phone cancels its own voice), so you can say “wait” or ask something new to cut the reply off. Turn it off if it interrupts itself in a noisy room. When connected, questions send a camera image, recent conversation, and task context to your backend and AI provider. Research may generate web searches. Task memory expires on the backend after inactivity and resets when you start a new task. Demo mode stays on the phone.")
                 }
                 Section {
                     Toggle("Captions", isOn: $settings.captionsEnabled)
-                    Toggle("Automatic web info", isOn: $settings.webInfoEnabled)
+                    Toggle("Show web info", isOn: $settings.webInfoEnabled)
+                    Toggle("Select a region", isOn: $settings.selectionEnabled)
                 } header: { Text("Camera overlays") }
-                footer: { Text("Drag the handle above captions up or down to change their height. Automatic web info shows useful links as a small strip when a reply has web results; expand it for details and previews, or dismiss that reply’s links with ×. Search online when needed controls whether the assistant can research; turning Automatic web info off hides the cards without disabling task research. Research may add latency and provider charges. Opening previews contacts source websites.") }
+                footer: { Text("Every new question requests a web lookup when search is connected, even when web info is hidden. The info button shows a dot when hidden results are available. Drag the info handle upward to fill the screen, down to shrink it, or use its corner to adjust width. Captions have their own height handle. Turn on Select a region to tap or drag over the camera. Opening results does not search again.") }
             }
             .navigationTitle("TaskLens settings")
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } } }
+        }
+        .onAppear { model.speech.refreshVoices() }
+        .onChange(of: settings.voiceIdentifier) { _, _ in model.speech.stopSpeaking() }
+        .onDisappear { model.speech.stopSpeaking() }
+    }
+}
+
+
+@MainActor
+private struct AssistantVoicePicker: View {
+    @ObservedObject var settings: ConnectionSettings
+    @ObservedObject var speech: SpeechService
+
+    var body: some View {
+        Group {
+            Picker("Voice", selection: $settings.voiceIdentifier) {
+                Text("Automatic · best available").tag("")
+                if !settings.voiceIdentifier.isEmpty,
+                   !speech.availableVoices.contains(where: { $0.identifier == settings.voiceIdentifier }) {
+                    Text("Saved voice unavailable · using Automatic").tag(settings.voiceIdentifier)
+                }
+                ForEach(speech.availableVoices, id: \.identifier) { voice in
+                    Text(SpeechService.voiceLabel(voice)).tag(voice.identifier)
+                }
+            }
+            if let voice = speech.voice(for: settings.voiceIdentifier) {
+                Text("Using \(SpeechService.voiceLabel(voice))")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Button {
+                if speech.isSpeaking { speech.stopSpeaking() }
+                else {
+                    speech.speak("Hi, I'm TaskLens. Show me what you're working on, and we'll figure it out together.",
+                                 voiceIdentifier: settings.voiceIdentifier)
+                }
+            } label: {
+                Label(speech.isSpeaking ? "Stop preview" : "Preview voice",
+                      systemImage: speech.isSpeaking ? "stop.fill" : "speaker.wave.2")
+            }
+            Text("Optional: download an Enhanced or Premium English voice for more natural speech in iPhone Settings → Accessibility → Read & Speak → Voices, then return here. On older iOS, look for Spoken Content.")
+                .font(.caption).foregroundStyle(.secondary)
         }
     }
 }

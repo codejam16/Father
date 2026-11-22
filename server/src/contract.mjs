@@ -63,11 +63,13 @@ export function validateRequest(value) {
   if (sessionId !== null && (typeof sessionId !== 'string' || !uuid.test(sessionId))) invalid('Invalid sessionId.');
   if (continuationId !== null && (!sessionId || typeof continuationId !== 'string' || !uuid.test(continuationId))) invalid('Invalid continuationId.');
   if (value.researchEnabled !== undefined && typeof value.researchEnabled !== 'boolean') invalid('Invalid researchEnabled.');
+  if (value.searchEveryQuestion !== undefined && typeof value.searchEveryQuestion !== 'boolean') invalid('Invalid searchEveryQuestion.');
   const confirmedStepIds = value.confirmedStepIds ?? [];
   if (!Array.isArray(confirmedStepIds) || confirmedStepIds.length > 10 ||
       !confirmedStepIds.every((id) => typeof id === 'string' && /^[a-zA-Z0-9_-]{1,40}$/.test(id))) invalid('Invalid confirmedStepIds.');
   return { frameId, capturedAt, question, task, image, history: normalizedHistory, selection,
-    sessionId, continuationId, researchEnabled: value.researchEnabled ?? true, confirmedStepIds, includeWebInfo: value.includeWebInfo === true, guided: value.guided === true };
+    sessionId, continuationId, researchEnabled: value.researchEnabled ?? true, confirmedStepIds, includeWebInfo: value.includeWebInfo === true,
+    searchEveryQuestion: value.searchEveryQuestion === true, guided: value.guided === true };
 }
 
 // A schema constrains shape; validate the model's values again before using them.

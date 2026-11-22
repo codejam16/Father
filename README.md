@@ -10,7 +10,7 @@ A starter for a moving-camera task assistant on iPhone. Keep the camera open, as
 - Uninterrupted rear-camera preview. No permanently selected object.
 - Continuous speech recognition with pause-to-send, a mute button, and native spoken replies.
 - Optional transparent grey live captions over the camera: your speech on the right, assistant replies on the left. Drag the top handle to resize their height. The side bubble button toggles captions; the history button opens the session conversation.
-- Automatic web info, enabled by default: Gemini decides when search helps. Useful grounded results appear as a small strip with links and price details when found; expand it for online previews. No extra API key is required beyond the backend's Gemini key.
+- Web lookup for every new live question when search is connected. Show or hide the transparent result box independently; a mint dot marks hidden results. Expand it for previews or drag upward to fill the screen. Web search uses a separate backend-only Serper key; Gemini handles camera understanding and answers.
 - Tap or drag a region to attach it to your next question. A tap creates a region; it does not automatically segment an object.
 - Optional AI-requested target, drawn over the live preview. Normal replies return no target.
 - Experimental Apple Vision tracking for short-lived pointers, including replay of retained frames to compensate for delayed model responses. Lost/expired pointers are hidden, not drawn at stale coordinates.
@@ -33,11 +33,27 @@ A free Apple Account can install a development app on a personal device with pro
 
 **Camera overlays:** tap the circular text bubble on the upper right for captions. The captions use transparent grey bubbles, with your words on the right and replies on the left. Drag the small top handle upward/downward to make the captions taller/shorter; height is saved and constrained to fit the screen. VoiceOver can adjust the handle too. Captions start off and do not change microphone or spoken-reply settings. The history button opens the session conversation. Errors and microphone status remain visible with captions off.
 
-**Automatic web info** starts on, including a one-time migration for existing installs. Later explicit opt-outs are remembered. The info circle or Settings can disable it. No empty panel, reserved-height popup, or loading box appears. Only useful grounded results produce a small content-sized strip: one-line summary and horizontally scrolling source links. Tap its chevron for images and longer details; × dismisses only the current reply’s strip without disabling future lookups. Each new answer starts collapsed.
+**Show web info** controls visibility only and remembers your choice. The info circle shows a mint dot when hidden results are available; tapping it reveals the same results without searching again. Source cards contain actual provider links; uncited links are labelled Related search results rather than presented as support for the spoken answer. Tap the chevron for images and longer details inside the camera view. Drag the top handle upward to fill the screen, downward to shrink it, or the corner to adjust width and height. An expand/restore button provides the same full-screen choice. × hides the box while keeping its results available. New replies start compact; saved dimensions apply on expansion. Captions retain their separate height handle.
 
-When Web info is enabled **before sending a question**, Gemini decides whether to use Google Search in the same analysis call. Greetings, simple visual descriptions and ordinary conversation should not need search; prices, product details, current information and useful further reading may benefit. Ask, for example, “How much does a bottle like this cost?” or “Where can I learn more about this?” A short search-based summary appears in the strip, with currency/retailer for prices when found. Expand the strip to read the full summary and source-page previews. Result URLs come from Google's grounding metadata rather than generated links. Online previews load only after expansion, using Apple's Link Presentation on the phone; product/page imagery depends on the source providing usable metadata, and a failed preview leaves the source link available. An image or general visual similarity does not prove an exact product match. No purchase is made by the app. Google search suggestions are rendered when supplied.
+When online research is enabled, Gemini decides whether external information would help. The backend sends one Google-search query per search action to **Serper**, then returns actual links and snippets to Gemini. It does not use Gemini's built-in Google Search tool. Greetings, ordinary conversation and simple visual identification should not need a search. Ask, for example, “How much does a bottle like this cost?” Search-based price details should include currency and retailer when found; similar products must not be presented as exact matches. The existing image previews use the source page's online metadata after you expand them; the backend does not make extra image-search or shopping requests.
 
-Turning automatic web info off hides the strip, cancels visible preview loads, and omits the search tool from **future** requests. It cannot undo a request already sent. Enabling it doesn't automatically repeat an old question. Demo mode returns no web cards and makes no search/preview requests. An older backend can still answer the updated app but won't return web cards; update and restart the backend too. Search requires model/project support for Google Search plus structured output (the configured Gemini 3 Flash models), and can add latency and provider charges, including per-query search usage. The request allowance counts analysis requests, not individual searches within them. Web-enabled analysis allows up to 40 seconds for the provider and does not retry automatically. No live provider/search call has been used to validate this integration in the build environment; check it on the demo account and device.
+Each new live question requests an initial search even while web info is hidden. The display controls do not change research or repeat requests. Existing API clients without the per-question flag retain optional research. Demo mode never calls Gemini or Serper, and ENABLE_WEB_RESEARCH=false disables server research globally. A missing Serper key leaves camera answers available. Search authentication, credit/rate-limit, network and empty-result failures finish the turn with an honest web-search message, without retrying, fabricating a price, or disabling later camera questions. Gemini model quotas still apply.
+
+## Connect Serper search
+
+1. Create an account at [Serper](https://serper.dev/) and copy its API key from your dashboard. Check the current starter-credit allowance and expiry there; it is not an unlimited monthly plan.
+2. Add these lines to your existing `server/.env` (keep the Gemini key and connection token):
+
+```dotenv
+ENABLE_WEB_RESEARCH=true
+SERPER_API_KEY=YOUR_PRIVATE_SERPER_KEY
+SERPER_COUNTRY=ca
+SERPER_LANGUAGE=en
+```
+
+3. Restart the backend with `npm start`. It should print **Web search: Serper**. Rebuild the updated iPhone app once. Each new live question requests a lookup when search is connected; **Show web info** only controls visibility.
+
+Only search text, result count and locale go to Serper; camera images, conversation history, task memory and the Gemini key do not. Serper returns search snippets, not full documents. The existing explicit `read_source` action still uses Gemini URL Context to read a known source and is subject to that feature's project support and quotas. There is no fallback to Google's built-in search or automatic purchase of credits. `npm run doctor` checks Gemini metadata and whether a Serper key is configured; it does not spend a search query or validate Serper credits. Tests use mocked responses; live Serper credentials and end-to-end device latency were not available in the authoring environment.
 
 ## Start the backend
 
@@ -57,24 +73,25 @@ The checked-in Info.plist permits HTTP **for local development only**. Use an HT
 
 ## Research and task memory
 
-In live mode, the assistant chooses one validated action per decision: `respond`, `ask_clarification`, `request_view`, `search_online`, or `read_source`. Ordinary identification uses one model call. It asks for missing product/version details when needed, rather than assuming every task is about a vehicle or a particular product type.
+In live mode, the assistant chooses one validated action per decision: `respond`, `ask_clarification`, `request_view`, `search_online`, or `read_source`. The updated iPhone app requests an initial search for every new question, including ordinary identification, when Serper is connected and server research is enabled. Older clients retain the optional research policy. It asks for missing product/version details when needed, rather than assuming every task is about a vehicle or a particular product type.
 
-Research uses Gemini's built-in Google Search and URL Context tools in separate calls, without mixing tools with the structured camera response. Search returns source metadata; reading is limited to source IDs already returned by Google. A failed/paywalled retrieval is not treated as a read document. Relevant PDF diagrams can inform research notes, but this is not guaranteed pixel matching between a manual illustration and the camera view.
+Research uses Serper for Google search results and Gemini URL Context for explicit document reads. Gemini decision calls never include a Google Search tool. Search returns source metadata; reading is limited to source IDs already returned by the search provider. A failed/paywalled retrieval is not treated as a read document. Relevant PDF diagrams can inform research notes, but this is not guaranteed pixel matching between a manual illustration and the camera view.
 
-After a successful research operation, the backend returns a short-lived continuation. The iPhone takes a fresh camera image, clears the old manual selection, and continues the same question before deciding what to highlight. At most two research operations and five model calls are allowed per question, with no automatic provider retries. A researched question can make several Google API calls. The backend imposes no total or per-minute usage limit. Google may execute multiple search queries inside one grounded call, so this is not a hard search-query or monetary cap. Research availability and charges depend on the model/project; no billing settings are changed by this app.
+After a successful research operation, the backend returns a short-lived continuation. The iPhone takes a fresh camera image, clears the old manual selection, and continues the same question before deciding what to highlight. At most two research operations and five total external calls are allowed per question, with no automatic provider retries. A simple researched question uses two Gemini calls and one Serper query; a search/read/fresh-frame sequence uses four Gemini calls and one Serper query. The backend imposes no total or per-minute usage limit. Each search action sends exactly one Serper request for up to five usable results; provider credits and model tokens have separate quotas. Research availability and charges depend on the model/project; no billing settings are changed by this app.
 
-The camera screen still has only mute and settings. Source-backed answers automatically open a secondary **Sources and research** sheet with source links, evidence excerpts, and Google's supplied Search suggestions. Dismiss it to resume listening. Sources and task memory are also available from settings. Errors are spoken when spoken replies are enabled and are available as **Last issue** in settings.
+The camera screen keeps the colored assistant status at the top center, camera controls, caption toggle and optional web-info box. The viewfinder button toggles manual region selection, off by default; turning it off clears the selected frame. Automatic assistant highlighting still works. Research results **do not automatically open a sheet** or suspend listening. Drag the transparent box upward to fill the screen, downward to shrink it, or drag its corner to adjust width. The expand/restore button provides the same full-screen choice. Details expand and scroll inside the box; opening settings or conversation history is a separate user action. Full research evidence and task memory remain available from settings when explicitly requested. Serper results do not fabricate a Google Search suggestions widget. Errors are spoken when spoken replies are enabled and are available as **Last issue** in settings.
 
 Task context is held in bounded backend memory (100 sessions, 30-minute inactivity expiry); images are not stored there. It includes a goal, relevant facts, open questions, and proposed plan steps. Only **Mark completed** in settings confirms a step; model suggestions cannot mark work completed. Confirmations sync with the next question. **Start a new task** or changing the task notes starts a fresh context; backend restarts discard memory. Treat remembered facts as assistant-maintained notes, not verified ground truth.
 
-Optional backend settings (defaults work without editing an existing `.env`):
+Research settings (add the Serper key to an existing `.env` to enable search):
 
 ```dotenv
 ENABLE_WEB_RESEARCH=true
+SERPER_API_KEY=YOUR_PRIVATE_SERPER_KEY
 MAX_RESEARCH_STEPS=2
 ```
 
-Turn **Search online when needed** off in app settings to keep task memory and camera answers while disabling research. Demo mode never runs any provider calls or search tools. Tool availability, localization accuracy, and latency still need verification on the intended account/device.
+The app always requests research; **Show web info** only hides or shows the cached result cards. A mint dot on the info button means hidden links are available. Toggling visibility does not make a new request. Set `ENABLE_WEB_RESEARCH=false` on the server to disable research globally. Demo mode never runs any provider calls or search tools. Tool availability, localization accuracy, and latency still need verification on the intended account/device.
 
 ## Enable real AI
 
@@ -101,7 +118,7 @@ If an AI request fails, the app and backend terminal now show Google's HTTP stat
 
 ## Google error diagnostics
 
-Each Google call logs the actual model, action, call number, HTTP status, elapsed time, and token usage when available. Calls for the same `/analyze` request share a request ID, so you can see whether one spoken question triggered a decision, search, or document-reading call.
+Each Google call logs the actual model, action, call number, HTTP status, elapsed time, and token usage when available. Calls for the same `/analyze` request share a request ID, so you can see whether one spoken question triggered a camera decision or document-reading call. Serper searches are logged separately, with no query text or key. Each completed HTTP request logs `googleCalls` and `serperSearches`.
 
 On a Google failure, Terminal prints **GOOGLE ERROR — original response** followed by Google's response JSON or error text, not a replacement explanation. Quota violation details (`quotaId`, `quotaMetric`, `quotaValue`, dimensions), retry information, and `Retry-After` are preserved when Google supplies them. API keys, the configured app token, and recognized credential fields are redacted. Successful image/question bodies and authentication headers are not logged.
 
@@ -116,10 +133,10 @@ node --input-type=module -e 'import {readFileSync} from "node:fs"; const lines=r
 
 ## API usage and quotas
 
-- Google enforces API quotas and rate limits. The backend has no daily/total request allowance and no requests-per-minute cap. Old `MAX_LIVE_REQUESTS`, `REQUESTS_PER_MINUTE`, `BUDGET_FILE`, and historical allowance files are ignored.
+- Google enforces model quotas and rate limits; Serper separately enforces search credits and throughput. The backend has no daily/total request allowance and no requests-per-minute cap. Old `MAX_LIVE_REQUESTS`, `REQUESTS_PER_MINUTE`, `BUDGET_FILE`, and historical allowance files are ignored.
 - Demo mode makes no provider calls, even when a Gemini key exists.
-- A spoken or typed question may trigger several model calls, including research and fresh-frame analysis. Google accounts for those calls and any search-tool usage according to the project/model's limits and billing configuration.
-- Each question has a bounded research workflow (at most two research operations and five model calls) to stop recursive tool loops. This is not a usage quota across questions.
+- A spoken or typed question may trigger several model calls, including research and fresh-frame analysis. Google accounts for model calls according to the project/model limits; Serper accounts separately for successful search queries against its credit allowance.
+- Each question has a bounded research workflow (at most two research operations and five external calls) to stop recursive tool loops. This is not a usage quota across questions.
 - Images, input context and output size remain bounded. The backend makes no automatic provider retries. A Google 429 is returned as `provider_error` with Google's status, without imposing a local cooldown or preventing the next user request.
 
 ## How pointing works

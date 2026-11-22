@@ -25,6 +25,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   try {
     console.log('Checking Google model metadata only. No answer generation.');
     console.log(await checkGemini(loadConfig()));
+    const config = loadConfig();
+    console.log(config.webResearchEnabled && config.serperApiKey
+      ? 'Serper key is configured. No search was sent; this does not verify its validity or remaining credits.'
+      : 'Serper search is off or not configured. Set SERPER_API_KEY in server/.env to enable it.');
   } catch (error) {
     console.error(error.message);
     process.exitCode = 1;

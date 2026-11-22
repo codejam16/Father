@@ -19,220 +19,11 @@ struct ContentView: View {
     }
 }
 
-@MainActor
-private struct CameraExperience: View {
-    private enum CameraSheet: String, Identifiable, Equatable {
-        case settings, conversation, sources
-        var id: String { rawValue }
-    }
-
-    @ObservedObject var model: AssistantViewModel
-    @ObservedObject var speech: SpeechService
-    @ObservedObject var settings: ConnectionSettings
-    @State private var activeSheet: CameraSheet?
-    @State private var dismissedWebReply: UUID?
-    @AppStorage("captionHeightFraction") private var captionHeightFraction = 0.22
-
-    var body: some View {
-        GeometryReader { geometry in
-            cameraCanvas(availableHeight: geometry.size.height)
-        }
-        .background(.black)
-        .sheet(item: $activeSheet) { sheet in
-            presentedSheet(sheet)
-        }
-        .onChange(of: activeSheet) { _, sheet in
-            model.setVoiceSuspended(sheet != nil, stopPlayback: sheet != .sources)
-        }
-        .onChange(of: model.researchReviewID) { _, review in
-            if review != nil { activeSheet = .sources }
-        }
-        .onChange(of: settings.guidedMode) { _, _ in model.updateWatching() }
-    }
-
-    private func cameraCanvas(availableHeight: CGFloat) -> some View {
-        ZStack(alignment: .bottom) {
-            ImmersiveCamera(camera: model.camera, enabled: !model.isBusy, onSelect: model.select)
-                .ignoresSafeArea()
-            cameraOverlays(availableHeight: availableHeight)
-        }
-        .overlay(alignment: .topLeading) {
-            VStack(alignment: .leading, spacing: 0) {
-                statusBadge
-                stepCard.padding(.horizontal, 16)
-            }
-        }
-        .overlay(alignment: .topTrailing) { overlayControls }
-    }
-
-    private func cameraOverlays(availableHeight: CGFloat) -> some View {
-        VStack(spacing: 10) {
-            errorBanner
-            selectionBanner
-            if settings.captionsEnabled {
-                CaptionsOverlay(model: model, speech: speech, heightFraction: $captionHeightFraction,
-                                availableHeight: availableHeight, showHistory: { activeSheet = .conversation })
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
-            }
-            webInfoStrip
-            primaryControls
-        }
-        .padding(.horizontal, 16).padding(.bottom, 16)
-    }
-
-    @ViewBuilder
-    private var errorBanner: some View {
-        if let error = model.errorMessage {
-            ScrollView {
-                Text(error).font(.caption).foregroundStyle(.orange)
-                    .frame(maxWidth: .infinity, alignment: .leading).padding(12)
-            }
-            .frame(maxHeight: 70)
-            .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 14))
-        }
-    }
-
-    @ViewBuilder
-    private var selectionBanner: some View {
-        if model.selectedFrame != nil {
-            HStack {
-                Label("Selected view", systemImage: "scope").font(.caption)
-                Spacer()
-                Button("Clear", action: model.clearSelection).font(.caption.bold())
-            }
-            .padding(10).background(.ultraThinMaterial, in: Capsule())
-        }
-    }
-
-    @ViewBuilder
-    private var webInfoStrip: some View {
-        if settings.webInfoEnabled, let info = model.webInfo, !info.sources.isEmpty,
-           let replyID = model.messages.last?.id, dismissedWebReply != replyID {
-            WebInfoStrip(info: info) { dismissedWebReply = replyID }
-                .id(replyID)
-                .transition(.opacity)
-        }
-    }
-
-    private var primaryControls: some View {
-        HStack(spacing: 24) {
-            Button { model.toggleMicrophone() } label: {
-                Image(systemName: model.isMuted ? "mic.slash.fill" : "mic.fill")
-                    .foregroundStyle(model.isMuted ? Color.red : Color.white)
-            }
-            .accessibilityLabel(model.isMuted ? "Unmute microphone" : "Mute microphone")
-            .accessibilityValue(model.isMuted ? "Muted" : "Unmuted")
-            Button { model.flipCamera() } label: { Image(systemName: "arrow.triangle.2.circlepath.camera") }
-                .disabled(model.isBusy)
-                .opacity(model.isBusy ? 0.4 : 1)
-                .accessibilityLabel("Flip camera")
-            Button { activeSheet = .settings } label: { Image(systemName: "gearshape.fill") }
-                .accessibilityLabel("Settings")
-        }
-        .font(.system(size: 22, weight: .semibold))
-        .foregroundStyle(.white).buttonStyle(CameraControlStyle())
-        .padding(.top, 4)
-    }
-
-    /// Guided steps: the current instruction, with Done / Skip / Repeat.
-    @ViewBuilder
-    private var stepCard: some View {
-        if let step = model.currentStep, let number = model.stepNumber {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("STEP \(number) OF \(model.taskMemory.plan.count)")
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(.mint)
-                Text(step.text)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .lineLimit(4)
-                if let notice = model.guidedNotice {
-                    Label(notice, systemImage: "exclamationmark.circle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                stepButtons
-            }
-            .padding(12)
-            .frame(maxWidth: 290, alignment: .leading)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
-            .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.mint.opacity(0.35), lineWidth: 1))
-            .transition(.opacity.combined(with: .move(edge: .top)))
-            .animation(.easeInOut(duration: 0.25), value: step.id)
-        }
-    }
-
-    private var stepButtons: some View {
-        HStack(spacing: 6) {
-            Button { model.markCurrentStepDone() } label: {
-                Label("Done", systemImage: "checkmark").lineLimit(1).fixedSize()
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(.mint)
-            Button { model.skipCurrentStep() } label: { Text("Skip").lineLimit(1).fixedSize() }
-                .buttonStyle(.bordered)
-            Button { model.showCurrentStepPart() } label: { Image(systemName: "scope") }
-                .buttonStyle(.bordered)
-                .accessibilityLabel("Show where")
-            Button { model.repeatCurrentStep() } label: { Image(systemName: "speaker.wave.2.fill") }
-                .buttonStyle(.bordered)
-                .accessibilityLabel("Repeat step")
-            Button { model.endSteps() } label: { Image(systemName: "xmark") }
-                .buttonStyle(.bordered)
-                .accessibilityLabel("Stop the steps")
-        }
-        .font(.caption.weight(.semibold))
-        .controlSize(.small)
-        .disabled(model.isBusy || model.isChecking)
-    }
-
-    private var statusBadge: some View {
-        AssistantStatusBadge(model: model, speech: speech, demo: settings.demoMode)
-            .padding(16)
-            .allowsHitTesting(false)
-    }
-
-    private var overlayControls: some View {
-        VStack(spacing: 12) {
-            Button {
-                withAnimation(.easeInOut(duration: 0.2)) { settings.captionsEnabled.toggle() }
-            } label: {
-                Image(systemName: settings.captionsEnabled ? "text.bubble.fill" : "text.bubble")
-                    .foregroundStyle(settings.captionsEnabled ? Color.mint : Color.white)
-            }
-            .accessibilityLabel(settings.captionsEnabled ? "Hide captions" : "Show captions")
-            .accessibilityValue(settings.captionsEnabled ? "On" : "Off")
-            Button {
-                withAnimation(.easeInOut(duration: 0.2)) { settings.webInfoEnabled.toggle() }
-            } label: {
-                Image(systemName: settings.webInfoEnabled ? "info.circle.fill" : "info.circle")
-                    .foregroundStyle(settings.webInfoEnabled ? Color.mint : Color.white)
-            }
-            .accessibilityLabel(settings.webInfoEnabled ? "Disable automatic web info" : "Enable automatic web info")
-            .accessibilityValue(settings.webInfoEnabled ? "On" : "Off")
-        }
-        .font(.system(size: 20, weight: .semibold))
-        .buttonStyle(CameraControlStyle()).padding(.trailing, 16).padding(.top, 60)
-    }
-
-    @ViewBuilder
-    private func presentedSheet(_ sheet: CameraSheet) -> some View {
-        switch sheet {
-        case .settings: SettingsView(settings: settings, model: model)
-        case .conversation: ConversationView(model: model)
-        case .sources: ResearchSourcesView(model: model)
-        }
-    }
-}
-
 /// Small assistant indicator: listening, hearing you, thinking, answering.
 @MainActor
 private struct AssistantStatusBadge: View {
     @ObservedObject var model: AssistantViewModel
     @ObservedObject var speech: SpeechService
-    var demo = false
 
     private enum Phase: Equatable { case preparing, muted, listening, hearing, thinking, speaking, answered, watching, checking }
 
@@ -311,7 +102,7 @@ private struct AssistantStatusBadge: View {
             }
             .frame(width: 30, height: 30)
 
-            Text(demo ? "DEMO · \(title)" : title)
+            Text(title)
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.white)
         }
@@ -324,6 +115,283 @@ private struct AssistantStatusBadge: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Assistant status: \(title)")
     }
+}
+
+@MainActor
+private struct CameraExperience: View {
+    private enum CameraSheet: String, Identifiable, Equatable {
+        case settings, conversation
+        var id: String { rawValue }
+    }
+
+    @ObservedObject var model: AssistantViewModel
+    @ObservedObject var speech: SpeechService
+    @ObservedObject var settings: ConnectionSettings
+    @State private var activeSheet: CameraSheet?
+    @State private var webPanelHeight: CGFloat = 0
+    @AppStorage("captionHeightFraction") private var captionHeightFraction = 0.22
+    @AppStorage("webInfoHeightFraction") private var webInfoHeightFraction = 0.25
+    @AppStorage("webInfoWidthFraction") private var webInfoWidthFraction = 1.0
+
+    var body: some View {
+        GeometryReader { geometry in
+            cameraCanvas(availableSize: geometry.size)
+        }
+        .background(.black)
+        .sheet(item: $activeSheet) { sheet in
+            presentedSheet(sheet)
+        }
+        .onChange(of: activeSheet) { _, sheet in
+            model.setVoiceSuspended(sheet != nil)
+        }
+        .onChange(of: settings.selectionEnabled) { _, enabled in
+            if !enabled { model.clearSelection() }
+        }
+        .onChange(of: settings.guidedMode) { _, _ in model.updateWatching() }
+    }
+
+    private func cameraCanvas(availableSize: CGSize) -> some View {
+        ZStack(alignment: .bottom) {
+            ImmersiveCamera(camera: model.camera, enabled: settings.selectionEnabled && !model.isBusy, onSelect: model.select)
+                .ignoresSafeArea()
+            cameraOverlays(availableSize: availableSize)
+        }
+        // A camera-local overlay: expanding never presents a sheet or pauses voice.
+        .overlay(alignment: .bottom) { webInfoStrip(availableSize: availableSize) }
+        .overlay(alignment: .top) { statusBadge }
+        .overlay(alignment: .topTrailing) {
+            if !infoIsLarge(in: availableSize) { overlayControls }
+        }
+        .overlay(alignment: .topLeading) {
+            if !infoIsLarge(in: availableSize) {
+                VStack(alignment: .leading, spacing: 8) {
+                    selectionIndicator
+                    stepCard
+                        .padding(.leading, 16)
+                        .padding(.top, model.selectedFrame == nil ? 62 : 0)
+                }
+            }
+        }
+    }
+
+    // Includes the panel's bottom clearance, measured after layout rather than
+    // estimated from its saved size. Hidden or cleared results reserve no space.
+    private var infoOccupiedHeight: CGFloat {
+        guard settings.webInfoEnabled && hasWebResults else { return 0 }
+        // Reserve room on the first render, before the compact bubble is measured.
+        return webPanelHeight > 0 ? webPanelHeight : 224
+    }
+
+    private func infoIsLarge(in size: CGSize) -> Bool {
+        infoOccupiedHeight >= size.height * 0.65
+    }
+
+    private func captionSpace(in size: CGSize) -> CGFloat {
+        let issueHeight: CGFloat = model.errorMessage == nil ? 0 : 80
+        // Leave the centered badge clear, and keep a gap between both bubbles.
+        return max(0, size.height - 76 - max(72, infoOccupiedHeight) - 10 - issueHeight)
+    }
+
+    private func cameraOverlays(availableSize: CGSize) -> some View {
+        let captionRoom = captionSpace(in: availableSize)
+        let showCaptions = settings.captionsEnabled && !infoIsLarge(in: availableSize) && captionRoom >= 112
+        return VStack(spacing: 10) {
+            VStack(spacing: 10) {
+                errorBanner
+                if showCaptions {
+                    CaptionsOverlay(model: model, speech: speech, heightFraction: $captionHeightFraction,
+                                    availableHeight: availableSize.height, maximumHeight: captionRoom,
+                                    showHistory: { activeSheet = .conversation })
+                }
+            }
+            // The controls already occupy 72pt below this stack. Reserve only
+            // the extra space, placing captions 10pt above the actual info box.
+            .padding(.bottom, max(0, infoOccupiedHeight - 72))
+            primaryControls
+        }
+        .padding(.horizontal, 16).padding(.bottom, 16)
+    }
+
+    @ViewBuilder
+    private var errorBanner: some View {
+        if let error = model.errorMessage {
+            ScrollView {
+                Text(error).font(.caption).foregroundStyle(.orange)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(12)
+            }
+            .frame(maxHeight: 70)
+            .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 14))
+        }
+    }
+
+    @ViewBuilder
+    private var selectionIndicator: some View {
+        if model.selectedFrame != nil {
+            Button(action: model.clearSelection) {
+                HStack(spacing: 5) {
+                    Image(systemName: "viewfinder")
+                    Text("Focus")
+                    Image(systemName: "xmark").font(.system(size: 8, weight: .semibold))
+                }
+                .font(.caption2).foregroundStyle(.white.opacity(0.85))
+                .padding(.horizontal, 10).padding(.vertical, 8)
+                .background(.black.opacity(0.24), in: Capsule())
+            }
+            .accessibilityLabel("Clear selected region")
+            .padding(.leading, 16).padding(.top, 62)
+        }
+    }
+
+    private var hasWebResults: Bool { model.webInfo?.sources.isEmpty == false }
+
+    @ViewBuilder
+    private func webInfoStrip(availableSize: CGSize) -> some View {
+        if settings.webInfoEnabled, let info = model.webInfo, !info.sources.isEmpty,
+           let replyID = model.messages.last?.id {
+            WebInfoStrip(info: info, heightFraction: $webInfoHeightFraction, widthFraction: $webInfoWidthFraction,
+                         availableSize: availableSize, reportHeight: { webPanelHeight = $0 }) {
+                withAnimation(.easeInOut(duration: 0.2)) { settings.webInfoEnabled = false }
+            }
+            .frame(maxWidth: .infinity)
+            .id(replyID)
+            .transition(.opacity)
+            .onDisappear { webPanelHeight = 0 }
+        }
+    }
+
+    private var primaryControls: some View {
+        HStack(spacing: 24) {
+            Button { model.toggleMicrophone() } label: {
+                Image(systemName: model.isMuted ? "mic.slash.fill" : "mic.fill")
+                    .foregroundStyle(model.isMuted ? Color.red : Color.white)
+            }
+            .accessibilityLabel(model.isMuted ? "Unmute microphone" : "Mute microphone")
+            .accessibilityValue(model.isMuted ? "Muted" : "Unmuted")
+            Button { model.flipCamera() } label: {
+                Image(systemName: "arrow.triangle.2.circlepath.camera")
+            }
+            .disabled(model.isBusy)
+            .opacity(model.isBusy ? 0.4 : 1)
+            .accessibilityLabel("Flip camera")
+            Button { activeSheet = .settings } label: { Image(systemName: "gearshape.fill") }
+                .accessibilityLabel("Settings")
+        }
+        .font(.system(size: 22, weight: .semibold))
+        .foregroundStyle(.white).buttonStyle(CameraControlStyle())
+        .padding(.top, 4)
+    }
+
+    /// Guided steps: the current instruction, with Done / Skip / Repeat.
+    @ViewBuilder
+    private var stepCard: some View {
+        if let step = model.currentStep, let number = model.stepNumber {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("STEP \(number) OF \(model.taskMemory.plan.count)")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(.mint)
+                Text(step.text)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .lineLimit(4)
+                if let notice = model.guidedNotice {
+                    Label(notice, systemImage: "exclamationmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                stepButtons
+            }
+            .padding(12)
+            .frame(maxWidth: 290, alignment: .leading)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
+            .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.mint.opacity(0.35), lineWidth: 1))
+            .transition(.opacity.combined(with: .move(edge: .top)))
+            .animation(.easeInOut(duration: 0.25), value: step.id)
+        }
+    }
+
+    private var stepButtons: some View {
+        HStack(spacing: 6) {
+            Button { model.markCurrentStepDone() } label: {
+                Label("Done", systemImage: "checkmark").lineLimit(1).fixedSize()
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.mint)
+            Button { model.skipCurrentStep() } label: { Text("Skip").lineLimit(1).fixedSize() }
+                .buttonStyle(.bordered)
+            Button { model.showCurrentStepPart() } label: { Image(systemName: "scope") }
+                .buttonStyle(.bordered)
+                .accessibilityLabel("Show where")
+            Button { model.repeatCurrentStep() } label: { Image(systemName: "speaker.wave.2.fill") }
+                .buttonStyle(.bordered)
+                .accessibilityLabel("Repeat step")
+            Button { model.endSteps() } label: { Image(systemName: "xmark") }
+                .buttonStyle(.bordered)
+                .accessibilityLabel("Stop the steps")
+        }
+        .font(.caption.weight(.semibold))
+        .controlSize(.small)
+        .disabled(model.isBusy || model.isChecking)
+    }
+
+    private var statusBadge: some View {
+        VStack(spacing: 4) {
+            AssistantStatusBadge(model: model, speech: speech)
+            if settings.demoMode {
+                Text("DEMO").font(.caption2.bold()).foregroundStyle(.yellow)
+            }
+        }
+        .padding(.top, 12)
+        .allowsHitTesting(false)
+    }
+
+    private var overlayControls: some View {
+        VStack(spacing: 12) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) { settings.captionsEnabled.toggle() }
+            } label: {
+                Image(systemName: settings.captionsEnabled ? "text.bubble.fill" : "text.bubble")
+                    .foregroundStyle(settings.captionsEnabled ? Color.mint : Color.white)
+            }
+            .accessibilityLabel(settings.captionsEnabled ? "Hide captions" : "Show captions")
+            .accessibilityValue(settings.captionsEnabled ? "On" : "Off")
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) { settings.webInfoEnabled.toggle() }
+            } label: {
+                Image(systemName: settings.webInfoEnabled ? "info.circle.fill" : "info.circle")
+                    .foregroundStyle(settings.webInfoEnabled ? Color.mint : Color.white)
+                    .overlay(alignment: .topTrailing) {
+                        if !settings.webInfoEnabled && hasWebResults {
+                            Circle().fill(.mint).frame(width: 7, height: 7)
+                                .overlay(Circle().stroke(.black.opacity(0.5), lineWidth: 1))
+                                .offset(x: 5, y: -3)
+                        }
+                    }
+            }
+            .accessibilityLabel(settings.webInfoEnabled ? "Hide web info" : "Show web info")
+            .accessibilityValue(!settings.webInfoEnabled && hasWebResults ? "Hidden, results available" : settings.webInfoEnabled ? "Visible" : "Hidden")
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) { settings.selectionEnabled.toggle() }
+            } label: {
+                Image(systemName: "viewfinder")
+                    .foregroundStyle(settings.selectionEnabled ? Color.mint : Color.white)
+            }
+            .accessibilityLabel(settings.selectionEnabled ? "Turn off region selection" : "Select a region")
+            .accessibilityValue(settings.selectionEnabled ? "On. Tap or drag over the camera." : "Off")
+        }
+        .font(.system(size: 20, weight: .semibold))
+        .buttonStyle(CameraControlStyle()).padding(.trailing, 16).padding(.top, 60)
+    }
+
+    @ViewBuilder
+    private func presentedSheet(_ sheet: CameraSheet) -> some View {
+        switch sheet {
+        case .settings: SettingsView(settings: settings, model: model)
+        case .conversation: ConversationView(model: model)
+        }
+    }
+
 }
 
 private struct CameraControlStyle: ButtonStyle {
@@ -362,6 +430,7 @@ private struct CaptionsOverlay: View {
     @ObservedObject var speech: SpeechService
     @Binding var heightFraction: Double
     let availableHeight: CGFloat
+    let maximumHeight: CGFloat
     let showHistory: () -> Void
     @GestureState private var resizeOffset: CGFloat = 0
 
@@ -370,13 +439,13 @@ private struct CaptionsOverlay: View {
         min(0.55, max(minimumFraction, fraction.isFinite ? fraction : 0.22))
     }
     private var currentHeight: CGFloat {
-        CGFloat(clamped(heightFraction - Double(resizeOffset / max(availableHeight, 1)))) * availableHeight
+        min(maximumHeight, CGFloat(clamped(heightFraction - Double(resizeOffset / max(availableHeight, 1)))) * availableHeight)
     }
 
     var body: some View {
         VStack(spacing: 3) {
             HStack {
-                Text("Captions").font(.system(size: 10, weight: .medium)).foregroundStyle(.white.opacity(0.5))
+                Text("Captions").font(.system(size: 10, weight: .medium)).foregroundStyle(.white.opacity(0.65))
                 Spacer()
                 Capsule().fill(.white.opacity(0.4)).frame(width: 32, height: 3)
                     .frame(maxWidth: .infinity, minHeight: 28)
@@ -434,7 +503,7 @@ private struct CaptionsOverlay: View {
         }
         .padding(.horizontal, 10).padding(.bottom, 9)
         .frame(height: currentHeight)
-        .background(Color(white: 0.18).opacity(0.10), in: RoundedRectangle(cornerRadius: 18))
+        .background(Color(white: 0.18).opacity(0.20), in: RoundedRectangle(cornerRadius: 18))
         .clipShape(RoundedRectangle(cornerRadius: 18))
     }
 }
@@ -455,7 +524,7 @@ private struct CaptionBubble: View {
                     .shadow(color: .black.opacity(0.6), radius: 2, y: 1)
             }
             .padding(.horizontal, 10).padding(.vertical, 7)
-            .background(Color(white: isUser ? 0.30 : 0.20).opacity(0.32), in: RoundedRectangle(cornerRadius: 13))
+            .background(Color(white: isUser ? 0.30 : 0.20).opacity(0.44), in: RoundedRectangle(cornerRadius: 13))
             if !isUser { Spacer(minLength: 42) }
         }
     }
@@ -464,50 +533,170 @@ private struct CaptionBubble: View {
 @MainActor
 private struct WebInfoStrip: View {
     let info: WebInfo
+    @Binding var heightFraction: Double
+    @Binding var widthFraction: Double
+    let availableSize: CGSize
+    let reportHeight: (CGFloat) -> Void
     let dismiss: () -> Void
     @State private var expanded = false
+    @GestureState private var resizeOffset = CGSize.zero
+
+    private var usableWidth: CGFloat { max(1, availableSize.width - 32) }
+    private var screenHeight: CGFloat { max(1, availableSize.height) }
+    // Even at maximum size, leave a camera margin and room for the status badge.
+    private var maximumPanelHeight: CGFloat { max(1, screenHeight - 76) }
+    private var maximumFraction: Double { Double(maximumPanelHeight / screenHeight) }
+    private func clampedHeight(_ value: Double) -> Double {
+        let minimum = min(maximumFraction, 170 / Double(screenHeight))
+        return min(maximumFraction, max(minimum, value.isFinite ? value : 0.25))
+    }
+    private func clampedWidth(_ value: Double) -> Double {
+        min(1, max(0.55, value.isFinite ? value : 1))
+    }
+    private var panelWidth: CGFloat {
+        let fraction = clampedWidth(widthFraction + Double(resizeOffset.width * 2 / usableWidth))
+        return CGFloat(fullScreen ? 1 : fraction) * usableWidth
+    }
+    private var panelHeight: CGFloat {
+        CGFloat(clampedHeight(clampedHeight(heightFraction) - Double(resizeOffset.height / screenHeight))) * screenHeight
+    }
+    private var fullScreen: Bool { expanded && panelHeight >= maximumPanelHeight * 0.96 }
+    private var bottomInset: CGFloat { expanded ? min(88, max(16, screenHeight - panelHeight - 60)) : 88 }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 8) {
-                Image(systemName: "globe").font(.caption2).foregroundStyle(.white.opacity(0.6))
-                Text(info.summary ?? "Related sources")
-                    .font(.caption).foregroundStyle(.white.opacity(0.85)).lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                Button {
-                    withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() }
-                } label: {
-                    Image(systemName: expanded ? "chevron.down" : "chevron.up").font(.caption2)
-                        .frame(width: 32, height: 32)
-                }
-                .accessibilityLabel(expanded ? "Collapse web details" : "Expand web details and images")
-                Button(action: dismiss) { Image(systemName: "xmark").font(.system(size: 10)).frame(width: 32, height: 32) }
-                    .accessibilityLabel("Dismiss these sources")
-            }
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 7) {
-                    ForEach(info.sources) { source in
-                        Link(destination: source.url) {
-                            HStack(spacing: 4) {
-                                Text(source.title).lineLimit(1)
-                                Image(systemName: "arrow.up.right").font(.system(size: 8))
-                            }
-                            .font(.system(size: 11)).foregroundStyle(.white.opacity(0.85))
-                            .padding(.horizontal, 9).padding(.vertical, 6)
-                            .background(.white.opacity(0.07), in: Capsule())
-                        }
-                        .frame(maxWidth: 170)
-                    }
-                }
-            }
+        VStack(alignment: .leading, spacing: 6) {
+            resizeHandles
+            heading
+            sourceLinks
             if expanded {
-                WebInfoDetails(info: info)
-                    .transition(.opacity)
+                WebInfoDetails(info: info).transition(.opacity)
             }
         }
-        .padding(.horizontal, 11).padding(.vertical, 5)
-        .background(Color(white: 0.15).opacity(0.48), in: RoundedRectangle(cornerRadius: 16))
-        .foregroundStyle(.white.opacity(0.7))
+        .padding(.horizontal, 11).padding(.bottom, 8)
+        .padding(.top, 2)
+        .frame(width: panelWidth, height: expanded ? panelHeight : nil)
+        .background(Color(white: 0.15).opacity(fullScreen ? 0.48 : 0.32),
+                    in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous)
+            .strokeBorder(.white.opacity(0.10), lineWidth: 0.75))
+        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .shadow(color: .black.opacity(0.18), radius: 12, y: 4)
+        .foregroundStyle(.white.opacity(0.8))
+        .padding(.bottom, bottomInset)
+        .background {
+            GeometryReader { geometry in
+                Color.clear
+                    .onAppear { reportHeight(geometry.size.height) }
+                    .onChange(of: geometry.size.height) { _, height in reportHeight(height) }
+            }
+        }
+    }
+
+    private var resizeHandles: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "globe").font(.system(size: 10)).frame(width: 26)
+            Capsule().fill(.white.opacity(0.4)).frame(width: 32, height: 3)
+                .frame(maxWidth: .infinity, minHeight: 25)
+                .contentShape(Rectangle())
+                .gesture(heightResize)
+                .accessibilityElement()
+                .accessibilityLabel("Info box height")
+                .accessibilityHint("Drag up to fill the screen or down to make the info box shorter.")
+                .accessibilityAdjustableAction { direction in
+                    expanded = true
+                    switch direction {
+                    case .increment: heightFraction = clampedHeight(heightFraction + 0.1)
+                    case .decrement: heightFraction = clampedHeight(heightFraction - 0.1)
+                    @unknown default: break
+                    }
+                }
+            Image(systemName: "arrow.up.right.and.arrow.down.left")
+                .font(.system(size: 11)).frame(width: 30, height: 25)
+                .contentShape(Rectangle())
+                .gesture(cornerResize)
+                .accessibilityElement()
+                .accessibilityLabel("Info box size")
+                .accessibilityHint("Drag upward and outward to increase height and width.")
+                .accessibilityAdjustableAction { direction in
+                    expanded = true
+                    let delta: Double
+                    switch direction {
+                    case .increment: delta = 0.04
+                    case .decrement: delta = -0.04
+                    @unknown default: return
+                    }
+                    heightFraction = clampedHeight(heightFraction + delta)
+                    widthFraction = clampedWidth(widthFraction + delta)
+                }
+        }
+    }
+
+    private var heightResize: some Gesture {
+        DragGesture(minimumDistance: 2, coordinateSpace: .global)
+            .updating($resizeOffset) { value, state, _ in state = CGSize(width: 0, height: value.translation.height) }
+            .onChanged { _ in expanded = true }
+            .onEnded { value in
+                let next = clampedHeight(clampedHeight(heightFraction) - Double(value.translation.height / screenHeight))
+                heightFraction = next >= maximumFraction * 0.9 ? maximumFraction : next
+            }
+    }
+
+    private var cornerResize: some Gesture {
+        DragGesture(minimumDistance: 2, coordinateSpace: .global)
+            .updating($resizeOffset) { value, state, _ in state = value.translation }
+            .onChanged { _ in expanded = true }
+            .onEnded { value in
+                let next = clampedHeight(clampedHeight(heightFraction) - Double(value.translation.height / screenHeight))
+                heightFraction = next >= maximumFraction * 0.9 ? maximumFraction : next
+                widthFraction = clampedWidth(widthFraction + Double(value.translation.width * 2 / usableWidth))
+            }
+    }
+
+    private var heading: some View {
+        HStack(spacing: 6) {
+            Text(info.summary ?? "Related sources")
+                .font(.caption).foregroundStyle(.white.opacity(0.9)).lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    if fullScreen { heightFraction = 0.3 }
+                    else { expanded = true; heightFraction = maximumFraction; widthFraction = 1 }
+                }
+            } label: {
+                Image(systemName: fullScreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+                    .font(.caption2).frame(width: 30, height: 30)
+            }
+            .accessibilityLabel(fullScreen ? "Restore info box size" : "Fill screen with web info")
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() }
+            } label: {
+                Image(systemName: expanded ? "chevron.down" : "chevron.up").font(.caption2)
+                    .frame(width: 30, height: 30)
+            }
+            .accessibilityLabel(expanded ? "Collapse web details" : "Expand web details inside the camera view")
+            Button(action: dismiss) { Image(systemName: "xmark").font(.system(size: 10)).frame(width: 30, height: 30) }
+                .accessibilityLabel("Hide web info; keep results available")
+        }
+    }
+
+    private var sourceLinks: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 7) {
+                ForEach(info.sources) { source in
+                    Link(destination: source.url) {
+                        HStack(spacing: 4) {
+                            Text(source.title).lineLimit(1)
+                            Image(systemName: "arrow.up.right").font(.system(size: 8))
+                        }
+                        .font(.system(size: 11)).foregroundStyle(.white.opacity(0.85))
+                        .padding(.horizontal, 9).padding(.vertical, 6)
+                        .background(.white.opacity(0.07), in: Capsule())
+                    }
+                    .frame(maxWidth: 170)
+                }
+            }
+        }
+        .frame(height: 28)
     }
 }
 
@@ -538,8 +727,8 @@ private struct WebInfoDetails: View {
             }
             .padding(.vertical, 5)
         }
-        // Only explicitly expanded details scroll; the automatic strip sizes to its content.
-        .frame(maxHeight: 230)
+        // Expanded details scroll within the user-sized, camera-local box.
+        .frame(maxHeight: .infinity)
     }
 }
 

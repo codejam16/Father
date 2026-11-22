@@ -2,7 +2,10 @@ import { APIError, answerSchema, boxInstruction, validateAnswer } from './contra
 import { randomUUID } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { geminiHTTPError } from './provider-error.mjs';
-import { webAnswerSchema, webInstruction, extractWebInfo } from './web-info.mjs';
+import { webAnswerSchema, webInstruction } from './web-info.mjs';
+import { searchWithSerper } from './serper.mjs';
+import { GEMINI_TIMEOUT_MS } from './timeouts.mjs';
+import { logGoogleError } from './diagnostics.mjs';
 
 const instruction = `You are TaskLens, a conversational visual task assistant.
 You receive a single captured frame, NOT a continuously observed world. Use its timestamp.
@@ -17,11 +20,18 @@ If you cannot locate the item, return no box and ask for a clearer view. Do not 
 For hazardous repairs, avoid directing physical actions and suggest appropriate qualified assistance. Never guess which energized component to touch.
 Return the requested JSON object, with no markdown.`;
 
-export function buildGeminiBody(request, maxOutputTokens) {
+export function buildGeminiBody(request, maxOutputTokens, { researchAvailable = false, evidence = null } = {}) {
+  const schema = request.includeWebInfo ? {
+    ...webAnswerSchema,
+    properties: { ...webAnswerSchema.properties, searchQuery: { type: ['string', 'null'] },
+      sourceIds: { type: 'array', items: { type: 'string' }, maxItems: 8 } },
+    required: [...webAnswerSchema.required, 'searchQuery', 'sourceIds'],
+  } : answerSchema;
   return {
     systemInstruction: { parts: [{ text: instruction + '\n' + boxInstruction + (request.includeWebInfo ? '\n' + webInstruction
-      : '\nWeb lookup is disabled. Do not claim to have checked live prices, availability, or websites. If asked for current prices, explain that Web info can be enabled.') }] },
-    ...(request.includeWebInfo ? { tools: [{ googleSearch: {} }] } : {}),
+      : researchAvailable ? '\nExternal research is controlled by researchAllowed in the task context.'
+        : '\nWeb lookup is disabled. Do not claim to have checked live prices, availability, or websites. If asked for current prices, explain that Web info can be enabled.')
+      + (request.includeWebInfo ? '\nFor this response, use searchQuery for one concise query only when researchAvailable=true and external facts help; otherwise return null. Return sourceIds only from supplied researchEvidence. With researchEvidence, use it to answer and return searchQuery=null. Without evidence, answer from the visible scene and do not claim checked prices or sources.' : '') }] },
     contents: [
       ...request.history.map((message) => ({
         role: message.role === 'assistant' ? 'model' : 'user',
@@ -36,6 +46,7 @@ export function buildGeminiBody(request, maxOutputTokens) {
             capturedAt: request.capturedAt,
             frameId: request.frameId,
             selection: request.selection,
+            ...(request.includeWebInfo ? { researchAvailable, researchEvidence: evidence } : {}),
           }) },
           { inlineData: { mimeType: request.image.mimeType, data: request.image.base64 } },
         ],
@@ -43,7 +54,7 @@ export function buildGeminiBody(request, maxOutputTokens) {
     ],
     generationConfig: {
       responseMimeType: 'application/json',
-      responseJsonSchema: request.includeWebInfo ? webAnswerSchema : answerSchema,
+      responseJsonSchema: schema,
       maxOutputTokens,
       thinkingConfig: { thinkingLevel: 'LOW' },
     },
@@ -58,42 +69,59 @@ export async function generateContent(body, config, fetcher = fetch) {
     : body.tools?.some((tool) => tool.url_context) ? 'read_source' : 'camera_decision';
   const started = Date.now();
   console.log(`[${requestId}] Google call ${callNumber} (${callId}) START model=${config.model} action=${operation}`);
+  config.signal?.throwIfAborted();
+  const timeout = AbortSignal.timeout(GEMINI_TIMEOUT_MS);
+  const signal = config.signal ? AbortSignal.any([timeout, config.signal]) : timeout;
   // Google's 500/503 "overloaded" errors are usually momentary and are not billed, so they get a
-  // couple of quick, spaced retries. Quota (429), auth and request errors are never retried, and
-  // timeouts are not retried either, so one question still cannot fan out into many slow calls.
+  // couple of quick, spaced retries within the same deadline. Quota (429), auth, request, network
+  // and timeout failures are never retried, so one question cannot fan out into many slow calls.
   const busyRetries = config.busyRetries ?? 2;
   const retryDelayMs = config.retryDelayMs ?? 1000;
-  let response;
-  for (let attempt = 1; ; attempt++) {
-    try {
+  let payload;
+  try {
+    let response;
+    for (let attempt = 1; ; attempt++) {
       response = await fetcher(
         `https://generativelanguage.googleapis.com/v1beta/models/${config.model}:generateContent`,
         {
           method: 'POST',
           headers: { 'content-type': 'application/json', 'x-goog-api-key': config.apiKey },
           body: JSON.stringify(body),
-          signal: config.signal
-            ? AbortSignal.any([AbortSignal.timeout(20_000), config.signal]) : AbortSignal.timeout(20_000),
+          signal,
         },
       );
-    } catch {
-      console.warn(`[${requestId}] Google call ${callNumber} (${callId}) NETWORK/TIMEOUT after ${Date.now() - started}ms; no HTTP response`);
-      throw new APIError(504, 'provider_unavailable', 'The AI service did not respond. No automatic retry was made.');
+      console.log(`[${requestId}] Google call ${callNumber} (${callId}) HTTP ${response.status ?? (response.ok ? 200 : 'unknown')} (${Date.now() - started}ms)`);
+      if (response.ok) break;
+      const busy = [500, 502, 503, 504].includes(response.status);
+      if (busy && attempt <= busyRetries && Date.now() - started < 25_000 && !signal.aborted) {
+        const wait = retryDelayMs * 2 ** (attempt - 1) + (retryDelayMs ? Math.floor(Math.random() * 250) : 0);
+        console.warn(`[${requestId}] Google call ${callNumber} (${callId}) busy (HTTP ${response.status}); retrying in ${wait}ms (attempt ${attempt + 1} of ${busyRetries + 1})`);
+        await sleep(wait, undefined, { signal });
+        continue;
+      }
+      throw await geminiHTTPError(response, config, { requestId, callId, callNumber, operation, attempts: attempt });
     }
-    console.log(`[${requestId}] Google call ${callNumber} (${callId}) HTTP ${response.status ?? (response.ok ? 200 : 'unknown')} (${Date.now() - started}ms)`);
-    if (response.ok) break;
-    const busy = [500, 502, 503, 504].includes(response.status);
-    if (busy && attempt <= busyRetries && Date.now() - started < 25_000 && !config.signal?.aborted) {
-      const wait = retryDelayMs * 2 ** (attempt - 1) + (retryDelayMs ? Math.floor(Math.random() * 250) : 0);
-      console.warn(`[${requestId}] Google call ${callNumber} (${callId}) busy (HTTP ${response.status}); retrying in ${wait}ms (attempt ${attempt + 1} of ${busyRetries + 1})`);
-      await sleep(wait, undefined, config.signal ? { signal: config.signal } : undefined);
-      continue;
+    // The deadline covers the response body too, not just the initial headers.
+    try { payload = await response.json(); } catch (error) {
+      if (signal.aborted) throw error;
+      throw new APIError(502, 'invalid_model_output', 'The AI service returned an unreadable response.');
     }
-    throw await geminiHTTPError(response, config, { requestId, callId, callNumber, operation, attempts: attempt });
-  }
-  let payload;
-  try { payload = await response.json(); } catch {
-    throw new APIError(502, 'invalid_model_output', 'The AI service returned an unreadable response.');
+    signal.throwIfAborted();
+  } catch (error) {
+    config.signal?.throwIfAborted(); // Disconnects and the overall deadline cancel immediately.
+    if (error instanceof APIError) throw error;
+    const timedOut = timeout.aborted;
+    const elapsedMs = Date.now() - started;
+    console.warn(`[${requestId}] Google call ${callNumber} (${callId}) ${timedOut ? 'TIMEOUT' : 'NETWORK'} after ${elapsedMs}ms; no automatic retry`);
+    logGoogleError({ timestamp: new Date().toISOString(), requestId, callId, callNumber, operation,
+      model: config.model, httpStatus: null, transportError: timedOut ? 'timeout' : 'network',
+      elapsedMs, timeoutMs: GEMINI_TIMEOUT_MS, googleResponse: null }, config);
+    const failure = new APIError(timedOut ? 504 : 502, 'provider_unavailable',
+      timedOut ? 'Gemini exceeded its 40-second response deadline. No automatic retry was made.'
+        : 'Could not connect to Gemini. No automatic retry was made.');
+    failure.userMessage = timedOut ? 'The AI service is taking too long to respond. Please try again.'
+      : "I couldn't reach the AI service. Please try again.";
+    throw failure;
   }
   if (payload.candidates?.[0]?.finishReason !== 'STOP') {
     throw new APIError(502, 'incomplete_model_output', 'The AI could not finish a usable answer. Try a simpler question.');
@@ -116,12 +144,42 @@ export function providerUsage(payload) {
 }
 
 export async function analyzeWithGemini(request, config, fetcher = fetch) {
-  const payload = await generateContent(buildGeminiBody(request, config.maxOutputTokens), config, fetcher);
+  const researchAvailable = request.includeWebInfo && request.researchEnabled !== false && config.webResearchEnabled !== false && Boolean(config.serperApiKey);
+  let payload = await generateContent(buildGeminiBody(request, config.maxOutputTokens, { researchAvailable }), config, fetcher);
   let answer;
   try { answer = JSON.parse(candidateText(payload)); } catch {
     throw new APIError(502, 'invalid_model_output', 'The AI returned an unreadable answer.');
   }
-  return { ...validateAnswer(answer), webInfo: request.includeWebInfo ? extractWebInfo(payload.candidates[0], answer) : null, usage: providerUsage(payload) };
+  let result = validateAnswer(answer);
+  const usage = providerUsage(payload);
+  let webInfo = null;
+  if (researchAvailable && answer.searchQuery != null) {
+    if (typeof answer.searchQuery !== 'string' || !answer.searchQuery.trim() || answer.searchQuery.length > 500) {
+      throw new APIError(502, 'invalid_action', 'The model returned an invalid search query.');
+    }
+    let evidence;
+    try { evidence = await searchWithSerper(answer.searchQuery, config, [], fetcher); }
+    catch (error) {
+      if (!['search_auth', 'search_quota', 'search_unavailable', 'search_unverified', 'search_not_configured'].includes(error.code)) throw error;
+      console.warn(error.message);
+      return { answer: error.userMessage ?? "I couldn't find useful online results. Please try a more specific question.", target: null, needsClearerView: false, webInfo: null, usage };
+    }
+    payload = await generateContent(buildGeminiBody(request, config.maxOutputTokens, { evidence }), config, fetcher);
+    try { answer = JSON.parse(candidateText(payload)); } catch {
+      throw new APIError(502, 'invalid_model_output', 'The AI returned an unreadable answer.');
+    }
+    result = validateAnswer(answer);
+    const finalUsage = providerUsage(payload);
+    usage.inputTokens += finalUsage.inputTokens; usage.outputTokens += finalUsage.outputTokens;
+    if (!Array.isArray(answer.sourceIds) || answer.sourceIds.some((id) => !evidence.sources.some((source) => source.id === id))) {
+      throw new APIError(502, 'invalid_action', 'The model returned an unknown source reference.');
+    }
+    const sources = evidence.sources.filter((source) => answer.sourceIds.includes(source.id));
+    if (sources.length && typeof answer.webSummary === 'string' && answer.webSummary.trim()) {
+      webInfo = { summary: answer.webSummary.trim().slice(0, 1600), sources: sources.map(({ title, url }) => ({ title, url })), searchSuggestionHTML: null };
+    }
+  }
+  return { ...result, webInfo, usage };
 }
 
 export function demoAnswer(request) {

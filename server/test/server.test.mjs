@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createApp, loadConfig } from '../src/server.mjs';
-import { validateAnswer, validateRequest } from '../src/contract.mjs';
+import { APIError, validateAnswer, validateRequest } from '../src/contract.mjs';
 import { analyzeWithGemini, buildGeminiBody } from '../src/gemini.mjs';
 import { checkGemini } from '../src/doctor.mjs';
 import { extractWebInfo, publicHTTPS } from '../src/web-info.mjs';
@@ -249,7 +249,7 @@ test('web lookup is explicit, opt-in and validated for old and new clients', asy
   assert.throws(() => validateRequest(input({ includeWebInfo: 'true' })), /boolean/);
   const newRequest = validateRequest(input({ includeWebInfo: true }));
   const body = buildGeminiBody(newRequest, 1024);
-  assert.deepEqual(body.tools, [{ googleSearch: {} }]);
+  assert.equal(body.tools, undefined);
   assert.ok(body.generationConfig.responseJsonSchema.required.includes('webSummary'));
   assert.match(body.systemInstruction.parts[0].text, /SIMILAR products/);
   const settings = config(t, { mode: 'gemini', appToken: 'a-private-test-token' });
@@ -296,23 +296,31 @@ test('source URLs reject local, credential-bearing and executable destinations',
   assert.equal(publicHTTPS('https://shop.example.com/bottle'), 'https://shop.example.com/bottle');
 });
 
-test('Gemini returns grounded cards only when this request opted in, with one provider call', async (t) => {
-  const settings = config(t);
+test('legacy web cards use Serper evidence and never a built-in Gemini search tool', async (t) => {
   for (const enabled of [false, true]) {
-    let calls = 0;
-    const result = await analyzeWithGemini(input({ includeWebInfo: enabled }), settings, async (_, options) => {
-      calls++;
-      assert.equal(Boolean(JSON.parse(options.body).tools), enabled);
+    const settings = config(t, { serperApiKey: 'fake-serper-key' });
+    const calls = [];
+    const result = await analyzeWithGemini(input({ includeWebInfo: enabled }), settings, async (url, options) => {
+      const body = JSON.parse(options.body);
+      calls.push({ url, body });
+      assert.equal(body.tools, undefined);
+      if (url === 'https://google.serper.dev/search') {
+        return { ok: true, json: async () => ({ organic: [{ title: 'Bottle', link: 'https://shop.vendor.com/bottle', snippet: 'Similar bottle: CAD 25.' }] }) };
+      }
+      const final = calls.length > 1;
       return { ok: true, json: async () => ({ candidates: [{ finishReason: 'STOP', content: { parts: [{ text: JSON.stringify({
-        answer: 'A bottle.', targetLabel: null, box: null, needsClearerView: false, webSummary: 'Similar bottles cost CAD 25.',
-      }) }] }, groundingMetadata: {
-        groundingChunks: [{ web: { title: 'Bottle', uri: 'https://shop.example.com/bottle' } }],
-        groundingSupports: [{ groundingChunkIndices: [0] }],
-      } }] }) };
+        answer: 'A bottle.', targetLabel: null, box: null, needsClearerView: false,
+        searchQuery: enabled && !final ? 'bottle Canada price' : null,
+        sourceIds: final ? ['s1'] : [], webSummary: final ? 'Similar bottle: CAD 25.' : null,
+      }) }] } }] }) };
     });
-    assert.equal(calls, 1);
+    assert.equal(calls.length, enabled ? 3 : 1);
     assert.equal(result.webInfo !== null, enabled);
-    if (enabled) assert.match(result.webInfo.summary, /CAD 25/);
+    if (enabled) {
+      assert.match(result.webInfo.summary, /CAD 25/);
+      assert.equal(result.webInfo.sources[0].url, 'https://shop.vendor.com/bottle');
+      assert.match(calls[2].body.contents.at(-1).parts[0].text, /snippets/);
+    }
   }
 });
 
@@ -344,4 +352,29 @@ test('answers box what they are about, and identify the device instead of asking
   const text = body.systemInstruction.parts[0].text;
   assert.match(text, /most useful things you do/);
   assert.match(text, /never ask the user to confirm something the image already shows/);
+});
+
+test('per-question search is an explicit boolean opt-in for compatible clients', () => {
+  assert.equal(validateRequest(input()).searchEveryQuestion, false);
+  assert.equal(validateRequest(input({ searchEveryQuestion: true })).searchEveryQuestion, true);
+  assert.equal(validateRequest(input({ searchEveryQuestion: false })).searchEveryQuestion, false);
+  assert.throws(() => validateRequest(input({ searchEveryQuestion: 'true' })), /searchEveryQuestion/);
+});
+
+test('validation failures log a redacted reason and send a specific friendly message to the phone', async (t) => {
+  const logs = [];
+  t.mock.method(console, 'warn', (message) => logs.push(message));
+  const settings = config(t, { mode: 'gemini', appToken: 'private-test-token', apiKey: 'private-model-key' });
+  const url = await running(t, settings, { analyze: async () => {
+    throw new APIError(502, 'invalid_action', 'Invalid citation; diagnostic private-model-key');
+  } });
+  const response = await post(url, input(), settings.appToken);
+  assert.equal(response.status, 502);
+  const value = await response.json();
+  assert.match(value.error.userMessage, /interpret the AI/);
+  assert.doesNotMatch(JSON.stringify(value), /Invalid citation|private-model-key/);
+  const rejected = logs.find((line) => line.includes('Request rejected:'));
+  assert.match(rejected, /invalid_action/);
+  assert.match(rejected, /Invalid citation/);
+  assert.doesNotMatch(rejected, /private-model-key/);
 });
