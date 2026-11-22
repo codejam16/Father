@@ -1,201 +1,216 @@
 # TaskLens
 
-A starter for a moving-camera task assistant on iPhone. Keep the camera open, ask a question, hear the reply, and optionally point something out in either direction.
+**Show what you see. Ask what you need. Find your next step.**
 
-**This is a development base, not a validated repair assistant.** Camera capture, optional Vision tracking, speech, the conversation UI, and a Gemini proxy are implemented. The native app must still be compiled and exercised in Xcode on a real iPhone; it has not been device-tested in the environment that created this repository. Provider accuracy and latency have not been measured.
+TaskLens is an iPhone visual assistant that helps you understand and interact with the world in front of you. Keep your camera open, ask a question, and receive spoken guidance with visual pointers connecting the answer to what you are looking at.
 
-## What is included
+Built for a hackathon with **Swift, SwiftUI, Apple Vision, Node.js, and the Gemini API**.
 
-- Native SwiftUI app, targeting iPhone/iOS 17+, with a checked-in Xcode project and shared scheme.
-- Uninterrupted rear-camera preview. No permanently selected object.
-- Continuous speech recognition with pause-to-send, a mute button, and native spoken replies.
-- Optional transparent grey live captions over the camera: your speech on the right, assistant replies on the left. Drag the top handle to resize their height. The side bubble button toggles captions; the history button opens the session conversation.
-- Web lookup for every new live question when search is connected. Show or hide the transparent result box independently; a mint dot marks hidden results. Expand it for previews or drag upward to fill the screen. Web search uses a separate backend-only Serper key; Gemini handles camera understanding and answers.
-- Tap or drag a region to attach it to your next question. A tap creates a region; it does not automatically segment an object.
-- Optional AI-requested target, drawn over the live preview. Normal replies return no target.
-- Experimental Apple Vision tracking for short-lived pointers, including replay of retained frames to compensate for delayed model responses. Lost/expired pointers are hidden, not drawn at stale coordinates.
-- Conversation context, task notes, cancellation, and pause-on-background behavior.
-- Clearly labelled, **zero-provider-call demo mode**, enabled by default. Demo replies do not identify objects.
-- Dependency-free Node.js proxy with structured-output validation, authentication for live calls, bounded input and timeout handling; Google enforces API usage quotas.
+## Inspiration
 
-## Start with the iPhone app
+Explaining a physical problem through a text box is awkward. You know which button, cable, or object you mean, but describing it can take longer than the task itself. Even a correct explanation can leave you wondering, “Which part is it talking about?”
 
-1. On a Mac with Xcode 16 or later, open `ios/TaskLens.xcodeproj`.
-2. Select the **TaskLens** scheme and your connected iPhone running iOS 17 or later.
-3. Configure your personal signing values once using [Personal signing setup](docs/SIGNING.md). The shared project reads `ios/Config/Signing.local.xcconfig`, which Git ignores. Then select your connected iPhone and Run.
-4. Enable Developer Mode on the iPhone if Xcode requests it. Build and run.
-5. Grant camera permission. Grant microphone and Speech permissions when trying voice.
-6. Leave **Demo responses** on in app settings initially. The camera, selection, conversation, and speech UI can be exercised without an API key or backend.
+We wanted asking an AI for help to feel closer to showing someone what you see. TaskLens combines conversation, camera understanding, and visual guidance so users can move from an explanation to their next action.
 
-A free Apple Account can install a development app on a personal device with provisioning limits. This repository does not require App Store or TestFlight distribution. The simulator can exercise UI and geometry tests, but the real camera/tracker requires a device.
+## What it does
 
-**Voice controls:** the microphone starts automatically while the app is active, after microphone and Speech permissions are granted. Speak a question, then pause for about 1.2 seconds to send it automatically with a camera image. The microphone button mutes/unmutes. Listening pauses during analysis. During spoken replies the microphone stays on with Apple's echo cancellation, so you can interrupt: say “wait” or “stop” to cut the reply off, or just ask your next question. Words that match the reply are ignored as echo. If echo cancellation is unavailable, the user is muted, or **Interrupt by talking** is off, listening pauses during replies instead. Opening settings/conversation or leaving the app pauses listening. Returning resumes it unless muted. There is no continuous cloud audio/video streaming. Each automatically sent question uses the same backend quota as a typed question; demo responses make no Gemini calls.
+| Ask or do | How TaskLens helps |
+| --- | --- |
+| “Where is the bottle?” | Marks a target over the camera preview, then uses local tracking as the camera moves. |
+| “How do I open this?” | Explains the next action and can point to a relevant visible control or component. |
+| Start a hands-on task | Breaks instructions into guided steps, with optional camera checks and a tools checklist. |
+| “What does that tool look like?” | Looks up a reference picture; checklist items also have a picture button. |
+| Explain a diagram or connection | Builds a narrated walkthrough on a captured image using labels, arrows, paths, shaded regions, and zooms. Pointing helps specify “this” and “that.” |
+| “Where can I buy one?” | With web info enabled, retrieves product links and supporting information, including pricing when available. |
+| Revisit an explanation | Saves visual walkthroughs on the phone for reopening and replay. |
 
-**Camera overlays:** tap the circular text bubble on the upper right for captions. The captions use transparent grey bubbles, with your words on the right and replies on the left. Drag the small top handle upward/downward to make the captions taller/shorter; height is saved and constrained to fit the screen. VoiceOver can adjust the handle too. Captions start off and do not change microphone or spoken-reply settings. The history button opens the session conversation. Errors and microphone status remain visible with captions off.
+Users can speak or type, optionally select an area, and view both sides of the conversation in resizable, translucent captions. Web information appears in an expandable overlay, keeping the camera at the center of the experience. No permanently selected object is needed.
 
-**Web info & search** controls search permission and result visibility, and remembers your choice. With it off, questions use the camera without web research. With it on, the assistant searches only when the question needs outside information, such as current prices, specifications or a manufacturer manual. The info circle shows a mint dot when hidden results are available; tapping it reveals the same results without searching again. Source cards contain actual provider links; uncited links are labelled Related search results rather than presented as support for the spoken answer. Tap the chevron for images and longer details inside the camera view. Drag the top handle upward to fill the screen, downward to shrink it, or the corner to adjust width and height. An expand/restore button provides the same full-screen choice. × turns off web search and hides the box while retaining already-fetched results. New replies start compact; saved dimensions apply on expansion. Captions retain their separate height handle.
+## A short demo
 
-When online research is enabled, Gemini decides whether external information would help. The backend sends one Google-search query per search action to **Serper**, then returns actual links and snippets to Gemini. It does not use Gemini's built-in Google Search tool. Greetings, ordinary conversation and simple visual identification should not need a search. Ask, for example, “How much does a bottle like this cost?” Search-based price details should include currency and retailer when found; similar products must not be presented as exact matches. The existing image previews use the source page's online metadata after you expand them; the backend does not make extra image-search or shopping requests.
+1. **Find something.** Point the camera at a few everyday objects and ask, “Where is the bottle?” Move the camera to try the target tracking.
+2. **Get help doing something.** Ask how to open or use a simple everyday object. Follow the explanation, then try guided steps and camera checks.
+3. **Understand a diagram.** Show a diagram, point to the relevant areas, and ask how they connect. Follow the narrated annotations, then reopen the saved walkthrough.
+4. **Go beyond the camera.** Turn on web info and ask for buying links or documentation. Expand the result overlay to inspect sources and pictures.
 
-When online research is enabled, Gemini decides whether external information would help. The backend sends one Google-search query per search action to **Serper**, then returns actual links and snippets to Gemini. It does not use Gemini's built-in Google Search tool. Greetings, ordinary conversation and simple visual identification should not need a search. Ask, for example, “How much does a bottle like this cost?” Search-based price details should include currency and retailer when found; similar products must not be presented as exact matches. The existing image previews use the source page's online metadata after you expand them; the backend does not make extra image-search or shopping requests.
+**For judges:** the app starts with clearly labelled **Demo responses** enabled. These are scripted examples for trying the interface. Actual camera understanding requires a connected Gemini backend and Demo responses switched off.
 
-## Connect Serper search
+## How we built it
 
-1. Create an account at [Serper](https://serper.dev/) and copy its API key from your dashboard. Check the current starter-credit allowance and expiry there; it is not an unlimited monthly plan.
-2. Add these lines to your existing `server/.env` (keep the Gemini key and connection token):
+### Native camera and voice experience
 
-```dotenv
-ENABLE_WEB_RESEARCH=true
-SERPER_API_KEY=YOUR_PRIVATE_SERPER_KEY
-SERPER_COUNTRY=ca
-SERPER_LANGUAGE=en
+The iOS app uses **SwiftUI** for the interface, **AVFoundation** for camera capture, and Apple's **Speech** framework for voice input. Replies can use native speech synthesis or optional Gemini-generated speech.
+
+For object pointers, Gemini returns a location in the analyzed image. **Apple Vision** then tracks that region locally across camera frames. A short frame history helps align delayed model answers with the moving preview. Diagram explanations use a captured image, keeping annotations attached to the illustration during narration.
+
+### An AI backend with explicit actions
+
+Our **Node.js** backend sends selected camera frames and bounded conversation context to Gemini. It validates structured responses before the app acts on answers, visual annotations, clarification requests, or research actions. Separate endpoints support guided checks, reference pictures, speech, and focused diagram tracing.
+
+The preview and tracking run on the phone; cloud understanding operates on captured frames. The user gets a continuous camera experience without continuously streaming video to the model.
+
+```mermaid
+sequenceDiagram
+    participant Phone as iPhone
+    participant Backend as Node.js backend
+    participant Gemini as Gemini
+    participant Web as Web sources
+    Phone->>Backend: Question and camera frame
+    Backend->>Gemini: Image, context, and allowed actions
+    Gemini-->>Backend: Answer or research action
+    opt Web info enabled and research needed
+        Backend->>Web: Search or read a source
+        Web-->>Backend: Links and evidence
+        Backend-->>Phone: Request a fresh camera frame
+        Phone->>Backend: Updated view
+        Backend->>Gemini: Evidence and updated view
+        Gemini-->>Backend: Grounded answer and guidance
+    end
+    Backend-->>Phone: Validated response
+    Note over Phone: Present guidance and track the pointer locally
 ```
 
-3. Restart the backend with `npm start`. It should print **Web search: Serper**. Rebuild the updated iPhone app once. With **Web info & search** on, questions that need outside information may trigger a lookup; visual questions stay camera-only.
+### Information beyond the image
 
-Only search text, result count and locale go to Serper; camera images, conversation history, task memory and the Gemini key do not. Serper returns search snippets, not full documents. The existing explicit `read_source` action still uses Gemini URL Context to read a known source and is subject to that feature's project support and quotas. There is no fallback to Google's built-in search or automatic purchase of credits. `npm run doctor` checks Gemini metadata and whether a Serper key is configured; it does not spend a search query or validate Serper credits. Tests use mocked responses; live Serper credentials and end-to-end device latency were not available in the authoring environment.
+With web info enabled, the assistant can use **Serper** search results and read relevant sources when a question needs outside information. Ordinary visual questions can stay camera-only. Source cards preserve actual links rather than relying on the model to invent URLs.
 
-## Start the backend
+Reference pictures have a separate lookup path: Serper image search when configured, with Wikipedia and Wikimedia fallbacks. Explicit picture requests can therefore access online sources independently of the web-info toggle.
 
-Node.js **22.9+**, with no npm dependencies:
+| Layer | Technologies |
+| --- | --- |
+| iPhone app | Swift, SwiftUI, AVFoundation, Speech, Vision |
+| Camera understanding | Gemini API with structured responses |
+| Backend | Node.js built-in modules; no npm runtime dependencies |
+| Research and pictures | Serper, source retrieval, Wikipedia/Wikimedia |
+| Spoken output | Native iOS speech; optional Gemini TTS |
+
+## Challenges we ran into
+
+- **The camera moves while the model thinks.** A correct box on an old image can point at the wrong thing in the live view. We connected responses to their source frames and added frame replay and local tracking.
+- **“This” and “that” need context.** We combined camera input with region selection and pointing information, while allowing clarification requests.
+- **Different questions need different amounts of work.** Locating an object benefits from a compact response; explaining a diagram needs more detail. We introduced separate request paths and stage-level timing logs.
+- **Search results need grounding.** We validate research actions and retain source links so users can inspect the information behind a response.
+- **Voice and camera must cooperate.** Listening, interruptions, spoken replies, and app lifecycle changes require coordination. Audio behavior remains an area for device testing and refinement.
+
+## What we're proud of
+
+We connected camera understanding, voice, visual pointers, guided tasks, and web research in one native interface. We also extended the interaction beyond a spoken answer: diagrams become narrated visual walkthroughs users can save and replay.
+
+Behind the interface, we added structured-response validation, bounded research workflows, per-user signing configuration, and automated backend tests to make a fast-moving hackathon project easier to develop together.
+
+## What we learned
+
+A useful visual assistant needs more than a capable model. Answers need to arrive at the right time, point at the right place, and leave room for users to interrupt or correct them. Measuring camera preparation, backend processing, and answer presentation separately helped us understand where the experience needed work.
+
+## What's next
+
+- Reduce latency with lighter requests and more on-device processing for common tasks.
+- Improve audio-session reliability and interruption handling across devices.
+- Evaluate localization and tracking under changing light, occlusion, and similar-looking objects.
+- Make saved walkthroughs easier to organize and revisit.
+
+TaskLens is a hackathon prototype. Visual locations and task checks are AI estimates, and response time depends on the model, network, and provider availability. We have not established a production accuracy or latency benchmark.
+
+## Try it locally
+
+<details>
+<summary><strong>Developer setup: iPhone app and backend</strong></summary>
+
+### Requirements
+
+- A Mac with Xcode and an iPhone running iOS 17 or later.
+- Node.js 22.9 or later and Python 3 for the signing helper.
+- A Gemini API key for live AI; an optional Serper key for web search.
+
+### 1. Clone and configure
 
 ```sh
-cd server
-cp .env.example .env
-npm start
+git clone https://github.com/codejam16/Father.git
+cd Father
+cp server/.env.example server/.env
 ```
 
-Check `http://localhost:8787/health`. It should report `mode: "mock"`. To exercise the phone-to-backend connection, turn off the app's Demo responses switch while leaving the backend in mock mode. Replies will still be clearly labelled as demos and will not call Gemini.
-
-For a physical phone, enter **`http://YOUR_MAC_LAN_IP:8787`** as the backend URL in the app. `localhost` on the phone means the phone. Put both devices on the same reachable network; campus/guest Wi-Fi can isolate clients. Accept the iPhone's Local Network permission. Use the Mac's Wi-Fi settings to find its IP. If using the simulator on the same Mac, `http://localhost:8787` is appropriate.
-
-The checked-in Info.plist permits HTTP **for local development only**. Use an HTTPS endpoint and remove `NSAllowsArbitraryLoads` before distribution. Do not expose a development server to the internet without reviewing deployment/authentication settings.
-
-## Research and task memory
-
-In live mode, the assistant chooses one validated action per decision: `respond`, `ask_clarification`, `request_view`, `search_online`, or `read_source`. The iPhone permits search/read actions only while info is enabled, Serper is connected and server research is enabled. Even then, the assistant should research only questions that need outside information. It asks for missing product/version details when needed, rather than assuming every task is about a vehicle or a particular product type.
-
-Research uses Serper for Google search results and Gemini URL Context for explicit document reads. Gemini decision calls never include a Google Search tool. Search returns source metadata; reading is limited to source IDs already returned by the search provider. A failed/paywalled retrieval is not treated as a read document. Relevant PDF diagrams can inform research notes, but this is not guaranteed pixel matching between a manual illustration and the camera view.
-
-After a successful research operation, the backend returns a short-lived continuation. The iPhone takes a fresh camera image, clears the old manual selection, and continues the same question before deciding what to highlight. At most two research operations and five total external calls are allowed per question, apart from bounded busy-model retries and the schema/model fallbacks described below. A simple researched question uses two Gemini calls and one Serper query; a search/read/fresh-frame sequence uses four Gemini calls and one Serper query. The backend imposes no total or per-minute usage limit. Each search action sends exactly one Serper request for up to five usable results; provider credits and model tokens have separate quotas. Research availability and charges depend on the model/project; no billing settings are changed by this app.
-
-The camera screen keeps the colored assistant status at the top center, camera controls, caption toggle and optional web-info box. The viewfinder button toggles manual region selection, off by default; turning it off clears the selected frame. Automatic assistant highlighting still works. Research results **do not automatically open a sheet** or suspend listening. Drag the transparent box upward to fill the screen, downward to shrink it, or drag its corner to adjust width. The expand/restore button provides the same full-screen choice. Details expand and scroll inside the box; opening settings or conversation history is a separate user action. Full research evidence and task memory remain available from settings when explicitly requested. Serper results do not fabricate a Google Search suggestions widget. Errors are spoken when spoken replies are enabled and are available as **Last issue** in settings.
-
-Task context is held in bounded backend memory (100 sessions, 30-minute inactivity expiry); images are not stored there. It includes a goal, relevant facts, open questions, and proposed plan steps. Only **Mark completed** in settings confirms a step; model suggestions cannot mark work completed. Confirmations sync with the next question. **Start a new task** or changing the task notes starts a fresh context; backend restarts discard memory. Treat remembered facts as assistant-maintained notes, not verified ground truth.
-
-Research settings (add the Serper key to an existing `.env` to enable search):
-
-```dotenv
-ENABLE_WEB_RESEARCH=true
-SERPER_API_KEY=YOUR_PRIVATE_SERPER_KEY
-MAX_RESEARCH_STEPS=2
-```
-
-The **Web info & search** toggle must be enabled before the app permits research. The model then decides whether the question needs external information. A mint dot on the info button means hidden links are available. Enabling the toggle does not make a request by itself. Disabling it blocks subsequent research and can cancel a pending question that allowed research. Set `ENABLE_WEB_RESEARCH=false` on the server to disable research globally. Demo mode never runs any provider calls or search tools. Tool availability, localization accuracy, and latency still need verification on the intended account/device.
-
-## Enable real AI
-
-In `server/.env`:
+Edit `server/.env`:
 
 ```dotenv
 AI_MODE=gemini
-GEMINI_API_KEY=YOUR_PROVIDER_KEY
-GEMINI_MODEL=gemini-3.8-flash
-APP_TOKEN=YOUR_RANDOM_PRIVATE_TOKEN_AT_LEAST_16_CHARACTERS
+HOST=0.0.0.0
+PORT=8787
+APP_TOKEN=replace-with-a-private-random-token-at-least-16-characters
+GEMINI_API_KEY=your-gemini-api-key
+# Optional web search:
+# SERPER_API_KEY=your-serper-api-key
 ```
 
-Generate a proxy token locally if needed:
+Keep API keys on the backend. The phone uses the connection token, not the Gemini key. The local `.env` is ignored by Git. See [all backend options](server/.env.example) for model, image-detail, and voice settings.
+
+### 2. Configure personal signing once
+
+From the repository root, replace these placeholders with your Apple team ID and a unique bundle identifier:
 
 ```sh
-node -e "console.log(require('node:crypto').randomBytes(24).toString('hex'))"
+python3 scripts/configure-signing.py --team YOURTEAMID --bundle-id dev.yourname.tasklens
+open ios/TaskLens.xcodeproj
 ```
 
-Restart the backend. In app settings, turn off **Demo responses**, enter the backend URL and the matching **connection token**, and add a specific task/short instructions. Never put the Gemini API key in the iPhone app. Its proxy token is stored in the iOS Keychain.
+The helper saves your values in the Git-ignored `ios/Config/Signing.local.xcconfig`. Each teammate keeps their settings across pulls. See [personal signing setup](docs/SIGNING.md).
 
-The default model is `gemini-3.8-flash`; `gemini-3.5-flash-lite` is also allowed by the proxy. Verify access in your own Google project. `gemini-2.5-flash` is not the starter's default because it is deprecated/restricted for new users as of November 2026. Localization quality still needs evaluation for each model and task.
+In Xcode, select the **TaskLens** scheme and your connected iPhone, then press **Run**. Accept camera, microphone, Speech, and Local Network permissions when requested.
 
-If an AI request fails, the app and backend terminal now show Google's HTTP status and a specific, credential-free explanation. From `server`, run `npm run doctor` to check model metadata without generating an answer. A successful metadata check does **not** establish generation permission, image support, quota, or free-tier eligibility. Send one question from the app to see the generation result. For 401/403, review the key and project access in [Google AI Studio](https://aistudio.google.com/apikey); for 404, verify the selected model; for 400, the message identifies recognized image/schema/thinking or project setup problems. After changing `.env`, stop and restart the backend. Keep keys, tokens and `.env` private when sharing diagnostics.
-
-## Google error diagnostics
-
-Each Google call logs the actual model, action, call number, HTTP status, elapsed time, and token usage when available. Calls for the same `/analyze` request share a request ID, so you can see whether one spoken question triggered a camera decision or document-reading call. Serper searches are logged separately, with no query text or key. Each completed HTTP request logs `googleCalls` and `serperSearches`.
-
-On a Google failure, Terminal prints **GOOGLE ERROR — original response** followed by Google's response JSON or error text, not a replacement explanation. Quota violation details (`quotaId`, `quotaMetric`, `quotaValue`, dimensions), retry information, and `Retry-After` are preserved when Google supplies them. API keys, the configured app token, and recognized credential fields are redacted. Successful image/question bodies and authentication headers are not logged.
-
-The same error record is saved to `server/.data/provider-errors.jsonl` with owner-only permissions, bounded to a 1 MB file plus one rotated backup. `.data` is excluded from Git. Errors may include Google project identifiers; review diagnostics before sharing them publicly. The app still receives a concise error, while the original provider details stay on your Mac.
-
-After restarting the server and reproducing the problem, inspect the newest saved error:
-
-```sh
-cd ~/Desktop/Father/server
-node --input-type=module -e 'import {readFileSync} from "node:fs"; const lines=readFileSync(".data/provider-errors.jsonl","utf8").trim().split("\n"); console.log(JSON.stringify(JSON.parse(lines.at(-1)), null, 2));'
-```
-
-## API usage and quotas
-
-- Google enforces model quotas and rate limits; Serper separately enforces search credits and throughput. The backend has no daily/total request allowance and no requests-per-minute cap. Old `MAX_LIVE_REQUESTS`, `REQUESTS_PER_MINUTE`, `BUDGET_FILE`, and historical allowance files are ignored.
-- Demo mode makes no provider calls, even when a Gemini key exists.
-- A spoken or typed question may trigger several model calls, including research and fresh-frame analysis. Google accounts for model calls according to the project/model limits; Serper accounts separately for successful search queries against its credit allowance.
-- Each question has a bounded research workflow (at most two research operations and five external calls) to stop recursive tool loops. This is not a usage quota across questions.
-- Images, input context and output size remain bounded. Transient Google 5xx responses may receive bounded retries; schema/model fallback may add a call. A Google 429 is returned as `provider_error` with Google's status, without imposing a local cooldown or preventing the next user request.
-
-## How pointing works
-
-1. Ask a normal question: the model can answer with `target: null`.
-2. Ask to find something, or let the assistant refer to a useful visible component: the model can return one normalized box.
-3. The image sent to Gemini is an upright JPEG. Boxes use **`[ymin, xmin, ymax, xmax]`, top-left origin, 0–1000**.
-4. The phone retains a bounded ring of copied frames, approximately six seconds at its throttled processing rate. It seeds a tracker on the exact source frame, replays retained frames, then tracks subsequent frames locally.
-5. If the original frame is no longer available, tracking fails, or the five-second pointer lifetime expires, the box disappears. The camera does not freeze. Ask again to reacquire.
-6. A user-selected frame remains the attachment for the next question even if the view moves afterward. The request includes that frame's timestamp. Clear the attachment if you want to ask about the latest view instead.
-
-**Limitations:** Tracking can drift, including to a similar object without low confidence. Replaying frames can add delay. The portrait rear-camera coordinate pipeline and performance need validation on actual devices. No ARKit/LiDAR/world anchors, reliable occlusion recovery, precise screw identification, or automatic assembly verification are claimed. Use a simple, low-risk task with visually distinct parts for the first demo.
-
-## Repository map
-
-| Path | Responsibility |
-| --- | --- |
-| `ios/TaskLens/CameraService.swift` | Camera, frame ring, experimental pointer tracking |
-| `ios/TaskLens/Models.swift` | Frame identity, coordinate transforms, API types |
-| `ios/TaskLens/CameraView.swift` | Live preview, selection gesture, overlays |
-| `ios/TaskLens/ContentView.swift` | Main UI and conversation |
-| `ios/TaskLens/SpeechService.swift` | Push-to-talk and spoken replies |
-| `ios/TaskLens/AssistantViewModel.swift` | Context, selection, request lifecycle |
-| `ios/TaskLens/AnalysisClient.swift` | Backend client and local demo replies |
-| `server/src/` | Validation, Gemini adapter, research workflow and task memory |
-| `docs/API.md` | Shared mobile/backend contract |
-| `docs/DEVICE_CHECKS.md` | Required real-device acceptance checks |
-
-## Checks
-
-Backend tests are offline and use fake provider responses:
+### 3. Start and connect
 
 ```sh
 cd server
-npm test
+npm start
 ```
 
-On a Mac, select **Product → Test** in Xcode for the included coordinate/selection tests. To build without signing on a Mac:
+Keep the backend running and put the Mac and iPhone on the same reachable network. On the Mac, this usually prints the Wi-Fi IP:
 
 ```sh
-xcodebuild -project ios/TaskLens.xcodeproj -scheme TaskLens \
-  -sdk iphonesimulator -configuration Debug CODE_SIGNING_ALLOWED=NO build
+ipconfig getifaddr en0
 ```
 
-The Xcode project is committed; no generator is needed to open it. After adding/removing Swift files, add them to the appropriate target in Xcode, or regenerate the project using Python 3:
+In the app's connection settings:
+
+| Setting | Value |
+| --- | --- |
+| Demo responses | Off |
+| Backend URL | `http://YOUR_MAC_IP:8787` |
+| Connection token | Your `APP_TOKEN` value |
+
+The `/health` endpoint is a connectivity check, not the app interface. Leave `/health` off the URL in app settings.
+
+### Controls and data flow
+
+- **Captions:** toggle the speech bubble and drag the handle to resize.
+- **Web info:** permits research for questions needing outside information; it does not force a search every time.
+- **Selection:** optionally attach a region to a question.
+- **Guided steps:** camera checks can generate additional AI requests.
+- **Reference pictures:** explicit requests can perform online lookups separately from web research.
+- **Voice:** native speech works without enabling Gemini voice.
+
+In live mode, submitted frames and question context go through the backend to the AI provider. Saved walkthroughs remain on the phone. Demo answers do not call Gemini or Serper, but requesting an online reference picture is a separate network action.
+
+</details>
+
+## Tests and technical details
 
 ```sh
-python3 scripts/generate-xcode-project.py
+npm test --prefix server
+python3 scripts/test-signing.py
 ```
 
-Regeneration rebuilds the project definition with variable-based signing and leaves your ignored local signing file intact. Review unrelated custom project settings after regeneration. Source files are unchanged.
+Backend tests use mocked providers to check application behavior and validation. They do not establish live model accuracy or speed. Native builds and camera/audio behavior require Xcode and device testing.
 
-## Next milestone
+- [API contract](docs/API.md)
+- [Latency investigation](docs/LATENCY.md)
+- [Personal signing setup](docs/SIGNING.md)
+- [Device checks](docs/DEVICE_CHECKS.md)
 
-Complete `docs/DEVICE_CHECKS.md` before promising live tracking. Tune coordinate alignment and replay performance on the actual phone, then improve continuous conversation if time remains. Avoid expanding into manual ingestion, additional platforms, or 3D anchors before the camera/pointing interaction is reliable.
-
-References: [Apple Vision tracking](https://developer.apple.com/documentation/vision/tracking-multiple-objects-or-rectangles-in-video), [Apple Speech](https://developer.apple.com/documentation/speech/sfspeechrecognizer), [Gemini image understanding](https://ai.google.dev/gemini-api/docs/image-understanding), [Gemini pricing](https://ai.google.dev/gemini-api/docs/pricing).
-
-
-This branch combines the `starter/visual-assistant` square-marker scanner, pointing, guided steps and voice features with per-user ignored signing configuration and optional web search. It does not run Apple foreground-mask segmentation. Existing `ios/Config/Signing.local.xcconfig` files are not changed by pulls.
-
-The configured `GEMINI_MODEL` remains the default for every question to preserve the fast path. A stronger explanation model is opt-in through `EXPLAIN_MODEL`; leave it unset or set it to `same` to avoid switching models.
+```text
+ios/TaskLens/    Native camera, voice, overlays, and walkthroughs
+server/src/     AI adapters, research, validation, and task workflow
+server/test/    Backend tests with mocked providers
+scripts/        Signing configuration and project helpers
+docs/           API details and development checks
+```
