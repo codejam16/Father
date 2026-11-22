@@ -96,6 +96,22 @@ struct CapturedFrame {
     let height: Int
 }
 
+/// A close-up of part of a frame, and where it sits in that frame.
+struct CapturedDetail {
+    let jpeg: Data
+    let width: Int
+    let height: Int
+    let box: NormalizedBox
+}
+
+struct DetailImagePayload: Encodable {
+    let base64: String
+    let mimeType = "image/jpeg"
+    let width: Int
+    let height: Int
+    let box: NormalizedBox
+}
+
 struct SelectedFrame {
     let frame: CapturedFrame
     let box: NormalizedBox
@@ -153,14 +169,19 @@ struct AnalysisRequest: Encodable {
     let researchEnabled: Bool
     let confirmedStepIds: [String]
     let includeWebInfo: Bool
+    /// Optional fingertip close-up of the same frame.
+    let detailImage: DetailImagePayload?
     let searchEveryQuestion: Bool
     let guided: Bool
 
     init(frame: CapturedFrame, question: String, task: String, history: [ChatMessage], selection: NormalizedBox?,
          sessionId: String? = nil, continuationId: String? = nil,
          researchEnabled: Bool = true, confirmedStepIds: [String] = [], includeWebInfo: Bool = false,
-         searchEveryQuestion: Bool = false, guided: Bool = false) {
+         searchEveryQuestion: Bool = false, guided: Bool = false, detail: CapturedDetail? = nil) {
         self.guided = guided
+        self.detailImage = detail.map {
+            DetailImagePayload(base64: $0.jpeg.base64EncodedString(), width: $0.width, height: $0.height, box: $0.box)
+        }
         self.frameId = frame.id
         self.capturedAt = ISO8601DateFormatter().string(from: frame.capturedAt)
         self.question = question
@@ -255,6 +276,54 @@ struct AnalysisResponse: Decodable {
     var researchReports: [ResearchReport]? = nil
     var sourceIds: [String]? = nil
     var webInfo: WebInfo? = nil
+    /// "What you'll need" when guided steps start.
+    var toolsNeeded: [ToolItem]? = nil
+    /// Step-by-step drawings explaining a diagram (empty for ordinary answers).
+    var annotations: [Annotation]? = nil
+}
+
+/// One beat of a visual walkthrough: a caption plus a box around a part or a path traced along the drawing.
+struct Annotation: Codable, Equatable {
+    let caption: String
+    /// What is spoken while this beat is on screen.
+    var say: String? = nil
+    var box: NormalizedBox? = nil
+    var path: [[Double]]? = nil
+    /// Short tag drawn next to the part, e.g. "R1 · 220 Ω".
+    var label: String? = nil
+    /// A second part: a curved arrow is drawn from `box` to it (connections, cause and effect).
+    var to: NormalizedBox? = nil
+    /// Show a magnified bubble of the part in `box`.
+    var zoom: Bool? = nil
+    /// An outlined area to shade, as [y, x] points.
+    var region: [[Double]]? = nil
+
+    /// Path points as unit (x, y), top-left origin.
+    var unitPath: [CGPoint] { Self.unitPoints(path) }
+    var unitRegion: [CGPoint] { Self.unitPoints(region) }
+
+    private static func unitPoints(_ points: [[Double]]?) -> [CGPoint] {
+        (points ?? []).compactMap { $0.count == 2 ? CGPoint(x: $0[1] / 1000, y: $0[0] / 1000) : nil }
+    }
+}
+
+/// A tool or part for the job; `visible` means seen on camera (or ticked by the user).
+struct ToolItem: Codable, Identifiable, Equatable {
+    let name: String
+    var visible: Bool
+    var id: String { name }
+}
+
+struct ToolsRequest: Encodable {
+    let items: [String]
+    let goal: String
+    let image: ImagePayload
+}
+
+struct ToolsResponse: Decodable {
+    let mode: String
+    let items: [ToolItem]
+    let note: String?
 }
 
 struct WebSource: Decodable, Identifiable {

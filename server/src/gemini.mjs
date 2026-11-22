@@ -1,4 +1,4 @@
-import { APIError, answerSchema, boxInstruction, validateAnswer } from './contract.mjs';
+import { APIError, answerSchema, boxInstruction, validateAnswer, walkthroughInstruction } from './contract.mjs';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { geminiHTTPError } from './provider-error.mjs';
@@ -15,10 +15,16 @@ When your answer identifies or discusses a specific visible object, automaticall
 Highlight only one object: the main object relevant to the user's question. For example, if you identify a bottle, return the bottle's label and a box tightly enclosing that bottle.
 If several objects are equally plausible and you cannot determine which one the user means, ask which object they mean and return targetLabel=null and box=null. For general answers with no specific visible object, also return null for both.
 If the user supplied a selection, it marks what they mean by 'this'; identify/explain that region without assuming their selection is correct.
+If the user's hand is visible and a finger is pointing at or touching something, that is what they mean by 'this' (unless a selection says otherwise); answer about it and box it. For small items such as keyboard keys, buttons or printed text, name the exact one directly under or just beyond the fingertip by reading its label; if the fingertip hides the label, identify it by position and the labels around it.
 Only locate clearly visible items. Box coordinates are [ymin,xmin,ymax,xmax], top-left origin, normalized to 0..1000 for the entire supplied upright image.
 If you cannot locate the item, return no box and ask for a clearer view. Do not fabricate coordinates or claim you verified a completed action from conversation alone.
 For hazardous repairs, avoid directing physical actions and suggest appropriate qualified assistance. Never guess which energized component to touch.
 Return the requested JSON object, with no markdown.`;
+
+const detailLevels = { high: 'MEDIA_RESOLUTION_HIGH', medium: 'MEDIA_RESOLUTION_MEDIUM', low: 'MEDIA_RESOLUTION_LOW', default: null };
+const configuredDetail = (process.env.IMAGE_DETAIL ?? 'high').toLowerCase();
+if (!(configuredDetail in detailLevels)) throw new Error('IMAGE_DETAIL must be high, medium, low or default.');
+function imageDetail() { return detailLevels[configuredDetail]; }
 
 export function buildGeminiBody(request, maxOutputTokens, { researchAvailable = false, evidence = null } = {}) {
   const schema = request.includeWebInfo ? {
@@ -28,7 +34,7 @@ export function buildGeminiBody(request, maxOutputTokens, { researchAvailable = 
     required: [...webAnswerSchema.required, 'searchQuery', 'sourceIds'],
   } : answerSchema;
   return {
-    systemInstruction: { parts: [{ text: instruction + '\n' + boxInstruction + (request.includeWebInfo ? '\n' + webInstruction
+    systemInstruction: { parts: [{ text: instruction + '\n' + boxInstruction + '\n' + walkthroughInstruction + (request.includeWebInfo ? '\n' + webInstruction
       : researchAvailable ? '\nExternal research is controlled by researchAllowed in the task context.'
         : '\nWeb lookup is disabled. Do not claim to have checked live prices, availability, or websites. If asked for current prices, explain that Web info can be enabled.')
       + (request.includeWebInfo ? '\nFor this response, use searchQuery for one concise query only when researchAvailable=true and external facts help; otherwise return null. Return sourceIds only from supplied researchEvidence. With researchEvidence, use it to answer and return searchQuery=null. Without evidence, answer from the visible scene and do not claim checked prices or sources.' : '') }] },
@@ -49,6 +55,10 @@ export function buildGeminiBody(request, maxOutputTokens, { researchAvailable = 
             ...(request.includeWebInfo ? { researchAvailable, researchEvidence: evidence } : {}),
           }) },
           { inlineData: { mimeType: request.image.mimeType, data: request.image.base64 } },
+          ...(request.detailImage ? [
+            { text: `Second image: a zoomed, sharper close-up of the same moment around the user's fingertip. It covers box ${JSON.stringify(request.detailImage.box)} of the first image. Use it to read small labels (individual keys, buttons, text). Always give box coordinates in the FIRST image's coordinates.` },
+            { inlineData: { mimeType: request.detailImage.mimeType, data: request.detailImage.base64 } },
+          ] : []),
         ],
       },
     ],
@@ -57,6 +67,8 @@ export function buildGeminiBody(request, maxOutputTokens, { researchAvailable = 
       responseJsonSchema: schema,
       maxOutputTokens,
       thinkingConfig: { thinkingLevel: 'LOW' },
+      // More image tokens = finer detail (small text, keys, labels), at some extra latency.
+      ...(imageDetail() ? { mediaResolution: imageDetail() } : {}),
     },
   };
 }
@@ -143,9 +155,45 @@ export function providerUsage(payload) {
   };
 }
 
+/// Explanation questions ("explain…", "trace…", "from A to B", "how does … flow/work") get the stronger
+/// model when one is configured (EXPLAIN_MODEL); everything else keeps the faster default model.
+const explainPattern = /\b(explain|explanation|walk me through|trace|diagram|circuit|schematic|flowchart|chart|graph|from \S+ to \S+)\b|\bhow (does|do|did) .{0,40}\b(go|get|flow|move|travel|work|connect)/i;
+export function looksLikeExplanation(question) {
+  return typeof question === 'string' && explainPattern.test(question);
+}
+export function modelFor(request, config) {
+  return config.explainModel && config.explainModel !== config.model && looksLikeExplanation(request?.question)
+    // One quick retry only: if it's still busy, the regular model answers instead of waiting longer.
+    ? { ...config, model: config.explainModel, fallbackModel: config.model, busyRetries: 1 } : config;
+}
+
+/// If Google rejects the answer format as too complex, retry once without the optional extras
+/// (walkthrough and tools fields) so the user still gets a normal answer.
+export async function generateWithSchemaFallback(body, config, fetcher = fetch) {
+  try {
+    return await generateContent(body, config, fetcher);
+  } catch (error) {
+    // The stronger explanation model is busy (Google 5xx after retries): answer with the regular model.
+    if (config.fallbackModel && error instanceof APIError && /Gemini HTTP 5\d\d/.test(error.message)) {
+      console.warn(`${config.model} is busy; answering with ${config.fallbackModel} instead`);
+      return generateWithSchemaFallback(body, { ...config, model: config.fallbackModel, fallbackModel: null, busyRetries: undefined }, fetcher);
+    }
+    if (!(error instanceof APIError) || !/structured response settings/.test(error.message)) throw error;
+    const slim = structuredClone(body);
+    const schema = slim.generationConfig?.responseJsonSchema;
+    if (!schema?.properties) throw error;
+    for (const field of ['annotations', 'toolsNeeded']) {
+      delete schema.properties[field];
+      schema.required = (schema.required ?? []).filter((name) => name !== field);
+    }
+    console.warn('Google rejected the answer format; retrying once without walkthrough/tools fields');
+    return generateContent(slim, config, fetcher);
+  }
+}
+
 export async function analyzeWithGemini(request, config, fetcher = fetch) {
   const researchAvailable = request.includeWebInfo && request.researchEnabled !== false && config.webResearchEnabled !== false && Boolean(config.serperApiKey);
-  let payload = await generateContent(buildGeminiBody(request, config.maxOutputTokens, { researchAvailable }), config, fetcher);
+  let payload = await generateWithSchemaFallback(buildGeminiBody(request, config.maxOutputTokens, { researchAvailable }), modelFor(request, config), fetcher);
   let answer;
   try { answer = JSON.parse(candidateText(payload)); } catch {
     throw new APIError(502, 'invalid_model_output', 'The AI returned an unreadable answer.');

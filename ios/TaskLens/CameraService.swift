@@ -90,7 +90,14 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
         session.addInput(input)
         self.input = input
         // 720p: a much sharper preview and clearer images for the AI. Older/limited cameras fall back to VGA.
-        session.sessionPreset = session.canSetSessionPreset(.hd1280x720) ? .hd1280x720 : .vga640x480
+        // 1080p keeps small details (keys, labels) readable in close-ups; older cameras fall back.
+        if session.canSetSessionPreset(.hd1920x1080) {
+            session.sessionPreset = .hd1920x1080
+        } else if session.canSetSessionPreset(.hd1280x720) {
+            session.sessionPreset = .hd1280x720
+        } else {
+            session.sessionPreset = .vga640x480
+        }
         let output = AVCaptureVideoDataOutput()
         output.alwaysDiscardsLateVideoFrames = true
         output.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
@@ -334,10 +341,75 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
     /// Boxes are normalized (0–1000), so both map onto the same tracked frame.
     private func encode(_ frame: BufferedFrame, quality: CGFloat) -> CapturedFrame? {
         let pixels = latestFull?.id == frame.id ? latestFull!.pixels : frame.pixels
-        let image = CIImage(cvPixelBuffer: pixels)
+        var image = CIImage(cvPixelBuffer: pixels)
+        // The whole view never needs more than 1280 px; fine detail goes in the separate close-up.
+        let longSide = max(image.extent.width, image.extent.height)
+        if longSide > 1280 {
+            let scale = 1280 / longSide
+            image = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+        }
         guard let cgImage = context.createCGImage(image, from: image.extent),
               let jpeg = UIImage(cgImage: cgImage).jpegData(compressionQuality: quality) else { return nil }
         return CapturedFrame(id: frame.id, capturedAt: frame.date, jpeg: jpeg, width: cgImage.width, height: cgImage.height)
+    }
+
+    /// The newest frame, plus (when a fingertip is visible) a sharp close-up around it cut from the
+    /// full-resolution frame, so the AI can read small things like individual keys.
+    func snapshotWithDetail() async throws -> (CapturedFrame, CapturedDetail?) {
+        try await withCheckedThrowingContinuation { continuation in
+            queue.async { [weak self] in
+                guard let self, let frame = self.frames.last, self.session.isRunning,
+                      Date().timeIntervalSince(frame.date) < 1 else {
+                    continuation.resume(throwing: TaskLensError.message("Wait for a fresh camera view, then try again."))
+                    return
+                }
+                self.rememberSent(frame)
+                guard let captured = self.encode(frame, quality: 0.75) else {
+                    continuation.resume(throwing: TaskLensError.message("Could not capture the camera view."))
+                    return
+                }
+                var detail: CapturedDetail?
+                if let full = self.latestFull, full.id == frame.id, let spot = Self.fingertip(in: frame.pixels) {
+                    detail = self.closeUp(of: full.pixels, around: spot)
+                }
+                continuation.resume(returning: (captured, detail))
+            }
+        }
+    }
+
+    /// Where an index fingertip points (a little beyond the tip, along the finger), in unit
+    /// top-left coordinates. One hand-pose pass on a small frame; nothing is shown on screen.
+    private static func fingertip(in pixels: CVPixelBuffer) -> CGPoint? {
+        let request = VNDetectHumanHandPoseRequest()
+        request.maximumHandCount = 1
+        let handler = VNImageRequestHandler(cvPixelBuffer: pixels, orientation: .up)
+        guard (try? handler.perform([request])) != nil, let hand = request.results?.first,
+              let points = try? hand.recognizedPoints(.all),
+              let tip = points[.indexTip], tip.confidence > 0.3 else { return nil }
+        let tipPoint = CGPoint(x: tip.location.x, y: 1 - tip.location.y)
+        guard let pip = points[.indexPIP], pip.confidence > 0.3 else { return tipPoint }
+        let pipPoint = CGPoint(x: pip.location.x, y: 1 - pip.location.y)
+        return CGPoint(x: min(max(tipPoint.x + (tipPoint.x - pipPoint.x) * 0.4, 0), 1),
+                       y: min(max(tipPoint.y + (tipPoint.y - pipPoint.y) * 0.4, 0), 1))
+    }
+
+    /// A square close-up (about 40% of the frame's short side) around `point`, at full resolution.
+    private func closeUp(of pixels: CVPixelBuffer, around point: CGPoint) -> CapturedDetail? {
+        let width = CGFloat(CVPixelBufferGetWidth(pixels))
+        let height = CGFloat(CVPixelBufferGetHeight(pixels))
+        let side = (min(width, height) * 0.42).rounded()
+        guard side >= 64 else { return nil }
+        let originX = min(max(point.x * width - side / 2, 0), width - side).rounded()
+        let originY = min(max(point.y * height - side / 2, 0), height - side).rounded()
+        // Core Image measures from the bottom-left corner.
+        let rect = CGRect(x: originX, y: height - originY - side, width: side, height: side)
+        let image = CIImage(cvPixelBuffer: pixels)
+        func unit(_ value: CGFloat) -> Double { Double(min(max(value, 0), 1000)) }
+        guard let cgImage = context.createCGImage(image, from: rect),
+              let jpeg = UIImage(cgImage: cgImage).jpegData(compressionQuality: 0.85),
+              let box = NormalizedBox([unit(originY / height * 1000), unit(originX / width * 1000),
+                                       unit((originY + side) / height * 1000), unit((originX + side) / width * 1000)]) else { return nil }
+        return CapturedDetail(jpeg: jpeg, width: cgImage.width, height: cgImage.height, box: box)
     }
 
     func snapshot() async throws -> CapturedFrame {

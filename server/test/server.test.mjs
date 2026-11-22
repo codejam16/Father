@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createApp, loadConfig } from '../src/server.mjs';
-import { APIError, validateAnswer, validateRequest } from '../src/contract.mjs';
-import { analyzeWithGemini, buildGeminiBody } from '../src/gemini.mjs';
+import { APIError, validateAnnotations, validateAnswer, validateRequest } from '../src/contract.mjs';
+import { analyzeWithGemini, buildGeminiBody, generateWithSchemaFallback, looksLikeExplanation, modelFor } from '../src/gemini.mjs';
 import { checkGemini } from '../src/doctor.mjs';
 import { extractWebInfo, publicHTTPS } from '../src/web-info.mjs';
 
@@ -154,7 +154,8 @@ test('Google failures produce actionable messages without forwarding upstream de
       return true;
     });
     // Only Google's temporary overload errors are retried (twice), never quota or request errors.
-    assert.equal(calls, status >= 500 ? 3 : 1);
+    // Google "busy" errors get two retries; a rejected answer format gets one simpler retry.
+    assert.equal(calls, status >= 500 ? 3 : /structured response/.test(String(expected)) ? 2 : 1);
   }
 });
 
@@ -377,4 +378,124 @@ test('validation failures log a redacted reason and send a specific friendly mes
   assert.match(rejected, /invalid_action/);
   assert.match(rejected, /Invalid citation/);
   assert.doesNotMatch(rejected, /private-model-key/);
+});
+
+test('questions use high image detail and can carry a fingertip close-up', () => {
+  const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0xff, 0xd9]).toString('base64');
+  const image = { base64: jpeg, mimeType: 'image/jpeg', width: 720, height: 1280 };
+  const request = validateRequest({ frameId: 'f', capturedAt: new Date().toISOString(), question: 'Which key is this?', task: '',
+    image, detailImage: { ...image, width: 432, height: 432, box: [500, 300, 700, 700] } });
+  assert.deepEqual(request.detailImage.box, [500, 300, 700, 700]);
+  assert.throws(() => validateRequest({ frameId: 'f', capturedAt: new Date().toISOString(), question: 'x', task: '',
+    image, detailImage: { ...image, box: [700, 300, 500, 700] } }));
+  const body = buildGeminiBody({ ...request, history: [], includeWebInfo: false }, 512);
+  const parts = body.contents.at(-1).parts;
+  assert.equal(parts.filter((part) => part.inlineData).length, 2);
+  assert.match(parts.find((part) => part.text?.startsWith('Second image')).text, /FIRST image's coordinates/);
+  assert.equal(body.generationConfig.mediaResolution, 'MEDIA_RESOLUTION_HIGH');
+  assert.match(body.systemInstruction.parts[0].text, /keyboard keys/);
+  const plain = buildGeminiBody({ ...request, detailImage: null, history: [], includeWebInfo: false }, 512);
+  assert.equal(plain.contents.at(-1).parts.filter((part) => part.inlineData).length, 1);
+});
+
+test('explanations of diagrams come with a validated visual walkthrough', () => {
+  const answer = validateAnswer({ answer: 'Current leaves the + terminal, passes the resistor and reaches B.', needsClearerView: false,
+    targetLabel: null, box: null, annotations: [
+      { caption: 'Battery + terminal', box: [100, 100, 200, 200], path: null },
+      { caption: 'Current flows through the resistor to B', box: null, path: [[150, 200], [150, 600], [500, 600]] },
+      { caption: 'Broken beat', box: [900, 0, 100, 100], path: [[1, 2, 3]] },
+      { caption: '', box: [0, 0, 10, 10], path: null },
+    ] });
+  assert.equal(answer.annotations.length, 2);
+  assert.equal(answer.annotations[0].say, 'Battery + terminal');
+  const spoken = validateAnnotations([{ caption: 'Resistor', say: '  Then it passes through the resistor. ', box: [1, 1, 50, 50], path: null }]);
+  assert.equal(spoken[0].say, 'Then it passes through the resistor.');
+  assert.deepEqual(answer.annotations[1].path, [[150, 200], [150, 600], [500, 600]]);
+  assert.deepEqual(validateAnnotations(undefined), []);
+  const flat = validateAnnotations([{ caption: 'Along the wire', box: null, path: [100, 200, 100, 700, 400, 700] }]);
+  assert.deepEqual(flat[0].path, [[100, 200], [100, 700], [400, 700]]);
+  assert.deepEqual(validateAnnotations([{ caption: 'Odd', box: null, path: [1, 2, 3] }]), []);
+  const unclear = validateAnswer({ answer: 'Move closer.', needsClearerView: true, targetLabel: null, box: null,
+    annotations: [{ caption: 'x', box: [0, 0, 10, 10], path: null }] });
+  assert.deepEqual(unclear.annotations, []);
+  const body = buildGeminiBody({ task: '', question: 'Explain this circuit', capturedAt: new Date().toISOString(), frameId: 'f',
+    selection: null, history: [], includeWebInfo: false, image: { mimeType: 'image/jpeg', base64: '/9j/2Q==' } }, 512);
+  assert.ok(body.generationConfig.responseJsonSchema.required.includes('annotations'));
+  assert.match(body.systemInstruction.parts[0].text, /placed ON the drawn lines/);
+});
+
+test('answer schemas avoid nested size-limited arrays that Gemini rejects as too complex', () => {
+  const body = buildGeminiBody({ task: '', question: 'Explain this', capturedAt: new Date().toISOString(), frameId: 'f',
+    selection: null, history: [], includeWebInfo: false, image: { mimeType: 'image/jpeg', base64: '/9j/2Q==' } }, 512);
+  const beat = body.generationConfig.responseJsonSchema.properties.annotations;
+  assert.equal(beat.maxItems, undefined);
+  assert.equal(beat.items.properties.path.items.type, 'number');
+  assert.equal(beat.items.properties.path.maxItems, undefined);
+});
+
+test('a rejected answer format is retried once without the walkthrough and tools fields', async (t) => {
+  const bodies = [];
+  const tooComplex = { ok: false, status: 400, json: async () => ({ error: { code: 400, status: 'INVALID_ARGUMENT',
+    message: 'The specified schema produces a constraint that has too many states for serving.' } }) };
+  const ok = { ok: true, json: async () => ({ candidates: [{ finishReason: 'STOP', content: { parts: [
+    { text: JSON.stringify({ answer: 'A resistor.', box: null, targetLabel: null, needsClearerView: false }) }] } }] }) };
+  const body = buildGeminiBody({ task: '', question: 'What is this?', capturedAt: new Date().toISOString(), frameId: 'f',
+    selection: null, history: [], includeWebInfo: false, image: { mimeType: 'image/jpeg', base64: '/9j/2Q==' } }, 512);
+  const settings = { ...loadConfig({}), diagnosticLogPath: null, diagnosticLogger: () => {}, retryDelayMs: 0 };
+  await generateWithSchemaFallback(body, settings, async (url, options) => {
+    bodies.push(JSON.parse(options.body));
+    return bodies.length === 1 ? tooComplex : ok;
+  });
+  assert.equal(bodies.length, 2);
+  assert.ok('annotations' in bodies[0].generationConfig.responseJsonSchema.properties);
+  assert.ok(!('annotations' in bodies[1].generationConfig.responseJsonSchema.properties));
+  assert.ok(!bodies[1].generationConfig.responseJsonSchema.required.includes('annotations'));
+});
+
+test('walkthrough beats can carry labels, connections, zoom bubbles and shaded regions', () => {
+  const [labelled, linked, shaded] = validateAnnotations([
+    { caption: 'The resistor', say: 'This is R1.', box: [100, 100, 200, 300], path: null, label: '  R1 · 220 Ω ', to: null, zoom: true, region: null },
+    { caption: 'Switch controls the LED', say: 'The switch turns the LED on.', box: [300, 100, 400, 200], path: null, label: null, to: [600, 500, 700, 650], zoom: false, region: null },
+    { caption: 'One loop', say: 'Everything in this loop is in series.', box: null, path: null, label: null, to: null, zoom: false, region: [100, 100, 100, 900, 800, 900, 800, 100] },
+  ]);
+  assert.equal(labelled.label, 'R1 · 220 Ω');
+  assert.equal(labelled.zoom, true);
+  assert.deepEqual(linked.to, [600, 500, 700, 650]);
+  assert.equal(shaded.region.length, 4);
+  assert.equal(shaded.zoom, false);
+  // A connection or zoom needs a box; a region needs at least three points.
+  const [noBox] = validateAnnotations([{ caption: 'x', say: 'x', box: null, path: [1, 1, 50, 50], label: null, to: [1, 1, 5, 5], zoom: true, region: null }]);
+  assert.equal(noBox.to, null);
+  assert.equal(noBox.zoom, false);
+  assert.deepEqual(validateAnnotations([{ caption: 'x', say: 'x', box: null, path: null, label: null, to: null, zoom: false, region: [1, 1, 5, 5] }]), []);
+});
+
+test('explanation questions are recognised and sent to the stronger model', () => {
+  for (const question of ['How does the current go from A to B?', 'Explain this circuit', 'Trace the signal', 'walk me through this chart', 'how does this gear work?'])
+    assert.ok(looksLikeExplanation(question), question);
+  for (const question of ['What is this?', 'How do I open the cover?', 'Where can I buy this?'])
+    assert.ok(!looksLikeExplanation(question), question);
+  const settings = { ...loadConfig({ GEMINI_MODEL: 'gemini-3.5-flash-lite' }) };
+  assert.equal(settings.explainModel, 'gemini-3.8-flash');
+  assert.equal(modelFor({ question: 'Explain this diagram' }, settings).model, 'gemini-3.8-flash');
+  assert.equal(modelFor({ question: 'What is this?' }, settings).model, 'gemini-3.5-flash-lite');
+  assert.equal(loadConfig({ EXPLAIN_MODEL: 'same' }).explainModel, null);
+  const body = buildGeminiBody({ task: '', question: 'Explain', capturedAt: new Date().toISOString(), frameId: 'f',
+    selection: null, history: [], includeWebInfo: false, image: { mimeType: 'image/jpeg', base64: '/9j/2Q==' } }, 512);
+  assert.match(body.systemInstruction.parts[0].text, /REQUIRED for any "from X to Y"/);
+});
+
+test('if the explanation model is busy, the regular model answers instead', async () => {
+  const models = [];
+  const settings = { ...loadConfig({ GEMINI_MODEL: 'gemini-3.5-flash-lite' }), diagnosticLogPath: null, diagnosticLogger: () => {}, retryDelayMs: 0 };
+  const body = buildGeminiBody({ task: '', question: 'Explain this circuit', capturedAt: new Date().toISOString(), frameId: 'f',
+    selection: null, history: [], includeWebInfo: false, image: { mimeType: 'image/jpeg', base64: '/9j/2Q==' } }, 512);
+  const busy = { ok: false, status: 503, json: async () => ({ error: { code: 503, message: 'high demand' } }) };
+  const ok = { ok: true, json: async () => ({ candidates: [{ finishReason: 'STOP', content: { parts: [
+    { text: JSON.stringify({ answer: 'It flows from A to B.', box: null, targetLabel: null, needsClearerView: false }) }] } }] }) };
+  await generateWithSchemaFallback(body, modelFor({ question: 'Explain this circuit' }, settings), async (url) => {
+    models.push(url.match(/models\/([^:]+):/)[1]);
+    return url.includes('gemini-3.8-flash') ? busy : ok;
+  });
+  assert.deepEqual(models, ['gemini-3.8-flash', 'gemini-3.8-flash', 'gemini-3.5-flash-lite']);
 });

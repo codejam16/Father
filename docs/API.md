@@ -103,6 +103,38 @@ One to three frames, oldest first, about 1.5 s apart; the last is the current vi
 
 Each check is one Gemini request with up to three images. Movement detection thresholds are first guesses and need tuning on a device. A camera check is a visual judgement, not verification: it cannot confirm torque, alignment, seating or electrical state.
 
+## Tools checklist
+
+In guided mode, the agent response includes `toolsNeeded: [{ "name": "Phillips screwdriver", "visible": false }]` when steps start (at most 8 items, otherwise an empty list). The phone shows them as "You'll need" with ticks; the user can tick items themselves.
+
+### POST /tools
+
+"Check my tools": one camera image and the current item names.
+
+```json
+{ "items": ["Phillips screwdriver", "Plastic pry tool"], "goal": "Replace the laptop fan", "image": { "mimeType": "image/jpeg", "base64": "…", "width": 720, "height": 1280 } }
+```
+
+Response: `{ "mode": "gemini", "items": [{ "name": "Phillips screwdriver", "visible": true }, { "name": "Plastic pry tool", "visible": false }], "note": "The pry tool is missing." }`. The backend keeps the phone's list and names; the model only decides visibility. Mock mode marks everything visible. One AI request per scan.
+
+## Image detail and fingertip close-ups
+
+`/analyze` asks Gemini for high image detail (`generationConfig.mediaResolution = MEDIA_RESOLUTION_HIGH`, about 1120 tokens per image on Gemini 3). Set `IMAGE_DETAIL=medium|low|default` in `server/.env` to trade detail for speed.
+
+The camera captures at 1080p (falling back to 720p/VGA). The whole view is sent at up to 1280 px. When a question is asked and an index fingertip is visible (one Apple Vision hand-pose pass on the phone, nothing shown on screen), the request also carries an optional close-up:
+
+```json
+"detailImage": { "mimeType": "image/jpeg", "base64": "…", "width": 454, "height": 454, "box": [520, 310, 755, 690] }
+```
+
+`box` is where the close-up sits in the first image (0–1000, top-left origin). The model is told to read small labels from it and to return boxes in the first image's coordinates. Only the first look of a question carries it (not research refreshes or step checks).
+
+## Visual walkthroughs (explaining diagrams)
+
+When the user asks to explain a diagram, circuit, chart or how something flows, the answer includes `annotations`: 2–6 ordered beats, each `{ "caption": "Current flows through R1 to B", "box": null, "path": [[150, 200], [150, 600], [500, 600]] }` with either a `box` or a `path` of `[y, x]` points (0–1000, top-left origin) traced along the drawn lines in the direction of flow. Otherwise `annotations` is an empty list. Malformed beats are dropped; `needsClearerView` clears them.
+
+The phone freezes the exact photo that was analysed and plays the beats over it, roughly in step with the spoken answer: boxes light up with a number, paths draw themselves and then show moving dots in the direction of flow, earlier beats stay faded, and the caption shows below. Previous / Next / Replay and **Back to camera** are available; asking a new question closes it. Optional visuals per beat: `label` (a short tag drawn next to the part), `to` (a second box: a curved arrow is drawn from `box` to it, for connections), `zoom` (true: a magnified bubble of the part in `box`) and `region` (`[y, x]` points outlining an area to shade). A beat needs a `box`, `path` or `region`; `to` and `zoom` need a `box`. The model sends paths and regions as flat number lists (the schema stays flat, without nested size limits, which Gemini can reject as too complex); the backend returns `[y, x]` pairs. Paths and connections are drawn as arrows: an arrowhead traces the route, chevrons flow along it, and the end gets a solid arrowhead. Each beat also has `say`, the line spoken while it is shown; the phone speaks the `say` lines in order and moves to each beat when its line starts (word position for the iPhone voice, playback position for the Gemini voice). The caption bar shows the caption and the full line, and **All steps** lists every step to read or jump to. Every walkthrough is saved on the phone when it appears (photo + steps, newest 50, in Application Support/Walkthroughs); **Save** keeps it and returns to the camera, while the top-right **X** closes it and removes it again (for a reopened saved one, X only closes); the bottom-right thumbnail opens the saved list, where an explanation can be reopened (paused; Replay speaks it) or deleted. Demo mode shows a sample walkthrough for "explain…", "diagram", "circuit" or "how does…" questions (it does not read the image).
+
 ## Errors
 
 `{ "error": { "code": "provider_error", "message": "Gemini HTTP 429: Google quota or rate limit reached." } }`
