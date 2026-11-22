@@ -14,7 +14,7 @@ const input = (extra = {}) => ({
   history: [], ...extra,
 });
 
-function config(_t, extra = {}) { return { ...loadConfig({}), diagnosticLogPath: null, diagnosticLogger: () => {}, ...extra }; }
+function config(_t, extra = {}) { return { ...loadConfig({}), diagnosticLogPath: null, diagnosticLogger: () => {}, retryDelayMs: 0, ...extra }; }
 
 async function running(t, settings, dependencies) {
   const server = createApp(settings, dependencies);
@@ -153,8 +153,22 @@ test('Google failures produce actionable messages without forwarding upstream de
       assert.doesNotMatch(error.message, /private-key-do-not-print|project-private-data/);
       return true;
     });
-    assert.equal(calls, 1);
+    // Only Google's temporary overload errors are retried (twice), never quota or request errors.
+    assert.equal(calls, status >= 500 ? 3 : 1);
   }
+});
+
+test('a momentary Google overload is retried and then succeeds', async (t) => {
+  let calls = 0;
+  const result = await analyzeWithGemini(input(), config(t), async () => {
+    calls++;
+    if (calls === 1) return { ok: false, status: 503, json: async () => ({ error: { message: 'overloaded' } }) };
+    return { ok: true, json: async () => ({ candidates: [{ finishReason: 'STOP', content: { parts: [
+      { text: JSON.stringify({ answer: 'A connector.', box: null, targetLabel: null, needsClearerView: false }) },
+    ] } }] }) };
+  });
+  assert.equal(calls, 2);
+  assert.equal(result.answer, 'A connector.');
 });
 
 test('doctor checks metadata only and does not claim generation access', async (t) => {
@@ -320,4 +334,14 @@ test('incidental search results do not create an automatic web info strip', () =
   for (const webSummary of [undefined, null, '', '   ']) {
     assert.equal(extractWebInfo(candidate, { webSummary }), null);
   }
+});
+
+test('answers box what they are about, and identify the device instead of asking', () => {
+  const answer = validateAnswer({ answer: 'Click System Settings.', needsClearerView: false, targetLabel: 'System Settings icon', box: [100, 100, 300, 300] });
+  assert.deepEqual(answer.target.box, [100, 100, 300, 300]);
+  const body = buildGeminiBody({ task: '', question: 'How do I change my wallpaper?', capturedAt: new Date().toISOString(), frameId: 'f',
+    selection: null, history: [], includeWebInfo: false, image: { mimeType: 'image/jpeg', base64: '/9j/2Q==' } }, 512);
+  const text = body.systemInstruction.parts[0].text;
+  assert.match(text, /most useful things you do/);
+  assert.match(text, /never ask the user to confirm something the image already shows/);
 });

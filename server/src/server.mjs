@@ -5,6 +5,7 @@ import { APIError, validateRequest } from './contract.mjs';
 import { analyzeWithGemini, demoAnswer } from './gemini.mjs';
 import { TaskSessions } from './task-session.mjs';
 import { runAgent } from './agent.mjs';
+import { checkStepWithGemini, demoCheck, validateCheckRequest } from './step-check.mjs';
 
 // Developer diagnostics stay in logs; these short messages are safe to read aloud.
 function userErrorMessage(error) {
@@ -85,7 +86,7 @@ async function readJSON(request) {
 }
 
 export function createApp(config, {
-  analyze = analyzeWithGemini, agent = runAgent,
+  analyze = analyzeWithGemini, agent = runAgent, check = checkStepWithGemini,
   sessions = new TaskSessions(),
 } = {}) {
   const server = createServer(async (request, response) => {
@@ -94,7 +95,7 @@ export function createApp(config, {
     const controller = new AbortController();
     const deadline = setTimeout(() => controller.abort(), 45_000);
     response.on('finish', () => clearTimeout(deadline));
-    const route = request.url === '/analyze' ? '/analyze' : request.url === '/health' ? '/health' : '/other';
+    const route = ['/analyze', '/check', '/health'].includes(request.url) ? request.url : '/other';
     console.log(`[${new Date().toISOString()}] Request received: ${route} [${trace.requestId}]`);
     response.on('close', () => {
       clearTimeout(deadline);
@@ -104,7 +105,9 @@ export function createApp(config, {
       }
     });
     const send = (status, data) => {
-      console.log(`Request completed: ${route} [${trace.requestId}] googleCalls=${trace.calls} HTTP ${status} ${data.error?.code ?? 'ok'} (${Date.now() - started}ms)`);
+      const circle = data.error ? '' : data.target ? ` circle="${String(data.target.label).slice(0, 60)}"` : ' circle=none';
+      const step = data.status ? ` step=${data.status}` : '';
+      console.log(`Request completed: ${route} [${trace.requestId}] googleCalls=${trace.calls} HTTP ${status} ${data.error?.code ?? 'ok'}${step}${circle} (${Date.now() - started}ms)`);
       if (response.destroyed) return;
       response.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
       response.end(JSON.stringify(data));
@@ -113,11 +116,18 @@ export function createApp(config, {
       if (request.method === 'GET' && request.url === '/health') {
         return send(200, { status: 'ok', mode: config.mode });
       }
-      if (request.method !== 'POST' || request.url !== '/analyze') {
+      if (request.method !== 'POST' || !['/analyze', '/check'].includes(request.url)) {
         throw new APIError(404, 'not_found', 'Endpoint not found.');
       }
       if (!authorized(request, config.appToken)) throw new APIError(401, 'unauthorized', 'Check the connection token in Settings.');
       if (!request.headers['content-type']?.startsWith('application/json')) throw new APIError(415, 'invalid_content_type', 'Use application/json.');
+      if (request.url === '/check') {
+        const input = validateCheckRequest(await readJSON(request));
+        const result = config.mode === 'gemini'
+          ? await check(input, { ...config, signal: controller.signal, trace })
+          : demoCheck(input);
+        return send(200, { stepId: input.stepId, mode: config.mode, ...result });
+      }
       const input = validateRequest(await readJSON(request));
       let result;
       if (config.mode === 'gemini') {

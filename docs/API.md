@@ -72,6 +72,37 @@ If highlighting is useful, `target` is `{ "label": "USB connector", "box": [100,
 - Valid JSON/coordinates do not establish correct identification. No model-generated numeric confidence is treated as calibrated certainty.
 - Identifying a specific visible object should return a target when it can be located. General or ambiguous answers should not invent a target.
 
+## Guided steps
+
+With **Guided steps** on (app setting, default on), `/analyze` requests include `"guided": true`. The assistant stays open-ended: only when the user asks how to do something hands-on does it create `memory.plan` (short single-action steps) and state just the first step; other questions get normal answers and no plan. Saying "stop" or tapping × on the step card ends the steps (the app confirms the remaining step IDs). The phone shows that step and watches the camera **on the device**: a cheap 16×12 brightness grid detects movement followed by about 1.2 s of stillness on a view that differs from the step's starting view. Only then, and at most every 8 s (15 per step), does it call `/check`. Saying "done", "skip" or "repeat", or tapping the step card's buttons, also works. Completion still flows through `confirmedStepIds`; the model never marks steps complete itself.
+
+### POST /check
+
+Same headers and authentication as `/analyze`.
+
+```json
+{
+  "stepId": "step-2",
+  "step": "Unscrew the four screws on the back cover.",
+  "goal": "Replace the laptop fan",
+  "task": "",
+  "userSaysDone": false,
+  "frames": [
+    { "frameId": "…", "capturedAt": "2026-11-21T17:30:00Z", "image": { "mimeType": "image/jpeg", "base64": "…", "width": 480, "height": 640 } }
+  ]
+}
+```
+
+One to three frames, oldest first, about 1.5 s apart; the last is the current view. Response:
+
+```json
+{ "stepId": "step-2", "mode": "gemini", "status": "done", "feedback": "All four screws are out.", "target": null }
+```
+
+`status` is `done`, `in_progress` (normal while working; empty feedback), `problem` (feedback says how to fix; may include a `target` box in the **last** frame), or `unclear` (feedback says what to show). The phone advances on `done`; on `userSaysDone` it also advances on `unclear`, but not on `problem` or `in_progress`. Automatic checks that fail are silent. Mock mode identifies nothing and returns `done` only when `userSaysDone` is true; the app's local demo mode also counts a step's second automatic check as done and supplies three practice steps.
+
+Each check is one Gemini request with up to three images. Movement detection thresholds are first guesses and need tuning on a device. A camera check is a visual judgement, not verification: it cannot confirm torque, alignment, seating or electrical state.
+
 ## Errors
 
 `{ "error": { "code": "provider_error", "message": "Gemini HTTP 429: Google quota or rate limit reached." } }`

@@ -1,3 +1,4 @@
+import AVFoundation
 import SwiftUI
 import WebKit
 
@@ -6,6 +7,7 @@ struct SettingsView: View {
     @ObservedObject var settings: ConnectionSettings
     @ObservedObject var model: AssistantViewModel
     @Environment(\.dismiss) private var dismiss
+    private let voices = SpeechService.availableVoices()
 
     var body: some View {
         NavigationStack {
@@ -66,9 +68,30 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    Toggle("Read replies aloud", isOn: $settings.spokenReplies)
+                    Toggle("Guided steps", isOn: $settings.guidedMode)
                 } footer: {
-                    Text("When connected, questions send a camera image, recent conversation, and task context to your backend and AI provider. Research may generate web searches. Task memory expires on the backend after inactivity and resets when you start a new task. Demo mode stays on the phone.")
+                    Text("Ask anything as usual. When you ask how to do something hands-on (fix, install, take apart…), the assistant switches to one step at a time and watches the camera, moving on when a step looks done. Say “done”, “skip”, “repeat” or “stop” at any time, or keep asking questions. Movement detection stays on the phone; each step check is one AI request.")
+                }
+                Section {
+                    Toggle("Read replies aloud", isOn: $settings.spokenReplies)
+                    Toggle("Interrupt by talking", isOn: $settings.interruptionsEnabled)
+                        .disabled(!settings.spokenReplies)
+                    Picker("Voice", selection: $settings.voiceIdentifier) {
+                        Text("Automatic (most natural)").tag("")
+                        ForEach(voices, id: \.identifier) { voice in
+                            Text("\(voice.name) · \(SpeechService.qualityLabel(voice)) · \(voice.language)").tag(voice.identifier)
+                        }
+                    }
+                    .disabled(!settings.spokenReplies)
+                    Button("Play sample") { model.speech.preview(identifier: settings.voiceIdentifier) }
+                        .disabled(!settings.spokenReplies)
+                    if !voices.contains(where: { $0.quality == .premium }) {
+                        Text("For a much more natural voice, download a Premium voice: iPhone Settings › Accessibility › Spoken Content › Voices › English (for example Ava, Zoe or Evan, Premium). Then come back and choose it here, or leave Automatic.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                } footer: {
+                    Text("With Interrupt by talking on, the microphone stays on while replies play (the phone cancels its own voice), so you can say “wait” or ask something new to cut the reply off. Turn it off if it interrupts itself in a noisy room. When connected, questions send a camera image, recent conversation, and task context to your backend and AI provider. Research may generate web searches. Task memory expires on the backend after inactivity and resets when you start a new task. Demo mode stays on the phone.")
                 }
                 Section {
                     Toggle("Captions", isOn: $settings.captionsEnabled)

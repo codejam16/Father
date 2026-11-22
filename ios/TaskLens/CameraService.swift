@@ -22,6 +22,19 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
         let pixels: CVPixelBuffer
     }
 
+    /// The newest frame at full resolution, for questions and step checks. Only this one camera
+    /// buffer is retained; the ring below holds small copies for tracking and change detection.
+    private var latestFull: (id: String, date: Date, pixels: CVPixelBuffer)?
+    private var lastAspect: CGFloat = 0
+    /// Frames that were sent to the AI, kept even after they leave the ring, so a slow answer's box still has its frame.
+    private var sentFrames: [BufferedFrame] = []
+
+    private func rememberSent(_ frame: BufferedFrame) {
+        guard !sentFrames.contains(where: { $0.id == frame.id }) else { return }
+        sentFrames.append(frame)
+        if sentFrames.count > 6 { sentFrames.removeFirst(sentFrames.count - 6) }
+    }
+
     private let queue = DispatchQueue(label: "tasklens.camera", qos: .userInitiated)
     private let context = CIContext()
     private var configured = false
@@ -57,7 +70,10 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
             guard let self else { return }
             self.session.stopRunning()
             self.frames.removeAll()
+            self.sentFrames.removeAll()
+            self.latestFull = nil
             self.lastFrameTime = -Double.infinity
+            self.lastSignature = nil
             self.resetTracking()
             DispatchQueue.main.async { self.isRunning = false; self.status = "Camera paused" }
         }
@@ -66,7 +82,6 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
     private func configure() throws {
         session.beginConfiguration()
         defer { session.commitConfiguration() }
-        session.sessionPreset = .vga640x480
         guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: desiredPosition) else {
             throw TaskLensError.message("This camera is unavailable. Use a physical iPhone.")
         }
@@ -74,6 +89,8 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
         guard session.canAddInput(input) else { throw TaskLensError.message("Could not open the camera.") }
         session.addInput(input)
         self.input = input
+        // 720p: a much sharper preview and clearer images for the AI. Older/limited cameras fall back to VGA.
+        session.sessionPreset = session.canSetSessionPreset(.hd1280x720) ? .hd1280x720 : .vga640x480
         let output = AVCaptureVideoDataOutput()
         output.alwaysDiscardsLateVideoFrames = true
         output.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
@@ -131,7 +148,11 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
             let oriented = self.orientOutput()
             self.session.commitConfiguration()
             self.desiredPosition = next
-            // Frames from the previous camera must not be used for questions or tracking.
+            // Frames from the previous camera must not be used for questions, tracking or watching.
+            self.lastSignature = nil
+            self.watchReference = nil
+            self.latestFull = nil
+            self.sentFrames.removeAll()
             self.frames.removeAll()
             self.lastFrameTime = -Double.infinity
             self.resetTracking()
@@ -146,20 +167,177 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
         let time = CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sampleBuffer))
         guard time - lastFrameTime >= 0.16, let source = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         lastFrameTime = time
-        // Copy out of AVFoundation's pool: retaining a ring of capture buffers can starve it.
+        let width = CVPixelBufferGetWidth(source)
+        let height = CVPixelBufferGetHeight(source)
+        guard width > 0, height > 0 else { return }
+        let aspect = CGFloat(width) / CGFloat(height)
+        if abs(aspect - lastAspect) > 0.001 {
+            lastAspect = aspect
+            DispatchQueue.main.async { self.aspectRatio = aspect }
+        }
+        // Copy out of AVFoundation's pool (retaining a ring of capture buffers can starve it),
+        // scaled down to at most 640 px: plenty for tracking and change detection, and light on memory.
+        let scale = min(1, 640 / CGFloat(max(width, height)))
+        let smallWidth = max(1, Int((CGFloat(width) * scale).rounded()))
+        let smallHeight = max(1, Int((CGFloat(height) * scale).rounded()))
         var owned: CVPixelBuffer?
         let attributes = [kCVPixelBufferIOSurfacePropertiesKey as String: [:]] as CFDictionary
-        guard CVPixelBufferCreate(kCFAllocatorDefault, CVPixelBufferGetWidth(source), CVPixelBufferGetHeight(source),
+        guard CVPixelBufferCreate(kCFAllocatorDefault, smallWidth, smallHeight,
                                   kCVPixelFormatType_32BGRA, attributes, &owned) == kCVReturnSuccess,
               let pixels = owned else { return }
-        context.render(CIImage(cvPixelBuffer: source), to: pixels)
+        var image = CIImage(cvPixelBuffer: source)
+        if scale < 1 { image = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale)) }
+        context.render(image, to: pixels)
         let frame = BufferedFrame(id: UUID().uuidString, date: Date(), time: time, pixels: pixels)
+        latestFull = (frame.id, frame.date, source)
         frames.append(frame)
-        if frames.count > 36 { frames.removeFirst(frames.count - 36) }
+        // About 10 seconds of small frames, so slow answers can still be matched to the view they describe.
+        if frames.count > 60 { frames.removeFirst(frames.count - 60) }
+        observeActivity(pixels, time: time)
         if tracker != nil {
             if Date() >= trackingUntil { resetTracking() }
             else { advanceTracker(on: pixels) }
         }
+    }
+
+    // MARK: Guided-mode watching (on the phone, no network)
+
+    /// Called on the main thread when the view settles after the user was working in it.
+    var onSettled: (() -> Void)?
+    private var watching = false
+    private var lastSignature: [Float]?
+    private var watchReference: [Float]?
+    private var stillSince: Double?
+    private var changedSince: Double?
+    // Tuning values (0–255 brightness units); validate on a real device.
+    /// Frame-to-frame difference above this counts as movement (tolerates hand-held jitter).
+    private static let motionThreshold: Float = 9
+    /// Difference from the step's reference view that counts as "something changed" (a click, a part removed).
+    private static let changeThreshold: Float = 3
+    private static let settleSeconds = 1.0
+    /// A change that persists this long triggers a check even if the view never stops moving.
+    private static let changeHoldSeconds = 4.0
+
+    /// Starts or stops watching. `resetReference` marks the current view as the step's starting point.
+    func setWatching(_ enabled: Bool, resetReference: Bool) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            let changed = enabled != self.watching
+            if resetReference || (enabled && changed) { self.watchReference = self.lastSignature }
+            if resetReference || changed {
+                self.stillSince = nil
+                self.changedSince = nil
+            }
+            self.watching = enabled
+        }
+    }
+
+    /// A check is worth making when the view differs from the step's starting view and has either
+    /// settled (the user stopped moving, e.g. after a click or removing a part) or stayed different for a
+    /// few seconds. Small screen changes count too, not only big hand movements.
+    private func observeActivity(_ pixels: CVPixelBuffer, time: Double) {
+        guard let signature = Self.signature(of: pixels) else { return }
+        let previous = lastSignature
+        lastSignature = signature
+        guard watching, let previous else { return }
+        guard let reference = watchReference else {
+            watchReference = signature
+            return
+        }
+        if Self.difference(signature, previous) > Self.motionThreshold {
+            stillSince = nil
+        } else if stillSince == nil {
+            stillSince = time
+        }
+        guard Self.difference(signature, reference) > Self.changeThreshold else {
+            changedSince = nil
+            return
+        }
+        if changedSince == nil { changedSince = time }
+        let settled = stillSince.map { time - $0 >= Self.settleSeconds } ?? false
+        let persistent = changedSince.map { time - $0 >= Self.changeHoldSeconds } ?? false
+        guard settled || persistent else { return }
+        watchReference = signature
+        changedSince = nil
+        DispatchQueue.main.async { self.onSettled?() }
+    }
+
+    /// A 16×12 grid of local brightness averages, with the overall brightness removed so
+    /// auto-exposure changes are not mistaken for activity.
+    private static func signature(of buffer: CVPixelBuffer) -> [Float]? {
+        CVPixelBufferLockBaseAddress(buffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+        guard let base = CVPixelBufferGetBaseAddress(buffer) else { return nil }
+        let width = CVPixelBufferGetWidth(buffer)
+        let height = CVPixelBufferGetHeight(buffer)
+        let rowBytes = CVPixelBufferGetBytesPerRow(buffer)
+        guard width > 8, height > 8 else { return nil }
+        let bytes = base.assumingMemoryBound(to: UInt8.self)
+        var values: [Float] = []
+        values.reserveCapacity(192)
+        for gridY in 0..<12 {
+            for gridX in 0..<16 {
+                let centerX = (2 * gridX + 1) * width / 32
+                let centerY = (2 * gridY + 1) * height / 24
+                var sum = 0
+                for offsetY in -1...1 {
+                    for offsetX in -1...1 {
+                        let x = min(max(centerX + offsetX * 2, 0), width - 1)
+                        let y = min(max(centerY + offsetY * 2, 0), height - 1)
+                        let pixel = bytes + y * rowBytes + x * 4
+                        sum += Int(pixel[0]) + Int(pixel[1]) + Int(pixel[2])
+                    }
+                }
+                values.append(Float(sum) / 27)
+            }
+        }
+        let mean: Float = values.reduce(0, +) / Float(values.count)
+        return values.map { $0 - mean }
+    }
+
+    private static func difference(_ first: [Float], _ second: [Float]) -> Float {
+        guard first.count == second.count, !first.isEmpty else { return Float.greatestFiniteMagnitude }
+        var total: Float = 0
+        for index in first.indices { total += abs(first[index] - second[index]) }
+        return total / Float(first.count)
+    }
+
+    /// Up to `count` recent frames about `spacing` seconds apart, oldest first, for a step check.
+    func recentFrames(count: Int, spacing: TimeInterval) async throws -> [CapturedFrame] {
+        try await withCheckedThrowingContinuation { continuation in
+            queue.async { [weak self] in
+                guard let self, let latest = self.frames.last, self.session.isRunning,
+                      Date().timeIntervalSince(latest.date) < 1 else {
+                    continuation.resume(throwing: TaskLensError.message("Wait for a fresh camera view, then try again."))
+                    return
+                }
+                var picked: [BufferedFrame] = []
+                for index in stride(from: count - 1, through: 0, by: -1) {
+                    let target = latest.date.addingTimeInterval(-spacing * Double(index))
+                    let nearest = self.frames.min(by: {
+                        abs($0.date.timeIntervalSince(target)) < abs($1.date.timeIntervalSince(target))
+                    })
+                    if let nearest, !picked.contains(where: { $0.id == nearest.id }) { picked.append(nearest) }
+                }
+                if let newest = picked.last { self.rememberSent(newest) }
+                let encoded: [CapturedFrame] = picked.compactMap { self.encode($0, quality: 0.75) }
+                if encoded.isEmpty {
+                    continuation.resume(throwing: TaskLensError.message("Could not capture the camera view."))
+                } else {
+                    continuation.resume(returning: encoded)
+                }
+            }
+        }
+    }
+
+    /// JPEG for the AI. The newest frame is encoded at full resolution; older ones from the small copies.
+    /// Boxes are normalized (0–1000), so both map onto the same tracked frame.
+    private func encode(_ frame: BufferedFrame, quality: CGFloat) -> CapturedFrame? {
+        let pixels = latestFull?.id == frame.id ? latestFull!.pixels : frame.pixels
+        let image = CIImage(cvPixelBuffer: pixels)
+        guard let cgImage = context.createCGImage(image, from: image.extent),
+              let jpeg = UIImage(cgImage: cgImage).jpegData(compressionQuality: quality) else { return nil }
+        return CapturedFrame(id: frame.id, capturedAt: frame.date, jpeg: jpeg, width: cgImage.width, height: cgImage.height)
     }
 
     func snapshot() async throws -> CapturedFrame {
@@ -170,25 +348,34 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
                     continuation.resume(throwing: TaskLensError.message("Wait for a fresh camera view, then try again."))
                     return
                 }
-                let image = CIImage(cvPixelBuffer: frame.pixels)
-                guard let cgImage = self.context.createCGImage(image, from: image.extent),
-                      let jpeg = UIImage(cgImage: cgImage).jpegData(compressionQuality: 0.75) else {
+                self.rememberSent(frame)
+                guard let captured = self.encode(frame, quality: 0.75) else {
                     continuation.resume(throwing: TaskLensError.message("Could not capture the camera view."))
                     return
                 }
-                continuation.resume(returning: CapturedFrame(id: frame.id, capturedAt: frame.date, jpeg: jpeg,
-                                                            width: cgImage.width, height: cgImage.height))
+                continuation.resume(returning: captured)
             }
         }
     }
 
     /// Seeds the original image and replays retained frames before going live.
     /// An expired source frame is never interpreted as a current-frame location.
-    func point(at box: NormalizedBox, frameID: String, label: String, source: Highlight.Source) {
+    /// `duration`: how long the highlight follows the object before it fades (longer during guided steps).
+    func point(at box: NormalizedBox, frameID: String, label: String, source: Highlight.Source, duration: TimeInterval = 5) {
         queue.async { [weak self] in
             guard let self else { return }
             self.resetTracking()
-            guard let index = self.frames.firstIndex(where: { $0.id == frameID }), self.session.isRunning else {
+            guard self.session.isRunning, let latest = self.frames.last else { return }
+            // The frame the box was drawn on: still in the ring, or kept because it was sent to the AI.
+            let sourceFrame: BufferedFrame
+            let replay: [BufferedFrame]
+            if let index = self.frames.firstIndex(where: { $0.id == frameID }) {
+                sourceFrame = self.frames[index]
+                replay = Array(self.frames[(index + 1)...])
+            } else if let kept = self.sentFrames.first(where: { $0.id == frameID }) {
+                sourceFrame = kept
+                replay = self.frames
+            } else {
                 self.publishStatus("The view changed. Ask again to locate the item.")
                 return
             }
@@ -196,25 +383,73 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
             self.trackingID = id
             self.trackingLabel = label
             self.trackingSource = source
-            self.trackingUntil = Date().addingTimeInterval(5)
+            self.trackingUntil = Date().addingTimeInterval(duration)
+
+            // Follow the object from the answer's frame to now.
             let request = VNTrackObjectRequest(detectedObjectObservation: VNDetectedObjectObservation(boundingBox: box.visionRect))
             request.trackingLevel = .accurate
             self.tracker = request
             self.sequence = VNSequenceRequestHandler()
-            for frame in self.frames[index...] {
+            self.advanceTracker(on: sourceFrame.pixels, publish: false)
+            for frame in replay {
                 guard self.tracker != nil else { break }
                 self.advanceTracker(on: frame.pixels, publish: false)
             }
-            if self.tracker != nil,
-               let result = self.tracker?.results?.first as? VNDetectedObjectObservation,
-               let trackedBox = NormalizedBox.fromVision(result.boundingBox) {
-                self.publishHighlight(trackedBox)
+            var tracked: NormalizedBox?
+            if self.tracker != nil, let result = self.tracker?.results?.first as? VNDetectedObjectObservation {
+                tracked = NormalizedBox.fromVision(result.boundingBox)
             }
-            self.queue.asyncAfter(deadline: .now() + 5) { [weak self] in
+
+            // If the camera has barely moved since the answer's frame, the AI's own box is still right.
+            // Use it when following failed, and when "following" wandered off while the view stayed put
+            // (drifting onto a similar-looking thing, common on screens).
+            let viewUnchanged: Bool = {
+                guard let before = Self.signature(of: sourceFrame.pixels), let now = Self.signature(of: latest.pixels) else { return false }
+                return Self.difference(before, now) < 5
+            }()
+            let shown: NormalizedBox
+            if let tracked, !(viewUnchanged && Self.centerDistance(tracked, box) > 0.12) {
+                shown = tracked
+            } else if viewUnchanged {
+                shown = box
+                self.restartTracking(at: box, on: latest)
+            } else {
+                self.resetTracking()
+                self.publishStatus("The view changed. Ask again to locate the item.")
+                return
+            }
+            // A failed replay may have cleared these; the highlight still needs its expiry.
+            self.trackingID = id
+            self.trackingLabel = label
+            self.trackingSource = source
+            self.publishHighlight(shown)
+            self.queue.asyncAfter(deadline: .now() + duration) { [weak self] in
                 guard let self, self.trackingID == id else { return }
                 self.resetTracking()
             }
         }
+    }
+
+    /// Starts following `box` from the latest frame. If that fails, the box stays where it is until it expires.
+    private func restartTracking(at box: NormalizedBox, on frame: BufferedFrame) {
+        let request = VNTrackObjectRequest(detectedObjectObservation: VNDetectedObjectObservation(boundingBox: box.visionRect))
+        request.trackingLevel = .accurate
+        let handler = VNSequenceRequestHandler()
+        do {
+            try handler.perform([request], on: frame.pixels, orientation: .up)
+            if let result = request.results?.first as? VNDetectedObjectObservation { request.inputObservation = result }
+            tracker = request
+            sequence = handler
+        } catch {
+            tracker = nil
+            sequence = nil
+        }
+    }
+
+    private static func centerDistance(_ first: NormalizedBox, _ second: NormalizedBox) -> CGFloat {
+        let a = first.unitRect
+        let b = second.unitRect
+        return hypot(a.midX - b.midX, a.midY - b.midY)
     }
 
     private func advanceTracker(on pixels: CVPixelBuffer, publish: Bool = true) {
@@ -222,7 +457,9 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
         do {
             try sequence.perform([tracker], on: pixels, orientation: .up)
             guard let result = tracker.results?.first as? VNDetectedObjectObservation,
-                  result.confidence >= 0.5,
+                  // Replaying the seconds the AI was thinking is bumpier (blur, motion), so it gets a
+                  // more forgiving threshold; live tracking stays moderately strict to limit drift.
+                  result.confidence >= (publish ? 0.5 : 0.3),
                   let box = NormalizedBox.fromVision(result.boundingBox) else {
                 resetTracking()
                 publishStatus("Lost the pointer. Ask again or point to the item.")

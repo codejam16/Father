@@ -63,5 +63,12 @@ Use one clear, low-risk task and distinctive objects. Confirm that identifying a
 - Move the camera during research. Confirm a fresh frame is sent after research and old selected-image coordinates are never drawn on the new view. Keep in mind the existing frame-ring tracking lifetime.
 - Check a task plan in settings. It must not mark suggested steps complete automatically. Mark one completed, ask another question and confirm its state persists. Start a new task/change notes and confirm old context/sources clear.
 - Turn online research off. Camera answers and memory should still work without search calls. Demo mode must make zero provider calls regardless of this toggle.
-- Test bad source metadata, Google quota errors, expired continuations/backend restart, cancellation, network loss, and backgrounding during research. Do not automatically retry failed provider calls. Errors should be spoken (if enabled) and visible under Last issue.
+- Test bad source metadata, Google quota errors, expired continuations/backend restart, cancellation, network loss, and backgrounding during research. Only Google 500/503 "busy" responses are retried automatically (twice, about 1 s and 2 s apart); quota, auth, request and timeout failures are not retried. Errors should be spoken (if enabled) and visible under Last issue.
 - Measure the calls and latency for direct identification vs search plus document reading. Budget per model call, not per spoken question. Do not promise free research without verifying the account's tool quota/pricing.
+
+## Interrupting spoken replies
+
+- With the speaker at normal and high volume, let a long reply play without speaking: it must not interrupt itself. If it does, note the words it heard and the volume.
+- Say “wait” mid-reply: playback stops within about a second and nothing is sent. Ask a real question mid-reply: playback stops and the question is sent after the usual pause.
+- Repeat with AirPods/Bluetooth, in a noisy room, and with the phone muted (muted must never listen during replies). Check reply volume and quality with voice processing on.
+

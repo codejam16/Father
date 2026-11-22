@@ -153,10 +153,13 @@ struct AnalysisRequest: Encodable {
     let researchEnabled: Bool
     let confirmedStepIds: [String]
     let includeWebInfo: Bool
+    let guided: Bool
 
     init(frame: CapturedFrame, question: String, task: String, history: [ChatMessage], selection: NormalizedBox?,
          sessionId: String? = nil, continuationId: String? = nil,
-         researchEnabled: Bool = true, confirmedStepIds: [String] = [], includeWebInfo: Bool = false) {
+         researchEnabled: Bool = true, confirmedStepIds: [String] = [], includeWebInfo: Bool = false,
+         guided: Bool = false) {
+        self.guided = guided
         self.frameId = frame.id
         self.capturedAt = ISO8601DateFormatter().string(from: frame.capturedAt)
         self.question = question
@@ -170,6 +173,49 @@ struct AnalysisRequest: Encodable {
         self.confirmedStepIds = confirmedStepIds
         self.includeWebInfo = includeWebInfo
     }
+}
+
+/// Guided mode: "is the current step done?", with a few recent frames, oldest first.
+struct StepCheckFrame: Encodable {
+    let frameId: String
+    let capturedAt: String
+    let image: ImagePayload
+
+    init(_ frame: CapturedFrame) {
+        frameId = frame.id
+        capturedAt = ISO8601DateFormatter().string(from: frame.capturedAt)
+        image = ImagePayload(base64: frame.jpeg.base64EncodedString(), width: frame.width, height: frame.height)
+    }
+}
+
+struct StepCheckRequest: Encodable {
+    let stepId: String
+    let step: String
+    let goal: String
+    let task: String
+    /// The step after this one, so a "done" check can highlight where to act next.
+    let nextStep: String
+    let frames: [StepCheckFrame]
+    let userSaysDone: Bool
+
+    init(step: TaskStep, next: TaskStep?, goal: String, task: String, frames: [CapturedFrame], userSaysDone: Bool) {
+        stepId = step.id
+        nextStep = String((next?.text ?? "").prefix(400))
+        self.step = String(step.text.prefix(400))
+        self.goal = String(goal.prefix(600))
+        self.task = String(task.prefix(4000))
+        self.frames = frames.suffix(3).map { StepCheckFrame($0) }
+        self.userSaysDone = userSaysDone
+    }
+}
+
+/// status is "done", "in_progress", "problem" or "unclear".
+struct StepCheckResponse: Decodable {
+    let stepId: String
+    let mode: String
+    let status: String
+    let feedback: String
+    var target: Target? = nil
 }
 
 struct Target: Codable {

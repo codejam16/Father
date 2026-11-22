@@ -64,6 +64,14 @@ export function continuation(session, request, researchSteps) {
   return id;
 }
 
+/// Marks steps the USER said they finished ("ok", "done", "what's next") as completed.
+/// Only ids that exist in the plan are used; the model never completes steps from images alone.
+export function applyUserCompletedSteps(memory, ids) {
+  if (!Array.isArray(ids)) return memory;
+  const wanted = new Set(ids.filter((id) => typeof id === 'string').slice(0, 10));
+  return { ...memory, plan: memory.plan.map((step) => (wanted.has(step.id) ? { ...step, completed: true } : step)) };
+}
+
 export function mergeMemory(previous, proposed) {
   const fail = () => { throw new APIError(502, 'invalid_task_state', 'The assistant returned invalid task details. Please try again.'); };
   const short = (value, max) => typeof value === 'string' && value.length <= max;

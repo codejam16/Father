@@ -24,14 +24,8 @@ export function validateBox(box) {
   return box;
 }
 
-export function validateRequest(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) invalid('Expected a JSON object.');
-  const frameId = text(value.frameId, 'frameId', 80);
-  const capturedAt = text(value.capturedAt, 'capturedAt', 40);
-  if (Number.isNaN(Date.parse(capturedAt))) invalid('capturedAt must be an ISO date.');
-  const question = text(value.question, 'question', 1500);
-  const task = text(value.task ?? '', 'task', 4000, true);
-  const image = value.image;
+/// Shared JPEG checks for every camera image that crosses the API boundary.
+export function validateImage(image) {
   if (!image || image.mimeType !== 'image/jpeg') invalid('A JPEG image is required.');
   if (![image.width, image.height].every((n) => Number.isInteger(n) && n > 0 && n <= 2048)) {
     invalid('Image dimensions must be integers between 1 and 2048.');
@@ -43,6 +37,17 @@ export function validateRequest(value) {
       bytes[0] !== 0xff || bytes[1] !== 0xd8 || bytes.at(-2) !== 0xff || bytes.at(-1) !== 0xd9) {
     invalid('Image must be a base64-encoded JPEG smaller than 1.5 MB.');
   }
+  return image;
+}
+
+export function validateRequest(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) invalid('Expected a JSON object.');
+  const frameId = text(value.frameId, 'frameId', 80);
+  const capturedAt = text(value.capturedAt, 'capturedAt', 40);
+  if (Number.isNaN(Date.parse(capturedAt))) invalid('capturedAt must be an ISO date.');
+  const question = text(value.question, 'question', 1500);
+  const task = text(value.task ?? '', 'task', 4000, true);
+  const image = validateImage(value.image);
   const history = value.history ?? [];
   if (!Array.isArray(history) || history.length > 8) invalid('history can contain at most eight messages.');
   const normalizedHistory = history.map((message) => {
@@ -51,6 +56,7 @@ export function validateRequest(value) {
   });
   const selection = value.selection == null ? null : validateBox(value.selection);
   if (value.includeWebInfo !== undefined && typeof value.includeWebInfo !== 'boolean') invalid('includeWebInfo must be a boolean.');
+  if (value.guided !== undefined && typeof value.guided !== 'boolean') invalid('guided must be a boolean.');
   const sessionId = value.sessionId ?? null;
   const continuationId = value.continuationId ?? null;
   const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -61,7 +67,7 @@ export function validateRequest(value) {
   if (!Array.isArray(confirmedStepIds) || confirmedStepIds.length > 10 ||
       !confirmedStepIds.every((id) => typeof id === 'string' && /^[a-zA-Z0-9_-]{1,40}$/.test(id))) invalid('Invalid confirmedStepIds.');
   return { frameId, capturedAt, question, task, image, history: normalizedHistory, selection,
-    sessionId, continuationId, researchEnabled: value.researchEnabled ?? true, confirmedStepIds, includeWebInfo: value.includeWebInfo === true };
+    sessionId, continuationId, researchEnabled: value.researchEnabled ?? true, confirmedStepIds, includeWebInfo: value.includeWebInfo === true, guided: value.guided === true };
 }
 
 // A schema constrains shape; validate the model's values again before using them.
@@ -76,6 +82,9 @@ export const answerSchema = {
   required: ['answer', 'targetLabel', 'box', 'needsClearerView'],
   additionalProperties: false,
 };
+
+export const boxInstruction = `Highlighting is one of the most useful things you do. When the user asks for help with, about or where something visible is, return targetLabel and box for the item your answer is about. For on-screen tasks, box the exact button, menu item, icon or setting to click or tap next.
+Box accurately: find the item by its distinguishing features (shape, colour, text on it, position relative to nearby things) and put the box edges on its visible outline, not around the general area. When several similar items exist, box the specific one meant.`;
 
 export function validateAnswer(value) {
   if (!value || typeof value.answer !== 'string' || !value.answer.trim() || value.answer.length > 2000 ||

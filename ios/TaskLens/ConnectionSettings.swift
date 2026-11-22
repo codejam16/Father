@@ -9,6 +9,10 @@ final class ConnectionSettings: ObservableObject {
     @Published var serverURL: String { didSet { defaults.set(serverURL, forKey: "serverURL") } }
     @Published var task: String { didSet { defaults.set(task, forKey: "task") } }
     @Published var spokenReplies: Bool { didSet { defaults.set(spokenReplies, forKey: "spokenReplies") } }
+    @Published var guidedMode: Bool { didSet { defaults.set(guidedMode, forKey: "guidedMode") } }
+    @Published var interruptionsEnabled: Bool { didSet { defaults.set(interruptionsEnabled, forKey: "interruptionsEnabled") } }
+    /// Empty means "Automatic": the most natural installed English voice.
+    @Published var voiceIdentifier: String { didSet { defaults.set(voiceIdentifier, forKey: "voiceIdentifier") } }
     @Published var captionsEnabled: Bool { didSet { defaults.set(captionsEnabled, forKey: "captionsEnabled") } }
     @Published var webInfoEnabled: Bool { didSet { defaults.set(webInfoEnabled, forKey: "webInfoEnabled") } }
     @Published var token: String { didSet { saveToken() } }
@@ -24,6 +28,9 @@ final class ConnectionSettings: ObservableObject {
         serverURL = defaults.string(forKey: "serverURL") ?? "http://localhost:8787"
         task = defaults.string(forKey: "task") ?? ""
         spokenReplies = defaults.object(forKey: "spokenReplies") as? Bool ?? true
+        guidedMode = defaults.object(forKey: "guidedMode") as? Bool ?? true
+        interruptionsEnabled = defaults.object(forKey: "interruptionsEnabled") as? Bool ?? true
+        voiceIdentifier = defaults.string(forKey: "voiceIdentifier") ?? ""
         captionsEnabled = defaults.object(forKey: "captionsEnabled") as? Bool ?? false
         // Adopt the new automatic default once, including existing installations.
         // Later explicit opt-outs remain saved across launches.
