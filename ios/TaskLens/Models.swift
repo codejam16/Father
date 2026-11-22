@@ -220,6 +220,23 @@ struct StepCheckResponse: Decodable {
     var target: Target? = nil
 }
 
+/// Natural speech made by Gemini on the backend: 16-bit mono PCM.
+struct SpeechAudio {
+    let pcm: Data
+    let sampleRate: Double
+}
+
+struct SpeakRequest: Encodable {
+    let text: String
+    let voice: String
+}
+
+struct SpeakResponse: Decodable {
+    let mode: String
+    let audio: String?
+    var sampleRate: Double? = nil
+}
+
 struct Target: Codable {
     let label: String
     let box: NormalizedBox

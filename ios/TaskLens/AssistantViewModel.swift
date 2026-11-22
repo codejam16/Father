@@ -41,6 +41,7 @@ final class AssistantViewModel: ObservableObject {
     /// The step whose part is currently highlighted (or was located for it).
     private var highlightedStepID: String?
     private var autoCheckRetry: Task<Void, Never>?
+    private var voiceFetch: Task<Void, Never>?
     private var isActive = false
     private var voiceSuspended = false
     private let client = AnalysisClient()
@@ -76,7 +77,7 @@ final class AssistantViewModel: ObservableObject {
     func setVoiceSuspended(_ suspended: Bool, stopPlayback: Bool = true) {
         voiceSuspended = suspended
         updateListening()
-        if suspended && stopPlayback { speech.stopSpeaking() }
+        if suspended && stopPlayback { voiceFetch?.cancel(); speech.stopSpeaking() }
     }
 
     private func updateListening() {
@@ -158,6 +159,7 @@ final class AssistantViewModel: ObservableObject {
         pendingQuestion = text
         webInfo = nil
         updateListening()
+        voiceFetch?.cancel()
         speech.stopSpeaking()
         errorMessage = nil
         let id = UUID()
@@ -237,7 +239,7 @@ final class AssistantViewModel: ObservableObject {
                                  duration: guiding ? 8 : 5)
                     if guiding { highlightedStepID = currentStep?.id }
                 }
-                if settings.spokenReplies { speech.speak(response.answer, voiceIdentifier: settings.voiceIdentifier) }
+                speakReply(response.answer)
                 if !demoMode && (usedResearch || !citedSourceIds.isEmpty) { researchReviewID = UUID() }
             } catch is CancellationError {
                 // Explicit cancellation/backgrounding should not surface as a failed task.
@@ -260,6 +262,7 @@ final class AssistantViewModel: ObservableObject {
         pendingQuestion = nil
         cancelCheck()
         speech.setListening(false)
+        voiceFetch?.cancel()
         speech.stopSpeaking()
         updateListening()
         updateWatching()
@@ -517,7 +520,31 @@ final class AssistantViewModel: ObservableObject {
 
     private func say(_ text: String) {
         showAnswered()
-        if settings.spokenReplies { speech.speak(text, voiceIdentifier: settings.voiceIdentifier) }
+        speakReply(text)
+    }
+
+    /// Speaks with Gemini's natural voice when connected, otherwise (or if it fails or its quota is used up)
+    /// with the iPhone voice. One voice request per reply: free-tier voice quotas are very small.
+    private func speakReply(_ text: String) {
+        guard settings.spokenReplies else { return }
+        voiceFetch?.cancel()
+        let voiceID = settings.voiceIdentifier
+        guard settings.cloudVoiceEnabled, !settings.demoMode else {
+            speech.speak(text, voiceIdentifier: voiceID)
+            return
+        }
+        let endpoint = settings.serverURL
+        let token = settings.token
+        let voice = settings.cloudVoiceName
+        let client = self.client
+        voiceFetch = Task { [weak self] in
+            let audio = (try? await client.speech(text: SpeechService.speakable(text), voice: voice,
+                                                  endpoint: endpoint, token: token)) ?? nil
+            guard let self, !Task.isCancelled else { return }
+            // Don't start talking over the user, or over a new question, while the voice was being made.
+            if !self.speech.transcript.isEmpty || self.isBusy { return }
+            self.speech.speak(text, voiceIdentifier: voiceID, audio: audio)
+        }
     }
 
     private func clearTaskContext() {

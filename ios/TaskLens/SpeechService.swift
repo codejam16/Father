@@ -52,6 +52,49 @@ private final class RecognitionFeed: @unchecked Sendable {
     }
 }
 
+/// Converts one reply's audio chunks with a single, continuous converter. A fresh converter per chunk
+/// restarted at every chunk boundary, which was audible as tiny pauses between syllables.
+private final class StreamConverter {
+    private let output: AVAudioFormat
+    private var converter: AVAudioConverter?
+
+    init(output: AVAudioFormat) { self.output = output }
+
+    func convert(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+        if converter == nil && buffer.format == output { return buffer }
+        if converter == nil || converter?.inputFormat != buffer.format {
+            converter = AVAudioConverter(from: buffer.format, to: output)
+        }
+        guard let converter else { return nil }
+        return run(converter, input: buffer, endOfStream: false)
+    }
+
+    /// Releases the last few samples the converter holds back.
+    func flush() -> AVAudioPCMBuffer? {
+        guard let converter else { return nil }
+        return run(converter, input: nil, endOfStream: true)
+    }
+
+    private func run(_ converter: AVAudioConverter, input: AVAudioPCMBuffer?, endOfStream: Bool) -> AVAudioPCMBuffer? {
+        let ratio = output.sampleRate / converter.inputFormat.sampleRate
+        let expected = Double(input?.frameLength ?? 0) * ratio
+        guard let result = AVAudioPCMBuffer(pcmFormat: output, frameCapacity: AVAudioFrameCount(expected) + 2048) else { return nil }
+        var supplied = false
+        var conversionError: NSError?
+        let status = converter.convert(to: result, error: &conversionError) { _, inputStatus in
+            if !supplied, let input {
+                supplied = true
+                inputStatus.pointee = .haveData
+                return input
+            }
+            // Keep the converter's state between chunks; only the final call ends the stream.
+            inputStatus.pointee = endOfStream ? .endOfStream : .noDataNow
+            return nil
+        }
+        return status == .error || result.frameLength == 0 ? nil : result
+    }
+}
+
 /// Continuous listening with pause-to-send, spoken replies, and interruption ("barge-in").
 ///
 /// Replies normally play through the same AVAudioEngine as the microphone with Apple's voice
@@ -61,7 +104,7 @@ private final class RecognitionFeed: @unchecked Sendable {
 /// unavailable, interruptions are off, or the user is muted, replies use the original turn-taking
 /// path: the microphone is off while the assistant speaks.
 @MainActor
-final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
+final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDelegate {
     @Published private(set) var isRecording = false
     @Published private(set) var isPreparing = false
     @Published private(set) var isSpeaking = false
@@ -71,13 +114,16 @@ final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     var onFailure: ((String) -> Void)?
     /// Set by the owner: whether talking over a reply may interrupt it.
     var allowsInterruption = true
+    /// The last reply was cut off by the user talking (so the rest of it should not play).
+    private(set) var lastPlaybackInterrupted = false
     /// True while `onUtterance` runs if that utterance interrupted a spoken reply.
     private(set) var lastUtteranceInterrupted = false
 
     private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
-    private let playbackFormat = AVAudioFormat(standardFormatWithSampleRate: 22_050, channels: 1)!
+    // 48 kHz so higher-quality voices are not squeezed down; the mixer feeds the speaker from here.
+    private let playbackFormat = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1)!
     private let synthesizer = AVSpeechSynthesizer()
     private let feed = RecognitionFeed()
     private var engineConfigured = false
@@ -101,6 +147,8 @@ final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     private var spokenWords = Set<String>()
     private var echoText = ""
     private var interruptedThisUtterance = false
+    /// Gemini voice played without interruption support (mic off).
+    private var filePlayer: AVAudioPlayer?
     /// Set when echo cancellation delivered unusable audio on this phone; not retried this run.
     private var voiceProcessingFailed = false
     private var receivedResult = false
@@ -256,7 +304,8 @@ final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelega
         silenceTask?.cancel()
         guard !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         silenceTask = Task { [weak self] in
-            do { try await Task.sleep(for: .milliseconds(1200)) } catch { return }
+            // How long a pause ends a question: short enough to feel responsive, long enough for a breath.
+            do { try await Task.sleep(for: .milliseconds(800)) } catch { return }
             guard let self, self.recordingID == id, self.wantsListening else { return }
             self.completeUtterance()
         }
@@ -320,6 +369,7 @@ final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     }
 
     private func interruptPlayback() {
+        lastPlaybackInterrupted = true
         playbackID = nil
         activeUtterance = nil
         synthesizer.stopSpeaking(at: .immediate)
@@ -338,8 +388,17 @@ final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelega
 
     // MARK: Speaking
 
-    func speak(_ text: String, voiceIdentifier: String = "") {
+    func speak(_ text: String, voiceIdentifier: String = "", audio: SpeechAudio? = nil) {
         stopSpeaking(restartListening: false)
+        lastPlaybackInterrupted = false
+        // Gemini's natural voice: interruptible through the echo-cancelled engine when possible.
+        if let audio, let buffer = Self.pcmBuffer(audio) {
+            if allowsInterruption, (try? startEngine()) != nil, echoCancellation {
+                playThroughEngine(buffer, text: text)
+                return
+            }
+            if playWithAudioPlayer(audio) { return }
+        }
         let utterance = AVSpeechUtterance(string: Self.speakable(text))
         refreshVoices()
         utterance.voice = voice(for: voiceIdentifier)
@@ -379,7 +438,6 @@ final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelega
         transcript = ""
         spokenWords = Set(Self.words(text))
         isSpeaking = true
-        player.play()
         Self.render(utterance, synthesizer: synthesizer, player: player, format: playbackFormat) { [weak self] in
             Task { @MainActor [weak self] in self?.finishedPlayback(id) }
         }
@@ -391,40 +449,121 @@ final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelega
                                            player: AVAudioPlayerNode, format: AVAudioFormat,
                                            onFinished: @escaping () -> Void) {
         var ended = false
+        var started = false
+        var scheduledFrames: AVAudioFrameCount = 0
+        // Build up a short cushion before playing, so slower voices never run dry mid-word.
+        let cushion = AVAudioFrameCount(format.sampleRate * 0.3)
+        let stream = StreamConverter(output: format)
+        func schedule(_ buffer: AVAudioPCMBuffer) {
+            player.scheduleBuffer(buffer, completionHandler: nil)
+            scheduledFrames += buffer.frameLength
+            if !started && scheduledFrames >= cushion {
+                started = true
+                player.play()
+            }
+        }
         synthesizer.write(utterance) { buffer in
             guard !ended, let pcm = buffer as? AVAudioPCMBuffer else { return }
             if pcm.frameLength == 0 {
                 ended = true
+                if let tail = stream.flush() { schedule(tail) }
+                if !started {
+                    started = true
+                    player.play()
+                }
                 // A one-frame silent buffer marks the end of the reply.
                 guard let marker = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1) else { onFinished(); return }
                 marker.frameLength = 1
                 player.scheduleBuffer(marker, completionCallbackType: .dataPlayedBack) { _ in onFinished() }
                 return
             }
-            if let converted = convert(pcm, to: format) {
-                player.scheduleBuffer(converted, completionHandler: nil)
-            }
+            if let converted = stream.convert(pcm) { schedule(converted) }
         }
     }
 
-    nonisolated private static func convert(_ buffer: AVAudioPCMBuffer, to format: AVAudioFormat) -> AVAudioPCMBuffer? {
-        if buffer.format == format { return buffer }
-        guard let converter = AVAudioConverter(from: buffer.format, to: format) else { return nil }
-        let ratio = format.sampleRate / buffer.format.sampleRate
-        let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 64
-        guard let output = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: capacity) else { return nil }
-        var supplied = false
-        var conversionError: NSError?
-        let status = converter.convert(to: output, error: &conversionError) { _, inputStatus in
-            if supplied {
-                inputStatus.pointee = .endOfStream
-                return nil
-            }
-            supplied = true
-            inputStatus.pointee = .haveData
-            return buffer
+    private func playThroughEngine(_ buffer: AVAudioPCMBuffer, text: String) {
+        let id = UUID()
+        playbackID = id
+        // Restart recognition so echo and the user's words start from a clean transcript.
+        finishSession()
+        transcript = ""
+        spokenWords = Set(Self.words(text))
+        isSpeaking = true
+        Self.schedule(buffer, on: player, format: playbackFormat) { [weak self] in
+            Task { @MainActor [weak self] in self?.finishedPlayback(id) }
         }
-        return status == .error || output.frameLength == 0 ? nil : output
+        if wantsListening { prepareListening() }
+    }
+
+    nonisolated private static func schedule(_ buffer: AVAudioPCMBuffer, on player: AVAudioPlayerNode,
+                                             format: AVAudioFormat, onFinished: @escaping () -> Void) {
+        let stream = StreamConverter(output: format)
+        if let converted = stream.convert(buffer) { player.scheduleBuffer(converted, completionHandler: nil) }
+        if let tail = stream.flush() { player.scheduleBuffer(tail, completionHandler: nil) }
+        guard let marker = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1) else { onFinished(); return }
+        marker.frameLength = 1
+        player.scheduleBuffer(marker, completionCallbackType: .dataPlayedBack) { _ in onFinished() }
+        player.play()
+    }
+
+    /// Plays Gemini audio with the microphone off (interruptions disabled, muted, or no echo cancellation).
+    private func playWithAudioPlayer(_ audio: SpeechAudio) -> Bool {
+        finishSession()
+        stopEngine()
+        transcript = ""
+        let session = AVAudioSession.sharedInstance()
+        do {
+            try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
+            try session.setActive(true)
+        } catch { return false }
+        guard let audioPlayer = try? AVAudioPlayer(data: Self.wav(audio)) else { return false }
+        audioPlayer.delegate = self
+        filePlayer = audioPlayer
+        isSpeaking = true
+        if audioPlayer.play() { return true }
+        filePlayer = nil
+        isSpeaking = false
+        return false
+    }
+
+    nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        Task { @MainActor [weak self] in self?.finishedFilePlayback(player) }
+    }
+
+    private func finishedFilePlayback(_ audioPlayer: AVAudioPlayer) {
+        guard filePlayer === audioPlayer else { return }
+        filePlayer = nil
+        isSpeaking = false
+        scheduleRestart()
+    }
+
+    nonisolated private static func pcmBuffer(_ audio: SpeechAudio) -> AVAudioPCMBuffer? {
+        let frames = audio.pcm.count / 2
+        guard frames > 0,
+              let format = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: audio.sampleRate, channels: 1, interleaved: false),
+              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frames)),
+              let channel = buffer.int16ChannelData?[0] else { return nil }
+        audio.pcm.withUnsafeBytes { raw in
+            guard let base = raw.baseAddress else { return }
+            memcpy(channel, base, frames * 2) // 16-bit little-endian, as iOS uses natively
+        }
+        buffer.frameLength = AVAudioFrameCount(frames)
+        return buffer
+    }
+
+    nonisolated private static func wav(_ audio: SpeechAudio) -> Data {
+        var data = Data()
+        func append<T: FixedWidthInteger>(_ value: T) {
+            var little = value.littleEndian
+            withUnsafeBytes(of: &little) { data.append(contentsOf: $0) }
+        }
+        let rate = UInt32(audio.sampleRate)
+        data.append(contentsOf: Array("RIFF".utf8)); append(UInt32(36 + audio.pcm.count)); data.append(contentsOf: Array("WAVE".utf8))
+        data.append(contentsOf: Array("fmt ".utf8)); append(UInt32(16)); append(UInt16(1)); append(UInt16(1))
+        append(rate); append(rate * 2); append(UInt16(2)); append(UInt16(16))
+        data.append(contentsOf: Array("data".utf8)); append(UInt32(audio.pcm.count))
+        data.append(audio.pcm)
+        return data
     }
 
     private func finishedPlayback(_ id: UUID) {
@@ -441,6 +580,8 @@ final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     }
 
     func stopSpeaking(restartListening: Bool = true) {
+        filePlayer?.stop()
+        filePlayer = nil
         activeUtterance = nil
         playbackID = nil
         synthesizer.stopSpeaking(at: .immediate)

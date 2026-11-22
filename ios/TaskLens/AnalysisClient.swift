@@ -26,7 +26,17 @@ struct AnalysisClient {
         return result
     }
 
-    private func post<Body: Encodable>(_ body: Body, path: String, endpoint: String, token: String) async throws -> Data {
+    /// Natural speech for a reply, or nil when the backend has no cloud voice (mock mode).
+    func speech(text: String, voice: String, endpoint: String, token: String) async throws -> SpeechAudio? {
+        let data = try await post(SpeakRequest(text: String(text.prefix(2000)), voice: voice),
+                                  path: "speak", endpoint: endpoint, token: token, timeout: 10)
+        let result = try JSONDecoder().decode(SpeakResponse.self, from: data)
+        guard let encoded = result.audio, let pcm = Data(base64Encoded: encoded), pcm.count >= 2 else { return nil }
+        return SpeechAudio(pcm: pcm, sampleRate: result.sampleRate ?? 24_000)
+    }
+
+    private func post<Body: Encodable>(_ body: Body, path: String, endpoint: String, token: String,
+                                       timeout: TimeInterval = 105) async throws -> Data {
         guard let base = URL(string: endpoint), ["http", "https"].contains(base.scheme ?? ""), base.host != nil,
               base.user == nil, base.password == nil else {
             throw TaskLensError.message("Enter a valid backend URL in Connection settings.")
@@ -34,7 +44,7 @@ struct AnalysisClient {
         var request = URLRequest(url: base.appendingPathComponent(path))
         request.httpMethod = "POST"
         // Backend allows 95s for a decision, research and a final answer.
-        request.timeoutInterval = 105
+        request.timeoutInterval = timeout
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if !token.isEmpty { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
         request.httpBody = try JSONEncoder().encode(body)

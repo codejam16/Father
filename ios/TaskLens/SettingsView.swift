@@ -71,9 +71,19 @@ struct SettingsView: View {
                     Toggle("Read replies aloud", isOn: $settings.spokenReplies)
                     Toggle("Interrupt by talking", isOn: $settings.interruptionsEnabled)
                         .disabled(!settings.spokenReplies)
+                    Toggle("Natural AI voice (Gemini)", isOn: $settings.cloudVoiceEnabled)
+                        .disabled(!settings.spokenReplies)
+                    if settings.cloudVoiceEnabled {
+                        Picker("AI voice", selection: $settings.cloudVoiceName) {
+                            ForEach(CloudVoice.all) { voice in
+                                Text("\(voice.name) · \(voice.style)").tag(voice.name)
+                            }
+                        }
+                        .disabled(!settings.spokenReplies)
+                    }
                     AssistantVoicePicker(settings: settings, speech: model.speech)
                 } header: { Text("Assistant voice") } footer: {
-                    Text("With Interrupt by talking on, the microphone stays on while replies play (the phone cancels its own voice), so you can say “wait” or ask something new to cut the reply off. Turn it off if it interrupts itself in a noisy room. When connected, questions send a camera image, recent conversation, and task context to your backend and AI provider. Research may generate web searches. Task memory expires on the backend after inactivity and resets when you start a new task. Demo mode stays on the phone.")
+                    Text("With Interrupt by talking on, the microphone stays on while replies play (the phone cancels its own voice), so you can say “wait” or ask something new to cut the reply off. Turn it off if it interrupts itself in a noisy room. The natural AI voice is made by Gemini on your backend (about a second per reply, and it uses your Gemini quota); the iPhone voice below is used in demo mode and whenever the AI voice is unavailable. When connected, questions send a camera image, recent conversation, and task context to your backend and AI provider. Research may generate web searches. Task memory expires on the backend after inactivity and resets when you start a new task. Demo mode stays on the phone.")
                 }
                 Section {
                     Toggle("Captions", isOn: $settings.captionsEnabled)
@@ -93,6 +103,24 @@ struct SettingsView: View {
 
 
 @MainActor
+/// A few of Gemini's prebuilt voices that suit a friendly helper.
+private struct CloudVoice: Identifiable {
+    let name: String
+    let style: String
+    var id: String { name }
+
+    static let all: [CloudVoice] = [
+        CloudVoice(name: "Achird", style: "friendly"),
+        CloudVoice(name: "Sulafat", style: "warm"),
+        CloudVoice(name: "Aoede", style: "breezy"),
+        CloudVoice(name: "Puck", style: "upbeat"),
+        CloudVoice(name: "Kore", style: "firm, clear"),
+        CloudVoice(name: "Charon", style: "calm, informative"),
+        CloudVoice(name: "Leda", style: "youthful"),
+        CloudVoice(name: "Zephyr", style: "bright"),
+    ]
+}
+
 private struct AssistantVoicePicker: View {
     @ObservedObject var settings: ConnectionSettings
     @ObservedObject var speech: SpeechService
