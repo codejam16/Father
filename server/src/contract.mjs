@@ -24,30 +24,8 @@ export function validateBox(box) {
   return box;
 }
 
-export const MAX_TARGETS = 6;
-const objectID = (id) => typeof id === 'string' && /^[a-zA-Z0-9_-]{1,64}$/.test(id);
-function validateObjectGraph(objects, fail) {
-  const byID = new Map(objects.map((object) => [object.id, object]));
-  if (byID.size !== objects.length) fail();
-  for (const object of objects) {
-    const visited = new Set([object.id]);
-    let parent = object.parentId;
-    while (parent != null) {
-      if (!byID.has(parent) || visited.has(parent)) fail();
-      visited.add(parent);
-      parent = byID.get(parent).parentId;
-    }
-  }
-}
-
-export function validateRequest(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) invalid('Expected a JSON object.');
-  const frameId = text(value.frameId, 'frameId', 80);
-  const capturedAt = text(value.capturedAt, 'capturedAt', 40);
-  if (Number.isNaN(Date.parse(capturedAt))) invalid('capturedAt must be an ISO date.');
-  const question = text(value.question, 'question', 1500);
-  const task = text(value.task ?? '', 'task', 4000, true);
-  const image = value.image;
+/// Shared JPEG checks for every camera image that crosses the API boundary.
+export function validateImage(image) {
   if (!image || image.mimeType !== 'image/jpeg') invalid('A JPEG image is required.');
   if (![image.width, image.height].every((n) => Number.isInteger(n) && n > 0 && n <= 2048)) {
     invalid('Image dimensions must be integers between 1 and 2048.');
@@ -59,6 +37,24 @@ export function validateRequest(value) {
       bytes[0] !== 0xff || bytes[1] !== 0xd8 || bytes.at(-2) !== 0xff || bytes.at(-1) !== 0xd9) {
     invalid('Image must be a base64-encoded JPEG smaller than 1.5 MB.');
   }
+  return image;
+}
+
+export function validateRequest(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) invalid('Expected a JSON object.');
+  const frameId = text(value.frameId, 'frameId', 80);
+  const capturedAt = text(value.capturedAt, 'capturedAt', 40);
+  if (Number.isNaN(Date.parse(capturedAt))) invalid('capturedAt must be an ISO date.');
+  const question = text(value.question, 'question', 1500);
+  const task = text(value.task ?? '', 'task', 4000, true);
+  const image = validateImage(value.image);
+  // Optional close-up of the same moment (around the user's fingertip), with where it sits in the full image.
+  let detailImage = null;
+  if (value.detailImage != null) {
+    const detail = value.detailImage;
+    if (!detail || typeof detail !== 'object') invalid('Invalid detailImage.');
+    detailImage = { ...validateImage(detail), box: validateBox(detail.box) };
+  }
   const history = value.history ?? [];
   if (!Array.isArray(history) || history.length > 8) invalid('history can contain at most eight messages.');
   const normalizedHistory = history.map((message) => {
@@ -66,31 +62,17 @@ export function validateRequest(value) {
     return { role: message.role, content: text(message.content, 'history content', 2000) };
   });
   const selection = value.selection == null ? null : validateBox(value.selection);
-  const rawKnownTargets = value.knownTargets ?? [];
-  if (!Array.isArray(rawKnownTargets) || rawKnownTargets.length > 6) invalid('At most six known targets are allowed.');
-  const knownTargets = rawKnownTargets.map((object) => {
-    if (!object || !objectID(object.id) || (object.parentId != null && !objectID(object.parentId)) ||
-        !['visible', 'searching', 'dormant'].includes(object.state) || !['user', 'assistant'].includes(object.source) ||
-        typeof object.isFocused !== 'boolean' || (object.kind != null && !['object', 'part'].includes(object.kind))) invalid('Invalid known target.');
-    const label = text(object.label, 'object label', 160);
-    if (object.state !== 'visible' && object.box != null) invalid('Lost targets must not include stale coordinates.');
-    return { id: object.id, label, ...(object.kind ? { kind: object.kind } : {}), parentId: object.parentId ?? null, source: object.source, state: object.state,
-      box: object.state === 'visible' ? validateBox(object.box) : null, isFocused: object.isFocused };
-  });
-  validateObjectGraph(knownTargets, () => invalid('Invalid known target relationships.'));
-  if (knownTargets.filter((object) => object.isFocused).length > 1) invalid('Only one target can be focused.');
-  const rawSelections = value.selections ?? [];
-  if (!Array.isArray(rawSelections) || rawSelections.length > 6) invalid('At most six selections are allowed.');
-  const selections = rawSelections.map((object) => {
-    if (!objectID(object?.id) || !knownTargets.some((known) => known.id === object.id && known.state === 'visible')) invalid('Selection must refer to a visible known target.');
-    return { id: object.id, label: text(object.label, 'selection label', 160), box: validateBox(object.box) };
-  });
-  if (new Set(selections.map((object) => object.id)).size !== selections.length) invalid('Duplicate selections are not allowed.');
-  for (const selection of selections) {
-    const known = knownTargets.find((object) => object.id === selection.id);
-    if (selection.box.some((n, i) => Math.abs(n - known.box[i]) > 1)) invalid('Selection coordinates must match the current known target.');
+  // Spots the user's fingertip rested on while asking, in order, as [y, x] (0-1000).
+  let pointedAt = [];
+  if (value.pointedAt != null) {
+    if (!Array.isArray(value.pointedAt) || value.pointedAt.length > 4 || !value.pointedAt.every((point) =>
+      Array.isArray(point) && point.length === 2 && point.every((n) => Number.isFinite(n) && n >= 0 && n <= 1000))) {
+      invalid('pointedAt must be up to four [y, x] points between 0 and 1000.');
+    }
+    pointedAt = value.pointedAt.map(([y, x]) => [Math.round(y), Math.round(x)]);
   }
   if (value.includeWebInfo !== undefined && typeof value.includeWebInfo !== 'boolean') invalid('includeWebInfo must be a boolean.');
+  if (value.guided !== undefined && typeof value.guided !== 'boolean') invalid('guided must be a boolean.');
   const sessionId = value.sessionId ?? null;
   const continuationId = value.continuationId ?? null;
   const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -102,9 +84,8 @@ export function validateRequest(value) {
   if (!Array.isArray(confirmedStepIds) || confirmedStepIds.length > 10 ||
       !confirmedStepIds.every((id) => typeof id === 'string' && /^[a-zA-Z0-9_-]{1,40}$/.test(id))) invalid('Invalid confirmedStepIds.');
   return { frameId, capturedAt, question, task, image, history: normalizedHistory, selection,
-    knownTargets, selections, sessionId, continuationId, researchEnabled: value.researchEnabled ?? true, confirmedStepIds, includeWebInfo: value.includeWebInfo === true,
-    // Accepted for older clients, but forced searches are no longer supported.
-    searchEveryQuestion: false };
+    sessionId, continuationId, researchEnabled: value.researchEnabled ?? true, confirmedStepIds, includeWebInfo: value.includeWebInfo === true,
+    searchEveryQuestion: false, guided: value.guided === true, detailImage, pointedAt };
 }
 
 // A schema constrains shape; validate the model's values again before using them.
@@ -115,27 +96,89 @@ export const answerSchema = {
     targetLabel: { type: ['string', 'null'] },
     box: { type: ['array', 'null'], items: { type: 'number' }, minItems: 4, maxItems: 4 },
     needsClearerView: { type: 'boolean' },
-    targets: { type: 'array', maxItems: MAX_TARGETS, items: {
-      type: 'object', additionalProperties: false,
-      properties: {
-        id: { type: 'string' }, parentId: { type: ['string', 'null'] }, label: { type: 'string' },
-        kind: { type: 'string', enum: ['object', 'part'] }, emphasis: { type: 'string', enum: ['primary', 'context'] },
-        box: { type: 'array', items: { type: 'number' }, minItems: 4, maxItems: 4 },
-      }, required: ['id', 'parentId', 'label', 'box', 'kind', 'emphasis'],
-    } },
+    // Kept deliberately simple: Gemini rejects schemas with nested, size-limited arrays as too complex.
+    // Limits (beats, points, ranges) are enforced by validateAnnotations instead.
+    annotations: {
+      type: 'array',
+      items: {
+        type: 'object', additionalProperties: false,
+        properties: {
+          caption: { type: 'string' },
+          say: { type: 'string' },
+          box: { type: ['array', 'null'], items: { type: 'number' } },
+          path: { type: ['array', 'null'], items: { type: 'number' } },
+          label: { type: ['string', 'null'] },
+          to: { type: ['array', 'null'], items: { type: 'number' } },
+          zoom: { type: 'boolean' },
+          region: { type: ['array', 'null'], items: { type: 'number' } },
+        },
+        required: ['caption', 'say', 'box', 'path', 'label', 'to', 'zoom', 'region'],
+      },
+    },
   },
-  required: ['answer', 'targetLabel', 'box', 'needsClearerView', 'targets'],
+  required: ['answer', 'targetLabel', 'box', 'needsClearerView', 'annotations'],
   additionalProperties: false,
 };
 
-export function validateAnswer(value, knownTargets = []) {
+export const boxInstruction = `Highlighting is one of the most useful things you do. When the user asks for help with, about or where something visible is, return targetLabel and box for the item your answer is about. For on-screen tasks, box the exact button, menu item, icon or setting to click or tap next.
+Box accurately: find the item by its distinguishing features (shape, colour, text on it, position relative to nearby things) and put the box edges on its visible outline, not around the general area. When several similar items exist, box the specific one meant.`;
+
+export const walkthroughInstruction = `VISUAL WALKTHROUGHS. Return annotations (otherwise an empty list) whenever the user asks to explain, walk through or trace something visible: a diagram, circuit, schematic, chart, map, flowchart or drawing, or how something goes, gets, flows or moves from one place to another ("how does it go from A to B?"). The app freezes this image and draws the beats over it, one at a time, while the say lines are spoken.
+Give 2 to 6 ordered beats. Every beat has: caption (under 12 words), say (1–2 short spoken sentences), box, path, label, to, zoom, region. A beat needs at least one of box, path or region; unused fields are null (zoom false).
+- path: REQUIRED for any "from X to Y", flow or route question. A flat list y1, x1, y2, x2, … (2 to 24 points, 0..1000, top-left origin) placed ON the drawn lines and corners, in the direction of travel. The app draws it as an arrow.
+- box: [ymin,xmin,ymax,xmax] around the part a beat is about.
+- label: a 1–4 word tag for that part, e.g. "R1 · 220 Ω" or "Point A".
+- to: when one part affects or connects to another ("the switch controls the LED"), the second part's box; box is the first part. The app draws a curved arrow between them.
+- zoom: true when the part in box is small (markings, colour bands, pins, tiny text): the app shows a magnified bubble.
+- region: a flat list y1, x1, y2, x2, … (3+ points) outlining an area to shade, e.g. one loop or one section of a chart.
+Use the visual that fits each beat; a good circuit explanation usually has a labelled start box, a path along the wires, any connection arrow, and a zoom on small markings.
+Example for "how does the current get from A to B?" (coordinates illustrative): [{"caption":"Start at point A","say":"The current starts here, at point A.","box":[120,80,200,160],"path":null,"label":"A","to":null,"zoom":false,"region":null},{"caption":"Through the resistor","say":"It flows along the top wire and through the resistor.","box":null,"path":[160,160,160,520,160,800],"label":null,"to":null,"zoom":false,"region":null},{"caption":"The resistor's value","say":"Its bands read 220 ohms.","box":[130,480,190,560],"path":null,"label":"220 Ω","to":null,"zoom":true,"region":null},{"caption":"Down to point B","say":"Then down the right side to point B.","box":null,"path":[160,800,700,800],"label":"B","to":null,"zoom":false,"region":null}]
+Narrate the say lines in order as one natural explanation, and keep answer a complete short explanation on its own. Answer explanation questions this way rather than as guided steps.`;
+
+/// Walkthrough beats from the model: drop malformed parts instead of failing the answer.
+export function validateAnnotations(value) {
+  if (!Array.isArray(value)) return [];
+  const inRange = (v) => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1000;
+  const point = (p) => Array.isArray(p) && p.length === 2 && p.every(inRange);
+  // Accept the flat form the model is asked for (y1, x1, y2, x2, …) and the nested [[y, x], …] form.
+  const toPath = (raw) => {
+    if (!Array.isArray(raw)) return null;
+    const pairs = raw.every((v) => typeof v === 'number')
+      ? (raw.length % 2 === 0 ? Array.from({ length: raw.length / 2 }, (_, i) => [raw[2 * i], raw[2 * i + 1]]) : null)
+      : raw;
+    return pairs && pairs.length >= 2 && pairs.length <= 24 && pairs.every(point) ? pairs : null;
+  };
+  const toRegion = (raw) => {
+    const pairs = toPath(raw);
+    return pairs && pairs.length >= 3 ? pairs : null;
+  };
+  const beats = [];
+  for (const beat of value.slice(0, 8)) {
+    if (!beat || typeof beat.caption !== 'string' || !beat.caption.trim()) continue;
+    let box = null;
+    if (beat.box != null) { try { box = validateBox(beat.box); } catch { box = null; } }
+    const path = toPath(beat.path);
+    const region = toRegion(beat.region);
+    if (!box && !path && !region) continue;
+    let to = null;
+    if (box && beat.to != null) { try { to = validateBox(beat.to); } catch { to = null; } }
+    const label = typeof beat.label === 'string' && beat.label.trim() ? beat.label.trim().slice(0, 40) : null;
+    const zoom = beat.zoom === true && Boolean(box);
+    const caption = beat.caption.trim().slice(0, 120);
+    const say = typeof beat.say === 'string' && beat.say.trim() ? beat.say.trim().slice(0, 400) : caption;
+    beats.push({ caption, say, box, path, label, to, zoom, region });
+  }
+  return beats;
+}
+
+export function validateAnswer(value) {
   if (!value || typeof value.answer !== 'string' || !value.answer.trim() || value.answer.length > 2000 ||
       typeof value.needsClearerView !== 'boolean') {
     throw new APIError(502, 'invalid_model_output', 'The model returned an unusable answer. Please try again.');
   }
   let target = null;
   // Do not draw a target when the model says the view is insufficient.
-  if (value.targets === undefined && value.box != null && !value.needsClearerView) {
+  if (value.box != null && !value.needsClearerView) {
     try {
       validateBox(value.box);
       if (typeof value.targetLabel !== 'string' || !value.targetLabel.trim() || value.targetLabel.length > 160) {
@@ -146,61 +189,6 @@ export function validateAnswer(value, knownTargets = []) {
       throw new APIError(502, 'invalid_model_output', 'The model returned an invalid target position.');
     }
   }
-  let targets;
-  if (value.targets !== undefined) {
-    const fail = () => { throw new APIError(502, 'invalid_model_output', 'The model returned invalid object selections.'); };
-    if (!Array.isArray(value.targets) || value.targets.length > MAX_TARGETS) fail();
-    targets = value.targets.map((object) => {
-      if (!object || !objectID(object.id) || (object.parentId != null && !objectID(object.parentId)) ||
-          typeof object.label !== 'string' || !object.label.trim() || object.label.length > 160) fail();
-      try { validateBox(object.box); } catch { fail(); }
-      const kind = object.kind ?? (object.parentId ? 'part' : 'object');
-      const emphasis = object.emphasis ?? (value.targets.some((child) => child?.parentId === object.id) ? 'context' : 'primary');
-      if (!['object', 'part'].includes(kind) || !['primary', 'context'].includes(emphasis)) fail();
-      const previous = knownTargets.find((known) => known.id === object.id);
-      if (previous?.kind && previous.kind !== kind) fail();
-      return { id: object.id, parentId: object.parentId ?? null, label: object.label.trim(), box: object.box, kind, emphasis };
-    });
-    if (new Set(targets.map((object) => object.id)).size !== targets.length) fail();
-    const updated = new Map(knownTargets.map((object) => [object.id, object]));
-    for (const object of targets) updated.set(object.id, object);
-    validateObjectGraph([...updated.values()], fail);
-    const required = new Set();
-    for (const object of targets) {
-      required.add(object.id);
-      for (let id = object.parentId; id != null; id = updated.get(id).parentId) required.add(id);
-      const parent = updated.get(object.parentId);
-      // Compare only boxes from THIS image. Lost parents have no geometry.
-      if (object.kind === 'part' && parent?.box && (targets.some((p) => p.id === parent.id) || parent.state === 'visible')) {
-        const [y1, x1, y2, x2] = object.box, [py1, px1, py2, px2] = parent.box;
-        const cy = (y1 + y2) / 2, cx = (x1 + x2) / 2;
-        if (cy < py1 - 30 || cy > py2 + 30 || cx < px1 - 30 || cx > px2 + 30 ||
-            (y2 - y1) * (x2 - x1) > (py2 - py1) * (px2 - px1) * 0.85) fail();
-      }
-    }
-    if (required.size > MAX_TARGETS) fail();
-    const primaryTargets = targets.filter((object) => object.emphasis === 'primary');
-    for (let i = 0; i < primaryTargets.length; i++) {
-      for (const other of primaryTargets.slice(i + 1)) {
-        const object = primaryTargets[i];
-        if (object.kind !== other.kind || object.parentId === other.id || other.parentId === object.id) continue;
-        const [y1, x1, y2, x2] = object.box, [b1, a1, b2, a2] = other.box;
-        const shared = Math.max(0, Math.min(y2, b2) - Math.max(y1, b1)) * Math.max(0, Math.min(x2, a2) - Math.max(x1, a1));
-        const union = (y2 - y1) * (x2 - x1) + (b2 - b1) * (a2 - a1) - shared;
-        if (shared / union > 0.9) fail(); // Duplicate detections must not masquerade as several objects.
-      }
-    }
-    // Parents precede their new child targets when both are in the answer.
-    targets.sort((a, b) => {
-      const depth = (object) => { let n = 0; for (let id = object.parentId; id != null; id = updated.get(id).parentId) n++; return n; };
-      return depth(a) - depth(b);
-    });
-    if (value.needsClearerView) targets = [];
-    // The array is authoritative, including an explicit empty array. The legacy
-    // pointer must refer to the requested component, not a contextual parent.
-    const primary = targets.find((object) => object.emphasis === 'primary' && object.kind === 'part')
-      ?? targets.find((object) => object.emphasis === 'primary');
-    target = primary ? { label: primary.label, box: primary.box } : null;
-  }
-  return { answer: value.answer.trim(), target, ...(targets === undefined ? {} : { targets }), needsClearerView: value.needsClearerView };
+  const annotations = value.needsClearerView ? [] : validateAnnotations(value.annotations);
+  return { answer: value.answer.trim(), target, needsClearerView: value.needsClearerView, annotations };
 }

@@ -5,6 +5,9 @@ import { APIError, validateRequest } from './contract.mjs';
 import { analyzeWithGemini, demoAnswer } from './gemini.mjs';
 import { TaskSessions } from './task-session.mjs';
 import { runAgent } from './agent.mjs';
+import { checkStepWithGemini, demoCheck, validateCheckRequest } from './step-check.mjs';
+import { speakWithGemini, ttsModels, ttsVoices, validateSpeakRequest } from './tts.mjs';
+import { demoToolsScan, scanToolsWithGemini, validateToolsRequest } from './tools.mjs';
 import { ANALYSIS_TIMEOUT_MS } from './timeouts.mjs';
 import { redactDiagnostic } from './diagnostics.mjs';
 
@@ -44,17 +47,25 @@ export function loadConfig(env = process.env) {
   if (!['mock', 'gemini'].includes(mode)) throw new Error('AI_MODE must be mock or gemini.');
   const model = env.GEMINI_MODEL ?? 'gemini-3.8-flash';
   if (!['gemini-3.8-flash', 'gemini-3.5-flash-lite'].includes(model)) throw new Error('Select a supported Gemini Flash model.');
+  // Stronger model for explanations (walkthroughs); "same" uses GEMINI_MODEL for everything.
+  const explainModel = (env.EXPLAIN_MODEL ?? 'same') === 'same' ? null : (env.EXPLAIN_MODEL ?? 'same');
+  if (explainModel && !['gemini-3.8-flash', 'gemini-3.5-flash-lite'].includes(explainModel)) throw new Error('EXPLAIN_MODEL must be gemini-3.8-flash, gemini-3.5-flash-lite or same.');
   const config = {
-    mode, model, apiKey: env.GEMINI_API_KEY ?? '', appToken: env.APP_TOKEN ?? '',
+    mode, model, explainModel, apiKey: env.GEMINI_API_KEY ?? '', appToken: env.APP_TOKEN ?? '',
     port: integer(env.PORT, 8787, 65535), host: env.HOST ?? '127.0.0.1',
     maxOutputTokens: integer(env.MAX_OUTPUT_TOKENS, 2048, 4096),
     diagnosticLogPath: fileURLToPath(new URL('../.data/provider-errors.jsonl', import.meta.url)),
     webResearchEnabled: env.ENABLE_WEB_RESEARCH !== 'false',
     serperApiKey: env.SERPER_API_KEY?.trim() ?? '',
+    ttsEnabled: env.ENABLE_GEMINI_VOICE !== 'false',
+    ttsModel: env.GEMINI_TTS_MODEL ?? 'gemini-3.8-flash-lite-tts',
+    ttsVoice: env.GEMINI_TTS_VOICE ?? 'Kore',
     serperCountry: env.SERPER_COUNTRY ?? 'ca',
     serperLanguage: env.SERPER_LANGUAGE ?? 'en',
     maxResearchSteps: integer(env.MAX_RESEARCH_STEPS, 2, 2),
   };
+  if (!ttsModels.includes(config.ttsModel)) throw new Error(`GEMINI_TTS_MODEL must be one of: ${ttsModels.join(', ')}.`);
+  if (!ttsVoices.includes(config.ttsVoice)) throw new Error('GEMINI_TTS_VOICE must be a Gemini prebuilt voice name, for example Kore.');
   if (!/^[a-z]{2}$/.test(config.serperCountry) || !/^[a-z]{2}(-[a-zA-Z]{2})?$/.test(config.serperLanguage)) {
     throw new Error('Use a two-letter SERPER_COUNTRY and a valid SERPER_LANGUAGE code.');
   }
@@ -96,7 +107,7 @@ async function readJSON(request) {
 }
 
 export function createApp(config, {
-  analyze = analyzeWithGemini, agent = runAgent,
+  analyze = analyzeWithGemini, agent = runAgent, check = checkStepWithGemini, speak = speakWithGemini, scanTools = scanToolsWithGemini,
   sessions = new TaskSessions(),
 } = {}) {
   const server = createServer(async (request, response) => {
@@ -105,7 +116,7 @@ export function createApp(config, {
     const controller = new AbortController();
     const deadline = setTimeout(() => controller.abort(), ANALYSIS_TIMEOUT_MS);
     response.on('finish', () => clearTimeout(deadline));
-    const route = request.url === '/analyze' ? '/analyze' : request.url === '/health' ? '/health' : '/other';
+    const route = ['/analyze', '/check', '/speak', '/tools', '/health'].includes(request.url) ? request.url : '/other';
     console.log(`[${new Date().toISOString()}] Request received: ${route} [${trace.requestId}]`);
     response.on('close', () => {
       clearTimeout(deadline);
@@ -115,7 +126,14 @@ export function createApp(config, {
       }
     });
     const send = (status, data) => {
-      console.log(`Request completed: ${route} [${trace.requestId}] googleCalls=${trace.calls} serperSearches=${trace.searchCalls} HTTP ${status} ${data.error?.code ?? 'ok'} (${Date.now() - started}ms)`);
+      const circle = data.error || route === '/speak' || route === '/tools' ? '' : data.target ? ` circle="${String(data.target.label).slice(0, 60)}"` : ' circle=none';
+      const step = data.status ? ` step=${data.status}` : '';
+      const beats = Array.isArray(data.annotations) && data.annotations.length ? data.annotations : null;
+      const walkthrough = beats ? ` walkthrough=${beats.length} steps (paths=${beats.filter((b) => b.path).length}`
+        + ` boxes=${beats.filter((b) => b.box).length} labels=${beats.filter((b) => b.label).length}`
+        + ` arrows=${beats.filter((b) => b.to).length} zoom=${beats.filter((b) => b.zoom).length}`
+        + ` shaded=${beats.filter((b) => b.region).length})` : (route === '/analyze' && !data.error ? ' walkthrough=none' : '');
+      console.log(`Request completed: ${route} [${trace.requestId}] googleCalls=${trace.calls} serperSearches=${trace.searchCalls} HTTP ${status} ${data.error?.code ?? 'ok'}${step}${circle}${walkthrough} (${Date.now() - started}ms)`);
       if (response.destroyed) return;
       response.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
       response.end(JSON.stringify(data));
@@ -124,11 +142,38 @@ export function createApp(config, {
       if (request.method === 'GET' && request.url === '/health') {
         return send(200, { status: 'ok', mode: config.mode });
       }
-      if (request.method !== 'POST' || request.url !== '/analyze') {
+      if (request.method !== 'POST' || !['/analyze', '/check', '/speak', '/tools'].includes(request.url)) {
         throw new APIError(404, 'not_found', 'Endpoint not found.');
       }
       if (!authorized(request, config.appToken)) throw new APIError(401, 'unauthorized', 'Check the connection token in Settings.');
       if (!request.headers['content-type']?.startsWith('application/json')) throw new APIError(415, 'invalid_content_type', 'Use application/json.');
+      if (request.url === '/speak') {
+        const input = validateSpeakRequest(await readJSON(request), config.ttsVoice);
+        // Mock mode has no cloud voice: the phone falls back to its own voice.
+        if (config.mode !== 'gemini' || !config.ttsEnabled) return send(200, { mode: config.mode, audio: null });
+        try {
+          const result = await speak(input, { ...config, signal: controller.signal, trace });
+          return send(200, { mode: config.mode, voice: input.voice, ...result });
+        } catch (error) {
+          // Out of voice quota: answer at once so the phone uses its own voice without waiting.
+          if (error?.quota) return send(200, { mode: config.mode, audio: null, reason: 'voice_quota' });
+          throw error;
+        }
+      }
+      if (request.url === '/tools') {
+        const input = validateToolsRequest(await readJSON(request));
+        const result = config.mode === 'gemini'
+          ? await scanTools(input, { ...config, signal: controller.signal, trace })
+          : demoToolsScan(input);
+        return send(200, { mode: config.mode, ...result });
+      }
+      if (request.url === '/check') {
+        const input = validateCheckRequest(await readJSON(request));
+        const result = config.mode === 'gemini'
+          ? await check(input, { ...config, signal: controller.signal, trace })
+          : demoCheck(input);
+        return send(200, { stepId: input.stepId, mode: config.mode, ...result });
+      }
       const input = validateRequest(await readJSON(request));
       let result;
       if (config.mode === 'gemini') {

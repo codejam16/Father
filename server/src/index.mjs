@@ -12,7 +12,7 @@ try {
         ? 'Web search: Serper (one search request per search action).'
         : 'Web search is off or not configured. Set SERPER_API_KEY in server/.env to enable it. Camera questions still work.');
     }
-    console.log(config.mode === 'mock' ? 'Demo replies only; no AI API requests.' : 'Google enforces API quotas; no local request allowance or rate limit. No automatic provider retries.');
+    console.log(config.mode === 'mock' ? 'Demo replies only; no AI API requests.' : 'Google enforces API quotas; no local request allowance or rate limit. Quota/auth errors are not retried; transient busy errors use bounded retries.');
   });
 } catch (error) {
   console.error(error.message);

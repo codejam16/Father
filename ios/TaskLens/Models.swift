@@ -94,13 +94,27 @@ struct CapturedFrame {
     let jpeg: Data
     let width: Int
     let height: Int
-    var trackedObjects: [TrackedObjectContext] = []
+}
+
+/// A close-up of part of a frame, and where it sits in that frame.
+struct CapturedDetail {
+    let jpeg: Data
+    let width: Int
+    let height: Int
+    let box: NormalizedBox
+}
+
+struct DetailImagePayload: Encodable {
+    let base64: String
+    let mimeType = "image/jpeg"
+    let width: Int
+    let height: Int
+    let box: NormalizedBox
 }
 
 struct SelectedFrame {
     let frame: CapturedFrame
     let box: NormalizedBox
-    var targetID: String? = nil
 }
 
 struct ImagePayload: Encodable {
@@ -155,14 +169,25 @@ struct AnalysisRequest: Encodable {
     let researchEnabled: Bool
     let confirmedStepIds: [String]
     let includeWebInfo: Bool
+    /// Optional fingertip close-up of the same frame.
+    let detailImage: DetailImagePayload?
     let searchEveryQuestion: Bool
-    let knownTargets: [TrackedObjectContext]
-    let selections: [Target]
+    let guided: Bool
+    /// Spots the user's fingertip rested on while asking, in order, as [y, x] (0–1000).
+    let pointedAt: [[Double]]?
 
     init(frame: CapturedFrame, question: String, task: String, history: [ChatMessage], selection: NormalizedBox?,
          sessionId: String? = nil, continuationId: String? = nil,
          researchEnabled: Bool = true, confirmedStepIds: [String] = [], includeWebInfo: Bool = false,
-         searchEveryQuestion: Bool = false, selections: [Target] = []) {
+         searchEveryQuestion: Bool = false, guided: Bool = false, detail: CapturedDetail? = nil,
+         pointedAt: [CGPoint] = []) {
+        self.guided = guided
+        self.pointedAt = pointedAt.isEmpty ? nil : pointedAt.prefix(4).map {
+            [(min(max($0.y, 0), 1) * 1000).rounded(), (min(max($0.x, 0), 1) * 1000).rounded()]
+        }
+        self.detailImage = detail.map {
+            DetailImagePayload(base64: $0.jpeg.base64EncodedString(), width: $0.width, height: $0.height, box: $0.box)
+        }
         self.frameId = frame.id
         self.capturedAt = ISO8601DateFormatter().string(from: frame.capturedAt)
         self.question = question
@@ -175,35 +200,73 @@ struct AnalysisRequest: Encodable {
         self.researchEnabled = researchEnabled && includeWebInfo
         self.confirmedStepIds = confirmedStepIds
         self.includeWebInfo = includeWebInfo
-        // Retained in the wire format for older backends; never force a lookup.
         self.searchEveryQuestion = false
-        self.knownTargets = frame.trackedObjects
-        self.selections = selections
     }
 }
 
-enum TargetKind: String, Codable { case object, part }
-enum TargetEmphasis: String, Codable { case primary, context }
+/// Guided mode: "is the current step done?", with a few recent frames, oldest first.
+struct StepCheckFrame: Encodable {
+    let frameId: String
+    let capturedAt: String
+    let image: ImagePayload
+
+    init(_ frame: CapturedFrame) {
+        frameId = frame.id
+        capturedAt = ISO8601DateFormatter().string(from: frame.capturedAt)
+        image = ImagePayload(base64: frame.jpeg.base64EncodedString(), width: frame.width, height: frame.height)
+    }
+}
+
+struct StepCheckRequest: Encodable {
+    let stepId: String
+    let step: String
+    let goal: String
+    let task: String
+    /// The step after this one, so a "done" check can highlight where to act next.
+    let nextStep: String
+    let frames: [StepCheckFrame]
+    let userSaysDone: Bool
+
+    init(step: TaskStep, next: TaskStep?, goal: String, task: String, frames: [CapturedFrame], userSaysDone: Bool) {
+        stepId = step.id
+        nextStep = String((next?.text ?? "").prefix(400))
+        self.step = String(step.text.prefix(400))
+        self.goal = String(goal.prefix(600))
+        self.task = String(task.prefix(4000))
+        self.frames = frames.suffix(3).map { StepCheckFrame($0) }
+        self.userSaysDone = userSaysDone
+    }
+}
+
+/// status is "done", "in_progress", "problem" or "unclear".
+struct StepCheckResponse: Decodable {
+    let stepId: String
+    let mode: String
+    let status: String
+    let feedback: String
+    var target: Target? = nil
+}
+
+/// Natural speech made by Gemini on the backend: 16-bit mono PCM.
+struct SpeechAudio {
+    let pcm: Data
+    let sampleRate: Double
+}
+
+struct SpeakRequest: Encodable {
+    let text: String
+    let voice: String
+}
+
+struct SpeakResponse: Decodable {
+    let mode: String
+    let audio: String?
+    var sampleRate: Double? = nil
+}
 
 struct Target: Codable {
     let label: String
     let box: NormalizedBox
-    var id: String? = nil
-    var parentId: String? = nil
-    var kind: TargetKind? = nil
-    var emphasis: TargetEmphasis? = nil
-    var resolvedKind: TargetKind { kind ?? (parentId == nil ? .object : .part) }
-}
-
-struct TrackedObjectContext: Codable, Identifiable {
-    let id: String
-    let label: String
-    let parentId: String?
-    let source: String
-    let state: String
-    let box: NormalizedBox?
-    let isFocused: Bool
-    var kind: TargetKind? = nil
 }
 
 struct AnalysisResponse: Decodable {
@@ -219,24 +282,54 @@ struct AnalysisResponse: Decodable {
     var researchReports: [ResearchReport]? = nil
     var sourceIds: [String]? = nil
     var webInfo: WebInfo? = nil
-    var targets: [Target]? = nil
-    var highlightTargets: [Target] {
-        // Explicit [] is an intentional clear, not a request for the legacy box.
-        needsClearerView ? [] : (targets ?? target.map { [$0] } ?? [])
+    /// "What you'll need" when guided steps start.
+    var toolsNeeded: [ToolItem]? = nil
+    /// Step-by-step drawings explaining a diagram (empty for ordinary answers).
+    var annotations: [Annotation]? = nil
+}
+
+/// One beat of a visual walkthrough: a caption plus a box around a part or a path traced along the drawing.
+struct Annotation: Codable, Equatable {
+    let caption: String
+    /// What is spoken while this beat is on screen.
+    var say: String? = nil
+    var box: NormalizedBox? = nil
+    var path: [[Double]]? = nil
+    /// Short tag drawn next to the part, e.g. "R1 · 220 Ω".
+    var label: String? = nil
+    /// A second part: a curved arrow is drawn from `box` to it (connections, cause and effect).
+    var to: NormalizedBox? = nil
+    /// Show a magnified bubble of the part in `box`.
+    var zoom: Bool? = nil
+    /// An outlined area to shade, as [y, x] points.
+    var region: [[Double]]? = nil
+
+    /// Path points as unit (x, y), top-left origin.
+    var unitPath: [CGPoint] { Self.unitPoints(path) }
+    var unitRegion: [CGPoint] { Self.unitPoints(region) }
+
+    private static func unitPoints(_ points: [[Double]]?) -> [CGPoint] {
+        (points ?? []).compactMap { $0.count == 2 ? CGPoint(x: $0[1] / 1000, y: $0[0] / 1000) : nil }
     }
 }
 
-enum HighlightPresentation {
-    static func primary(_ targets: [Target]) -> [Target] {
-        targets.filter { target in
-            if let emphasis = target.emphasis { return emphasis == .primary }
-            // Older servers do not have emphasis: prefer a child over its parent.
-            return !targets.contains(where: { $0.parentId != nil && $0.parentId == target.id })
-        }
-    }
-    static func focusedID(_ activeIDs: Set<String>) -> String? {
-        activeIDs.count == 1 ? activeIDs.first : nil
-    }
+/// A tool or part for the job; `visible` means seen on camera (or ticked by the user).
+struct ToolItem: Codable, Identifiable, Equatable {
+    let name: String
+    var visible: Bool
+    var id: String { name }
+}
+
+struct ToolsRequest: Encodable {
+    let items: [String]
+    let goal: String
+    let image: ImagePayload
+}
+
+struct ToolsResponse: Decodable {
+    let mode: String
+    let items: [ToolItem]
+    let note: String?
 }
 
 struct WebSource: Decodable, Identifiable {
@@ -251,388 +344,16 @@ struct WebInfo: Decodable {
     let searchSuggestionHTML: String?
 }
 
-struct Highlight: Identifiable {
-    enum Source: String { case user, assistant }
-    let id: String
+struct Highlight {
+    enum Source { case user, assistant }
+    let box: NormalizedBox
     let label: String
     let source: Source
-    let pose: RotatedBox
-    let isFocused: Bool
-    var kind: TargetKind = .object
-    var mask: CGImage? = nil
-    var maskBox: NormalizedBox? = nil
-}
-
-/// Sizes are normalized to the upright image; rotation is applied in pixel space,
-/// never in a square normalized space (which would distort portrait images).
-struct RotatedBox: Equatable {
-    var center: CGPoint
-    var size: CGSize
-    var angle: Double
-
-    init(box: NormalizedBox, angle: Double = 0) {
-        let rect = box.unitRect
-        center = CGPoint(x: rect.midX, y: rect.midY)
-        size = rect.size
-        self.angle = angle
-    }
-
-    func corners(aspect: CGFloat) -> [CGPoint] {
-        let c = CGFloat(cos(angle)), s = CGFloat(sin(angle))
-        return [CGPoint(x: -0.5, y: -0.5), CGPoint(x: 0.5, y: -0.5),
-                CGPoint(x: 0.5, y: 0.5), CGPoint(x: -0.5, y: 0.5)].map { point in
-            let x = point.x * size.width * aspect, y = point.y * size.height
-            return CGPoint(x: center.x + (c * x - s * y) / aspect, y: center.y + s * x + c * y)
-        }
-    }
-
-    func boundingBox(aspect: CGFloat) -> NormalizedBox? {
-        let points = corners(aspect: aspect)
-        let x1 = max(0, points.map(\.x).min() ?? 0), x2 = min(1, points.map(\.x).max() ?? 1)
-        let y1 = max(0, points.map(\.y).min() ?? 0), y2 = min(1, points.map(\.y).max() ?? 1)
-        return NormalizedBox([Double(y1 * 1000), Double(x1 * 1000), Double(y2 * 1000), Double(x2 * 1000)])
-    }
-}
-
-enum TrackingRecoveryPolicy {
-    static func interval(after elapsed: TimeInterval) -> TimeInterval? {
-        guard elapsed < 60 else { return nil }
-        return 1
-    }
-}
-
-/// Debounce weak evidence. Rotation matching is advisory for a healthy Vision track.
-struct TrackingStability {
-    private(set) var weakVisionFrames = 0
-    private(set) var appearanceMismatches = 0
-
-    mutating func recordVision(_ confidence: Float) -> Bool {
-        weakVisionFrames = confidence >= 0.4 ? 0 : weakVisionFrames + 1
-        return weakVisionFrames >= 3
-    }
-
-    mutating func recordAppearance(_ score: Float?, visionConfidence: Float) -> Bool {
-        guard let score else { return false }
-        appearanceMismatches = score >= 0.6 ? 0 : appearanceMismatches + 1
-        // Mild appearance changes never overrule a confident positional tracker.
-        return appearanceMismatches >= 4 && (visionConfidence < 0.65 || score < 0.1)
-    }
 }
 
 enum TaskLensError: LocalizedError {
     case message(String)
     var errorDescription: String? {
         switch self { case .message(let value): return value }
-    }
-}
-
-/// Small upright luminance image used only for on-device target recovery.
-struct TrackingImage {
-    let width: Int
-    let height: Int
-    let values: [Float]
-    var aspect: CGFloat { CGFloat(width) / CGFloat(height) }
-
-    init?(width: Int, height: Int, values: [Float]) {
-        guard width > 0, height > 0, values.count == width * height,
-              values.allSatisfy({ $0.isFinite && (0...1).contains($0) }) else { return nil }
-        self.width = width; self.height = height; self.values = values
-    }
-
-    fileprivate func descriptor(in pose: RotatedBox, grid: Int = 12) -> [Float]? {
-        guard pose.size.width * CGFloat(width) >= 4, pose.size.height * CGFloat(height) >= 4,
-              pose.corners(aspect: aspect).allSatisfy({ $0.x >= 0 && $0.x <= 1 && $0.y >= 0 && $0.y <= 1 }) else { return nil }
-        var samples: [Float] = []
-        samples.reserveCapacity(grid * grid)
-        let c = CGFloat(cos(pose.angle)), s = CGFloat(sin(pose.angle))
-        for row in 0..<grid {
-            for column in 0..<grid {
-                let offsetX = ((CGFloat(column) + 0.5) / CGFloat(grid) - 0.5) * pose.size.width * CGFloat(width)
-                let offsetY = ((CGFloat(row) + 0.5) / CGFloat(grid) - 0.5) * pose.size.height * CGFloat(height)
-                let px = pose.center.x * CGFloat(width) + c * offsetX - s * offsetY - 0.5
-                let py = pose.center.y * CGFloat(height) + s * offsetX + c * offsetY - 0.5
-                let x = min(Float(width - 1), max(0, Float(px))), y = min(Float(height - 1), max(0, Float(py)))
-                let x0 = Int(x), y0 = Int(y), x1 = min(Int(x) + 1, width - 1), y1 = min(Int(y) + 1, height - 1)
-                let dx = x - Float(x0), dy = y - Float(y0)
-                let top = values[y0 * width + x0] * (1 - dx) + values[y0 * width + x1] * dx
-                let bottom = values[y1 * width + x0] * (1 - dx) + values[y1 * width + x1] * dx
-                samples.append(top * (1 - dy) + bottom * dy)
-            }
-        }
-        let mean = samples.reduce(0, +) / Float(samples.count)
-        let centered = samples.map { $0 - mean }
-        let energy = centered.reduce(Float(0)) { $0 + $1 * $1 }
-        guard energy / Float(samples.count) >= 0.0012 else { return nil }
-        let norm = sqrt(energy)
-        return centered.map { $0 / norm }
-    }
-}
-
-struct ObjectAppearance {
-    private let descriptor: [Float]
-
-    init?(image: TrackingImage, box: NormalizedBox) { self.init(image: image, pose: RotatedBox(box: box)) }
-    init?(image: TrackingImage, pose: RotatedBox) {
-        guard let descriptor = image.descriptor(in: pose) else { return nil }
-        self.descriptor = descriptor
-    }
-
-    func similarity(in image: TrackingImage, box: NormalizedBox) -> Float? { similarity(in: image, pose: RotatedBox(box: box)) }
-    func similarity(in image: TrackingImage, pose: RotatedBox) -> Float? {
-        guard let candidate = image.descriptor(in: pose) else { return nil }
-        return zip(descriptor, candidate).reduce(Float(0)) { $0 + $1.0 * $1.1 }
-    }
-
-    /// Correct rotation, scale and small translations while the Vision tracker supplies position.
-    func follow(in image: TrackingImage, near predicted: RotatedBox, maximumRotationStep: Double = .pi / 12,
-                translationRadius: Int = 2, allowScale: Bool = true) -> (pose: RotatedBox, score: Float)? {
-        var best: (pose: RotatedBox, score: Float)?
-        for scale: CGFloat in allowScale ? [0.94, 1, 1.06] : [1] {
-            for turn in [-maximumRotationStep, -maximumRotationStep / 2, 0, maximumRotationStep / 2, maximumRotationStep] {
-                let radius = max(0, translationRadius)
-                let offsets = radius == 0 ? [0] : radius <= 2 ? [-radius, 0, radius]
-                    : Array(stride(from: -radius, through: radius, by: max(1, radius / 2)))
-                for dy in offsets {
-                    for dx in offsets {
-                        var pose = predicted
-                        pose.size = CGSize(width: predicted.size.width * scale, height: predicted.size.height * scale)
-                        pose.angle += turn
-                        pose.center.x += CGFloat(dx) / CGFloat(image.width)
-                        pose.center.y += CGFloat(dy) / CGFloat(image.height)
-                        if let score = similarity(in: image, pose: pose), score > (best?.score ?? -1) { best = (pose, score) }
-                    }
-                }
-            }
-        }
-        return best
-    }
-
-    func locate(in image: TrackingImage, near previous: NormalizedBox) -> NormalizedBox? {
-        locatePose(in: image, near: RotatedBox(box: previous), angles: [0])?.boundingBox(aspect: image.aspect)
-    }
-
-    func locatePose(in image: TrackingImage, near previous: RotatedBox, angles: [Double]? = nil) -> RotatedBox? {
-        struct Candidate { let pose: RotatedBox; let bounds: CGRect; let score: Float }
-        var candidates: [Candidate] = []
-        func evaluate(_ pose: RotatedBox) {
-            guard let score = similarity(in: image, pose: pose), let box = pose.boundingBox(aspect: image.aspect) else { return }
-            candidates.append(Candidate(pose: pose, bounds: box.unitRect, score: score))
-        }
-        let rotations = angles ?? stride(from: -180.0, to: 180.0, by: 30).map { $0 * .pi / 180 }
-        for scale: CGFloat in [0.8, 1, 1.25] {
-            let width = previous.size.width * scale, height = previous.size.height * scale
-            guard width * CGFloat(image.width) >= 4, height * CGFloat(image.height) >= 4 else { continue }
-            let step = max(3, Int(sqrt(Double(image.width * image.height) / 240)))
-            for angle in rotations {
-                for y in stride(from: 0, to: image.height, by: step) {
-                    for x in stride(from: 0, to: image.width, by: step) {
-                        var pose = previous
-                        pose.size = CGSize(width: width, height: height)
-                        pose.center = CGPoint(x: CGFloat(x) / CGFloat(image.width), y: CGFloat(y) / CGFloat(image.height))
-                        pose.angle = angle
-                        evaluate(pose)
-                    }
-                }
-            }
-        }
-        let seeds = candidates.sorted { $0.score > $1.score }.prefix(4)
-        for seed in seeds {
-            for scale: CGFloat in [0.9, 1, 1.1] {
-                for turn in angles == nil ? [-Double.pi / 12, -Double.pi / 24, 0, Double.pi / 24, Double.pi / 12] : [0] {
-                    for dy in -5...5 {
-                        for dx in -5...5 {
-                            var pose = seed.pose
-                            pose.size = CGSize(width: pose.size.width * scale, height: pose.size.height * scale)
-                            pose.center.x += CGFloat(dx) / CGFloat(image.width)
-                            pose.center.y += CGFloat(dy) / CGFloat(image.height)
-                            pose.angle += turn
-                            evaluate(pose)
-                        }
-                    }
-                }
-            }
-        }
-        guard let best = candidates.max(by: { $0.score < $1.score }), best.score >= 0.86 else { return nil }
-        let runnerUp = candidates.filter { candidate in
-            let intersection = best.bounds.intersection(candidate.bounds)
-            let overlap = intersection.isNull ? 0 : intersection.width * intersection.height
-            let union = best.bounds.width * best.bounds.height + candidate.bounds.width * candidate.bounds.height - overlap
-            return union > 0 && overlap / union < 0.25
-        }.map(\.score).max() ?? -1
-        guard best.score - runnerUp >= 0.07 else { return nil }
-        return best.pose
-    }
-}
-
-/// Temporal snapshot pyramid: dense recent sampling, then progressively wider spacing.
-/// Retains small grayscale views and descriptors, not full-resolution camera buffers.
-struct ObjectSnapshotHistory {
-    struct Snapshot {
-        let time: Double
-        let image: TrackingImage
-        let pose: RotatedBox
-        let appearance: ObjectAppearance
-    }
-    private(set) var snapshots: [Snapshot] = []
-    private var lastSampleTime = -Double.infinity
-
-    struct RecoveryMatch {
-        let pose: RotatedBox
-        let snapshot: Snapshot
-    }
-
-    func recover(in image: TrackingImage, near previous: RotatedBox, attempt: Int) -> RotatedBox? {
-        recoverMatch(in: image, near: previous, attempt: attempt)?.pose
-    }
-
-    /// Preserve the exact matching reference through Vision confirmation. A brief
-    /// dropout searches nearby at the existing size, not arbitrary patches of the frame.
-    func recoverMatch(in image: TrackingImage, near previous: RotatedBox, attempt: Int,
-                      allowGlobalSearch: Bool = true) -> RecoveryMatch? {
-        guard !snapshots.isEmpty else { return nil }
-        func adjustedPose(_ snapshot: Snapshot) -> RotatedBox {
-            var pose = previous
-            let scale = sqrt(previous.size.width * previous.size.height /
-                             max(0.00001, snapshot.pose.size.width * snapshot.pose.size.height))
-            pose.size = CGSize(width: snapshot.pose.size.width * scale, height: snapshot.pose.size.height * scale)
-            return pose
-        }
-        let nearby = snapshots.compactMap { snapshot -> (Snapshot, Float)? in
-            guard let score = snapshot.appearance.similarity(in: image, pose: adjustedPose(snapshot)) else { return nil }
-            return (snapshot, score)
-        }.sorted { $0.1 > $1.1 }
-        let probes = nearby.isEmpty ? Array(snapshots.suffix(2)) : nearby.prefix(2).map { $0.0 }
-        for snapshot in probes {
-            let pose = adjustedPose(snapshot)
-            if let score = snapshot.appearance.similarity(in: image, pose: pose), score >= 0.96 {
-                return RecoveryMatch(pose: pose, snapshot: snapshot)
-            }
-            if let match = snapshot.appearance.follow(in: image, near: pose,
-                translationRadius: 8, allowScale: false), match.score >= 0.84 {
-                return RecoveryMatch(pose: match.pose, snapshot: snapshot)
-            }
-        }
-        guard allowGlobalSearch else { return nil }
-        let selected = snapshots[snapshots.count - 1 - attempt % snapshots.count]
-        // Ordinary losses should not compete with hundreds of rotated/subregion
-        // hypotheses. Preserve the previous orientation before widening the search.
-        let pose = selected.appearance.locatePose(in: image, near: adjustedPose(selected), angles: [previous.angle])
-            ?? selected.appearance.locatePose(in: image, near: adjustedPose(selected))
-        guard let pose else { return nil }
-        return RecoveryMatch(pose: pose, snapshot: selected)
-    }
-
-    @discardableResult
-    mutating func record(image: TrackingImage, pose: RotatedBox, time: Double) -> Bool {
-        guard time.isFinite, time - lastSampleTime >= 1,
-              let appearance = ObjectAppearance(image: image, pose: pose) else { return false }
-        lastSampleTime = time
-        snapshots.append(Snapshot(time: time, image: image, pose: pose, appearance: appearance))
-        guard let first = snapshots.first, let latest = snapshots.last else { return true }
-        let span = latest.time - first.time
-        let interval = span < 10 ? 1 : 5 * pow(2, floor(log2(span / 10)))
-        var keep = Set([0, snapshots.count - 1])
-        for offset in stride(from: 0.0, through: span, by: interval) {
-            let desired = first.time + offset
-            if let index = snapshots.indices.min(by: { abs(snapshots[$0].time - desired) < abs(snapshots[$1].time - desired) }) {
-                keep.insert(index)
-            }
-        }
-        snapshots = snapshots.enumerated().filter { keep.contains($0.offset) }.map(\.element)
-        return true
-    }
-}
-
-
-/// Geometry gates for associating freshly segmented instances with remembered targets.
-/// Instance numbers are local to a single Vision request, never persistent identities.
-enum ForegroundAssociation {
-    static func match(target: CGRect, candidates: [CGRect], isPart: Bool = false) -> Int? {
-        let area = target.width * target.height
-        guard area > 0 else { return nil }
-        let ranked = candidates.enumerated().compactMap { index, candidate -> (Int, CGFloat)? in
-            let candidateArea = candidate.width * candidate.height
-            let ratio = candidateArea / area
-            // In particular, don't paint a whole bottle when the target is its lid.
-            guard ratio >= (isPart ? 0.5 : 0.3), ratio <= (isPart ? 1.25 : 1.6) else { return nil }
-            if isPart {
-                let allowed = target.insetBy(dx: -target.width * 0.1, dy: -target.height * 0.1)
-                let inside = allowed.intersection(candidate)
-                guard !inside.isNull, inside.width * inside.height / candidateArea >= 0.9 else { return nil }
-            }
-            let intersection = target.intersection(candidate)
-            let shared = intersection.isNull ? 0 : intersection.width * intersection.height
-            let score = shared / max(0.00001, area + candidateArea - shared)
-            return score >= (isPart ? 0.55 : 0.5) ? (index, score) : nil
-        }.sorted { $0.1 > $1.1 }
-        guard let best = ranked.first else { return nil }
-        if ranked.count > 1, best.1 - ranked[1].1 < 0.12 { return nil }
-        return best.0
-    }
-}
-
-/// Low-resolution per-instance probabilities, with top-left image coordinates.
-/// Reject merged foreground and isolate a single connected object inside its AI region.
-struct ForegroundMaskPixels {
-    let width: Int
-    let height: Int
-    let values: [UInt8]
-
-    init?(width: Int, height: Int, values: [UInt8]) {
-        guard width > 0, height > 0, width <= 2048, height <= 2048,
-              width * height <= 1_048_576, values.count == width * height else { return nil }
-        self.width = width; self.height = height; self.values = values
-    }
-
-    func isolatedComponent(in target: CGRect) -> [UInt8]? {
-        guard [target.minX, target.minY, target.width, target.height].allSatisfy(\.isFinite) else { return nil }
-        let region = target.intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
-        guard !region.isNull, !region.isEmpty else { return nil }
-        let x1 = max(0, Int(floor(region.minX * CGFloat(width))))
-        let y1 = max(0, Int(floor(region.minY * CGFloat(height))))
-        let x2 = min(width, Int(ceil(region.maxX * CGFloat(width))))
-        let y2 = min(height, Int(ceil(region.maxY * CGFloat(height))))
-        guard x2 > x1, y2 > y1 else { return nil }
-        var total = 0, outside = 0
-        for y in 0..<height {
-            for x in 0..<width where values[y * width + x] >= 128 {
-                total += 1
-                if x < x1 || x >= x2 || y < y1 || y >= y2 { outside += 1 }
-            }
-        }
-        // A hand/person merged into the object's mask usually extends beyond
-        // its semantic region. Do not grow the region to accommodate that mask.
-        guard total >= 4, Double(outside) / Double(total) <= 0.15 else { return nil }
-        var visited = [Bool](repeating: false, count: values.count)
-        var best: [Int] = [], runnerUp = 0
-        for y in y1..<y2 {
-            for x in x1..<x2 {
-                let start = y * width + x
-                guard values[start] >= 128, !visited[start] else { continue }
-                var component = [start], head = 0
-                visited[start] = true
-                while head < component.count {
-                    let pixel = component[head]; head += 1
-                    let px = pixel % width, py = pixel / width
-                    for dy in -1...1 {
-                        for dx in -1...1 where dx != 0 || dy != 0 {
-                            let nx = px + dx, ny = py + dy
-                            guard nx >= x1, nx < x2, ny >= y1, ny < y2 else { continue }
-                            let next = ny * width + nx
-                            if !visited[next], values[next] >= 128 {
-                                visited[next] = true; component.append(next)
-                            }
-                        }
-                    }
-                }
-                if component.count > best.count { runnerUp = best.count; best = component }
-                else { runnerUp = max(runnerUp, component.count) }
-            }
-        }
-        let minimum = max(4, Int(Double((x2 - x1) * (y2 - y1)) * 0.06))
-        guard best.count >= minimum, Double(runnerUp) < Double(best.count) * 0.35 else { return nil }
-        var gate = [UInt8](repeating: 0, count: values.count)
-        for pixel in best { gate[pixel] = 255 }
-        return gate
     }
 }

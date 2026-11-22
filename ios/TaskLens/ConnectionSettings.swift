@@ -9,6 +9,11 @@ final class ConnectionSettings: ObservableObject {
     @Published var task: String { didSet { defaults.set(task, forKey: "task") } }
     @Published var voiceIdentifier: String { didSet { defaults.set(voiceIdentifier, forKey: "voiceIdentifier") } }
     @Published var spokenReplies: Bool { didSet { defaults.set(spokenReplies, forKey: "spokenReplies") } }
+    @Published var guidedMode: Bool { didSet { defaults.set(guidedMode, forKey: "guidedMode") } }
+    /// Replies spoken by Gemini's natural voices (the iPhone voice is the backup).
+    @Published var cloudVoiceEnabled: Bool { didSet { defaults.set(cloudVoiceEnabled, forKey: "cloudVoiceEnabled") } }
+    @Published var cloudVoiceName: String { didSet { defaults.set(cloudVoiceName, forKey: "cloudVoiceName") } }
+    @Published var interruptionsEnabled: Bool { didSet { defaults.set(interruptionsEnabled, forKey: "interruptionsEnabled") } }
     @Published var captionsEnabled: Bool { didSet { defaults.set(captionsEnabled, forKey: "captionsEnabled") } }
     @Published var selectionEnabled: Bool { didSet { defaults.set(selectionEnabled, forKey: "selectionEnabled") } }
     @Published var webInfoEnabled: Bool { didSet { defaults.set(webInfoEnabled, forKey: "webInfoEnabled") } }
@@ -24,10 +29,13 @@ final class ConnectionSettings: ObservableObject {
         serverURL = defaults.string(forKey: "serverURL") ?? "http://localhost:8787"
         task = defaults.string(forKey: "task") ?? ""
         spokenReplies = defaults.object(forKey: "spokenReplies") as? Bool ?? true
+        guidedMode = defaults.object(forKey: "guidedMode") as? Bool ?? true
+        cloudVoiceEnabled = defaults.object(forKey: "cloudVoiceEnabled") as? Bool ?? true
+        cloudVoiceName = defaults.string(forKey: "cloudVoiceName") ?? "Achird"
+        interruptionsEnabled = defaults.object(forKey: "interruptionsEnabled") as? Bool ?? true
         voiceIdentifier = defaults.string(forKey: "voiceIdentifier") ?? ""
         captionsEnabled = defaults.object(forKey: "captionsEnabled") as? Bool ?? false
         selectionEnabled = defaults.object(forKey: "selectionEnabled") as? Bool ?? false
-        // Respect saved search permission; never overwrite an explicit opt-out.
         webInfoEnabled = defaults.object(forKey: "webInfoEnabled") as? Bool ?? true
         var item: CFTypeRef?
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,

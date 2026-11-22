@@ -57,17 +57,9 @@ struct CameraStage: View {
                     }
                     .foregroundStyle(.white.opacity(0.8)).padding(28)
                 }
-                ForEach(camera.highlights) { highlight in
-                    let color: Color = highlight.source == .user ? .yellow : .mint
-                    if let mask = highlight.mask, let box = highlight.maskBox {
-                        foreground(mask, from: box, to: highlight.pose, color: color,
-                                   focused: highlight.isFocused, in: geometry.size)
-                    } else {
-                        // Keep the requested filled-area presentation while a fresh
-                        // silhouette is unavailable; never substitute corner boxes.
-                        targetArea(highlight, color: color, in: geometry.size)
-                    }
-                    targetLabel(highlight, color: color, in: geometry.size)
+                if let highlight = camera.highlight {
+                    pointer(highlight.box, label: highlight.label,
+                            color: highlight.source == .user ? .yellow : .mint, in: geometry.size)
                 }
                 if let dragStart, let dragEnd,
                    let box = FrameGeometry.selection(start: dragStart, end: dragEnd,
@@ -117,72 +109,15 @@ struct CameraStage: View {
         .accessibilityLabel(enabled ? "Live camera. Tap or drag to select a region for your next question." : "Live camera. Region selection is off.")
     }
 
-    private func targetArea(_ highlight: Highlight, color: Color, in size: CGSize) -> some View {
-        let image = FrameGeometry.fittedRect(in: size, aspect: camera.aspectRatio)
-        let pose = highlight.pose
-        return ZStack(alignment: .topLeading) {
-            RoundedRectangle(cornerRadius: highlight.kind == .part ? 5 : 14)
-                .fill(color.opacity(highlight.isFocused ? 0.16 : 0.12))
-                .blur(radius: highlight.kind == .part ? 1 : 3)
-                .frame(width: max(8, pose.size.width * image.width), height: max(8, pose.size.height * image.height))
-                .rotationEffect(.radians(mirrored ? -pose.angle : pose.angle))
-                .position(x: (mirrored ? 1 - pose.center.x : pose.center.x) * image.width,
-                          y: pose.center.y * image.height)
-        }
-        .frame(width: image.width, height: image.height).clipped()
-        .position(x: image.midX, y: image.midY)
-        .allowsHitTesting(false).accessibilityLabel("Highlighted area: " + highlight.label)
-    }
-
-    private func targetLabel(_ highlight: Highlight, color: Color, in size: CGSize) -> some View {
-        let image = FrameGeometry.fittedRect(in: size, aspect: camera.aspectRatio)
-        let pose = highlight.pose
-        let x = image.minX + (mirrored ? 1 - pose.center.x : pose.center.x) * image.width
-        let y = image.minY + max(0, pose.center.y - pose.size.height / 2) * image.height
-        return Text(highlight.mask == nil ? "Area: " + highlight.label : highlight.label).font(.system(size: 10, weight: .semibold)).lineLimit(1)
-            .foregroundStyle(color).padding(.horizontal, 7).padding(.vertical, 4)
-            .background(.black.opacity(0.6), in: Capsule()).frame(maxWidth: 140)
-            .position(x: min(max(x, image.minX + 70), image.maxX - 70), y: max(image.minY + 14, y - 12))
-            .allowsHitTesting(false)
-    }
-
-    private func foreground(_ mask: CGImage, from box: NormalizedBox, to pose: RotatedBox, color: Color, focused: Bool, in size: CGSize) -> some View {
-        let image = FrameGeometry.fittedRect(in: size, aspect: camera.aspectRatio)
-        let source = box.unitRect
-        let sx = pose.size.width / max(0.00001, source.width)
-        let sy = pose.size.height / max(0.00001, source.height)
-        let dx = (pose.center.x - source.midX * sx) * image.width
-        let dy = (pose.center.y - source.midY * sy) * image.height
-        // Track translation/scale between mask refreshes; fresh segmentation supplies
-        // the changing silhouette, rather than permanently warping an initial cutout.
-        // Vision returns a grayscale image, not an alpha mask. Convert luminance to
-        // alpha explicitly, otherwise the black background would tint the whole frame.
-        return color.opacity(focused ? 0.32 : 0.18)
-            .frame(width: image.width, height: image.height)
-            .mask(alignment: .topLeading) {
-                Image(decorative: mask, scale: 1).resizable()
-                    .frame(width: image.width, height: image.height)
-                    .luminanceToAlpha()
-                    .scaleEffect(x: sx, y: sy, anchor: .topLeading)
-                    .offset(x: dx, y: dy)
-            }
-            .scaleEffect(x: mirrored ? -1 : 1, y: 1)
-            .position(x: image.midX, y: image.midY)
-            .allowsHitTesting(false)
-    }
-
     private func pointer(_ box: NormalizedBox, label: String, color: Color, in size: CGSize) -> some View {
-        pointer(RotatedBox(box: box), label: label, color: color, focused: true, in: size)
-    }
-
-    private func pointer(_ pose: RotatedBox, label: String, color: Color, focused: Bool, in size: CGSize) -> some View {
         let image = FrameGeometry.fittedRect(in: size, aspect: camera.aspectRatio)
-        let width = pose.size.width * image.width
-        let height = pose.size.height * image.height
-        let midX = mirrored ? 1 - pose.center.x : pose.center.x
+        let rect = box.unitRect
+        let width = rect.width * image.width
+        let height = rect.height * image.height
+        let midX = mirrored ? 1 - rect.midX : rect.midX
         return RoundedRectangle(cornerRadius: 10)
             .fill(color.opacity(0.035))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(color.opacity(focused ? 0.95 : 0.65), lineWidth: focused ? 2 : 1))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(color.opacity(0.85), lineWidth: 1.5))
             .overlay(alignment: .topLeading) {
                 Text(label).font(.system(size: 10, weight: .semibold))
                     .lineLimit(2).padding(.horizontal, 7).padding(.vertical, 4)
@@ -191,9 +126,7 @@ struct CameraStage: View {
                     .padding(6)
             }
             .frame(width: width, height: height)
-            .rotationEffect(.radians(mirrored ? -pose.angle : pose.angle))
-            .opacity(focused ? 1 : 0.55)
-            .position(x: image.minX + midX * image.width, y: image.minY + pose.center.y * image.height)
+            .position(x: image.minX + midX * image.width, y: image.minY + rect.midY * image.height)
             .allowsHitTesting(false)
     }
 }

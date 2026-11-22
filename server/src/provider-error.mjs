@@ -48,7 +48,7 @@ export async function geminiHTTPError(response, config = {}, context = {}) {
   } else {
     message = 'Google rejected the AI request. Check the project and model configuration in Google AI Studio.';
   }
-  const error = new APIError(status === 429 ? 429 : 502, 'provider_error', `Gemini HTTP ${status}: ${message} No automatic retry was made.`);
+  const error = new APIError(status === 429 ? 429 : 502, 'provider_error', `Gemini HTTP ${status}: ${message} ${context.attempts > 1 ? `Gave up after ${context.attempts} attempts.` : 'No automatic retry was made.'}`);
   if (status === 429) {
     error.userMessage = 'The AI service is limiting requests right now. Please try again later.';
   } else if (status >= 500) {

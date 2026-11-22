@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
-import { TaskSessions, emptyMemory, mergeMemory } from '../src/task-session.mjs';
+import { TaskSessions, emptyMemory, mergeMemory, applyUserCompletedSteps } from '../src/task-session.mjs';
 import { runAgent } from '../src/agent.mjs';
 import { extractResearch, publicURL } from '../src/research.mjs';
 import { validateRequest } from '../src/contract.mjs';
@@ -11,9 +11,9 @@ import { createApp, loadConfig } from '../src/server.mjs';
 const config = { model: 'test-model', maxOutputTokens: 2048, apiKey: 'not-real', serperApiKey: 'fake-serper-key', maxResearchSteps: 2 };
 const request = (extra = {}) => validateRequest({
   sessionId: randomUUID(), frameId: randomUUID(), capturedAt: new Date().toISOString(),
-  task: 'Identify and use this product', question: 'How do I clean this filter?', includeWebInfo: true,
+  task: 'Identify and use this product', question: 'How do I clean this filter?',
   image: { mimeType: 'image/jpeg', base64: Buffer.from([255, 216, 255, 217]).toString('base64'), width: 480, height: 640 },
-  ...extra,
+  includeWebInfo: true, ...extra,
 });
 const decision = (extra = {}) => ({
   action: 'respond', argument: null, answer: 'A bottle.', targetLabel: null, box: null,
@@ -253,6 +253,16 @@ test('optional web cards reuse verified task research without adding implicit se
   assert.ok(transport.calls[0].body.generationConfig.responseJsonSchema.required.includes('webSummary'));
   assert.equal(final.webInfo.sources[0].url, 'https://docs.vendor.com/manual.pdf');
   assert.match(final.webInfo.summary, /removable filter/);
+});
+
+test('steps the user says they finished are marked complete, unknown ids are ignored', () => {
+  const memory = { goal: 'Change wallpaper', facts: [], openQuestions: [], plan: [
+    { id: 's1', text: 'Open System Settings', completed: false },
+    { id: 's2', text: 'Click Wallpaper', completed: false },
+  ] };
+  const updated = applyUserCompletedSteps(memory, ['s1', 'nope', 42]);
+  assert.deepEqual(updated.plan.map((step) => step.completed), [true, false]);
+  assert.equal(applyUserCompletedSteps(memory, undefined), memory);
 });
 
 test('eligible questions search only when the model selects research, without repeating on continuation', async () => {

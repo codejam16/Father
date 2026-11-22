@@ -1,40 +1,16 @@
-import SwiftUI
 import AVFoundation
+import SwiftUI
 import WebKit
 
 @MainActor
 struct SettingsView: View {
     @ObservedObject var settings: ConnectionSettings
     @ObservedObject var model: AssistantViewModel
-    @ObservedObject private var camera: CameraService
     @Environment(\.dismiss) private var dismiss
-
-    init(settings: ConnectionSettings, model: AssistantViewModel) {
-        self.settings = settings; self.model = model; self.camera = model.camera
-    }
 
     var body: some View {
         NavigationStack {
             Form {
-                if !camera.trackedObjects.isEmpty {
-                    Section("Remembered objects") {
-                        ForEach(camera.trackedObjects) { object in
-                            HStack {
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(object.label)
-                                    if let parent = camera.trackedObjects.first(where: { $0.id == object.parentId }) {
-                                        Text("Part of \(parent.label)").font(.caption).foregroundStyle(.secondary)
-                                    }
-                                    Text(object.state == "dormant" ? "Search paused; ask about it to retry" : object.state.capitalized)
-                                        .font(.caption).foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                Button("Forget", role: .destructive) { camera.forgetTarget(object.id) }
-                            }
-                        }
-                        Button("Clear all selections", role: .destructive) { model.clearSelection() }
-                    }
-                }
                 if let error = model.errorMessage {
                     Section("Last issue") { Text(error).foregroundStyle(.orange) }
                 }
@@ -87,17 +63,34 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    Toggle("Guided steps", isOn: $settings.guidedMode)
+                } footer: {
+                    Text("Ask anything as usual. When you ask how to do something hands-on (fix, install, take apart…), the assistant switches to one step at a time and watches the camera, moving on when a step looks done. Say “done”, “skip”, “repeat” or “stop” at any time, or keep asking questions. Movement detection stays on the phone; each step check is one AI request.")
+                }
+                Section {
                     Toggle("Read replies aloud", isOn: $settings.spokenReplies)
+                    Toggle("Interrupt by talking", isOn: $settings.interruptionsEnabled)
+                        .disabled(!settings.spokenReplies)
+                    Toggle("Natural AI voice (Gemini)", isOn: $settings.cloudVoiceEnabled)
+                        .disabled(!settings.spokenReplies)
+                    if settings.cloudVoiceEnabled {
+                        Picker("AI voice", selection: $settings.cloudVoiceName) {
+                            ForEach(CloudVoice.all) { voice in
+                                Text("\(voice.name) · \(voice.style)").tag(voice.name)
+                            }
+                        }
+                        .disabled(!settings.spokenReplies)
+                    }
                     AssistantVoicePicker(settings: settings, speech: model.speech)
                 } header: { Text("Assistant voice") } footer: {
-                    Text("When connected, questions send a camera image, recent conversation, and task context to your backend and AI provider. Research may generate web searches. Task memory expires on the backend after inactivity and resets when you start a new task. Demo mode stays on the phone.")
+                    Text("With Interrupt by talking on, the microphone stays on while replies play (the phone cancels its own voice), so you can say “wait” or ask something new to cut the reply off. Turn it off if it interrupts itself in a noisy room. The natural AI voice is made by Gemini on your backend (about a second per reply, and it uses your Gemini quota); the iPhone voice below is used in demo mode and whenever the AI voice is unavailable. When connected, questions send a camera image, recent conversation, and task context to your backend and AI provider. Research may generate web searches. Task memory expires on the backend after inactivity and resets when you start a new task. Demo mode stays on the phone.")
                 }
                 Section {
                     Toggle("Captions", isOn: $settings.captionsEnabled)
                     Toggle("Web info & search", isOn: $settings.webInfoEnabled)
                     Toggle("Select a region", isOn: $settings.selectionEnabled)
                 } header: { Text("Camera overlays") }
-                footer: { Text("Web search runs only when this toggle is on and the question needs outside information. Visual questions use the camera without searching. Turning it off stops further research; an already-started provider request cannot be undone. The info button shows a dot when hidden results are available. Drag the info handle upward to fill the screen, down to shrink it, or use its corner to adjust width. Captions have their own height handle. Turn on Select a region to tap or drag over the camera. Opening results does not search again.") }
+                footer: { Text("With Info off, questions stay camera-only. With it on, the assistant searches only when the question needs outside information. Turning Info off cancels an unfinished question that allowed research; already-sent searches cannot be recalled. The info button shows a dot when hidden results are available. Drag the info handle upward to fill the screen, down to shrink it, or use its corner to adjust width. Captions have their own height handle. Turn on Select a region to tap or drag over the camera. Opening results does not search again.") }
             }
             .navigationTitle("TaskLens settings")
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } } }
@@ -110,6 +103,24 @@ struct SettingsView: View {
 
 
 @MainActor
+/// A few of Gemini's prebuilt voices that suit a friendly helper.
+private struct CloudVoice: Identifiable {
+    let name: String
+    let style: String
+    var id: String { name }
+
+    static let all: [CloudVoice] = [
+        CloudVoice(name: "Achird", style: "friendly"),
+        CloudVoice(name: "Sulafat", style: "warm"),
+        CloudVoice(name: "Aoede", style: "breezy"),
+        CloudVoice(name: "Puck", style: "upbeat"),
+        CloudVoice(name: "Kore", style: "firm, clear"),
+        CloudVoice(name: "Charon", style: "calm, informative"),
+        CloudVoice(name: "Leda", style: "youthful"),
+        CloudVoice(name: "Zephyr", style: "bright"),
+    ]
+}
+
 private struct AssistantVoicePicker: View {
     @ObservedObject var settings: ConnectionSettings
     @ObservedObject var speech: SpeechService
@@ -133,7 +144,6 @@ private struct AssistantVoicePicker: View {
             Button {
                 if speech.isSpeaking { speech.stopSpeaking() }
                 else {
-                    speech.noteUserAction()
                     speech.speak("Hi, I'm TaskLens. Show me what you're working on, and we'll figure it out together.",
                                  voiceIdentifier: settings.voiceIdentifier)
                 }

@@ -14,8 +14,7 @@ These are acceptance checks, not completed test results. Native compilation and 
 - Keep Demo responses enabled and turn on the viewfinder button. Drag a region near each of the four corners and center. Check that the yellow box follows the finger and accounts for black letterboxing.
 - Tap instead of dragging; a small region should be selected. It must not claim to have detected an object.
 - Move the phone slowly while the selected region remains visible. Evaluate the Vision tracker; record failures, including drift to similar items.
-- Keep a well-tracked object visible for at least a minute: it must not disappear after five seconds. Occlude it or move it out of view: the box must hide rather than freeze. Bring it back at another location and verify local recovery without another question or provider call. A high tracker confidence is not proof that it still follows the intended item.
-- Test two identical objects, a uniform/textureless target, lighting and distance changes, and rapid viewpoint changes. Ambiguous or unsupported recovery should leave the box hidden. Check front/rear cameras, clear/new selections, camera switching, and backgrounding: recovery of an old target must stop. Measure preview smoothness and battery/CPU use while searching for a missing target.
+- Occlude the object or move it out of view. Confirm a lost/expired pointer clears. A high tracker confidence is not proof that it still follows the intended item.
 - Ask a demo question with and without a selection. Without a selection there must be no invented target. Every demo reply is labelled.
 - An attached selected view belongs to the next question even if you move away. Clear it to use a fresh view.
 
@@ -46,7 +45,7 @@ These are acceptance checks, not completed test results. Native compilation and 
 - With captions off, confirm the camera, pointer, listening and spoken replies still work. Turn on the side text-bubble button: user words should appear on the right while speaking, remain once submitted, and be followed by the assistant on the left. New messages scroll into view; older messages can be scrolled/read. Check long answers and larger accessibility text.
 - Turn captions off/on during listening, processing and playback. No request should be repeated or voice turn cancelled by changing the overlay. Check persistence after relaunch. Open the full conversation from the captions header; listening pauses while it is open and resumes on dismissal unless muted. Errors should remain visible with both overlays off.
 - Show web info defaults on. Hide it and verify new live questions still search via Serper and receive source cards. A mint dot appears on the info button when hidden links are available. Tap it to show those same results without another request; relaunch and confirm visibility persists. Ask about a visible, clearly labelled product's price; confirm price text identifies currency/retailer, the sources open real pages, and the returned preview image comes from the online page. An unbranded object should yield similar-product wording or a clarification, not a confident exact match. Page images are best effort; blocked/missing metadata must leave a usable link.
-- Ask for further reading on a non-shopping topic. Confirm cited results create a small strip; empty results and thinking states reserve no space. Only questions needing outside information should search, and only with the info toggle enabled. Links must work with captions off. Expand/collapse details, then send a new question and confirm the new strip starts collapsed. Hide a strip with × and confirm its links remain available via the dotted info button. Check the Serper source links; no Google Search suggestions widget should be fabricated. Rehearse using the actual project/key: supported models and search eligibility are provider-dependent; no live search was executed in the automated checks.
+- Ask for further reading on a non-shopping topic. Confirm cited results create a small strip; empty results and thinking states reserve no space. Every new live question requests an initial lookup when connected. Links must work with captions off. Expand/collapse details, then send a new question and confirm the new strip starts collapsed. Hide a strip with × and confirm its links remain available via the dotted info button. Check the Serper source links; no Google Search suggestions widget should be fabricated. Rehearse using the actual project/key: supported models and search eligibility are provider-dependent; no live search was executed in the automated checks.
 - Hide Web info while a request or preview is loading. Cards disappear, preview fetching is cancelled, future questions still request research, and an old response must not appear as sources for a newer question. Turning it back on must not automatically send another paid request. New conversation clears source cards. Demo mode must not show live-looking prices or perform searches/previews.
 - Confirm small-screen/landscape controls, caption scrolling, source-card scrolling, webpage opening and returning, privacy/network failures, and Gemini timeouts (40 seconds per model call), cancellation, and the 95-second backend/105-second phone deadlines on a physical iPhone. Existing native decoding tests cover old responses and new source payloads but still require Xcode execution.
 
@@ -57,20 +56,27 @@ Use one clear, low-risk task and distinctive objects. Confirm that identifying a
 
 ## Research and memory
 
-- Keep the camera screen free of transcripts. Ask for ordinary object identification: verify there is no Serper lookup with info either on or off.
+- Keep the camera screen free of transcripts. Ask for ordinary object identification: verify the initial lookup runs for each new live question.
 - Ask a task that needs exact product documentation. Confirm uncertain searches use qualified categories and the assistant asks for missing model/version details instead of claiming an exact match and retains your answer after earlier messages fall out of chat history.
 - Inspect Terminal for `Agent action: search_online` / `read_source`. Receiving a researched answer must not automatically open Sources and research, cover the camera, stop playback, or pause/resume the microphone. Useful links appear only in the transparent camera-local info box when its display toggle is enabled. Full evidence is available from Settings only on explicit navigation.
 - Compare an accessible manual with a paywalled/unreachable document. The latter must not be claimed as read. Uncertain diagram-to-camera matches must ask for a clearer view instead of producing a speculative box.
 - Move the camera during research. Confirm a fresh frame is sent after research and old selected-image coordinates are never drawn on the new view. Keep in mind the existing frame-ring tracking lifetime.
 - Check a task plan in settings. It must not mark suggested steps complete automatically. Mark one completed, ask another question and confirm its state persists. Start a new task/change notes and confirm old context/sources clear.
 - Set ENABLE_WEB_RESEARCH=false on the server. Camera answers and memory should still work without search calls. Demo mode must always make zero provider calls.
-- Test bad source metadata, Google quota errors, expired continuations/backend restart, cancellation, network loss, and backgrounding during research. Do not automatically retry failed provider calls. Errors should be spoken (if enabled) and visible under Last issue.
+- Test bad source metadata, Google quota errors, expired continuations/backend restart, cancellation, network loss, and backgrounding during research. Only Google 500/503 "busy" responses are retried automatically (twice, about 1 s and 2 s apart); quota, auth, request and timeout failures are not retried. Errors should be spoken (if enabled) and visible under Last issue.
 - Measure the calls and latency for direct identification vs search plus document reading. Budget per model call, not per spoken question. Do not promise free research without verifying the account's tool quota/pricing.
+
+## Interrupting spoken replies
+
+- With the speaker at normal and high volume, let a long reply play without speaking: it must not interrupt itself. If it does, note the words it heard and the volume.
+- Say “wait” mid-reply: playback stops within about a second and nothing is sent. Ask a real question mid-reply: playback stops and the question is sent after the usual pause.
+- Repeat with AirPods/Bluetooth, in a noisy room, and with the phone muted (muted must never listen during replies). Check reply volume and quality with voice processing on.
+
 
 ## Serper search integration
 
 - Set a real `SERPER_API_KEY` locally and restart the backend; confirm startup says `Web search: Serper`. Keep Gemini configured as before. No native code changes are required.
-- With research enabled, ask for a product price or manufacturer manual. Confirm one `Serper search` request per search action, source links/snippets returned, a fresh-frame continuation, and a cited final answer. No Google `search_online` model calls or Google Search widgets should appear. Normal identification must not start a Serper lookup. Turning info off must prohibit search/read actions even for older clients that send searchEveryQuestion=true.
+- With research enabled, ask for a product price or manufacturer manual. Confirm one `Serper search` request per search action, source links/snippets returned, a fresh-frame continuation, and a cited final answer. No Google `search_online` model calls or Google Search widgets should appear. Normal identification from the updated app also starts with one Serper lookup; older clients without searchEveryQuestion retain the optional search policy.
 - Test missing/invalid key, empty search results, exhausted credits, slow network, and cancellation. The assistant must not fabricate a live price or claim to have read a full page from a snippet. Search failures should finish cleanly and allow the next camera question.
 - Hide results in Settings and verify lookups continue. Then set `ENABLE_WEB_RESEARCH=false` globally and verify no Serper queries are sent. Mock mode must remain entirely offline. Test old clients without task sessions as well as the task-aware client.
 - Serper credits are finite and separate from Gemini quotas. Verify actual result quality, product match, images and latency using the team's account; the automated checks use mocked responses and spend no search credits.
@@ -98,88 +104,6 @@ Use one clear, low-risk task and distinctive objects. Confirm that identifying a
 
 - While previewing a voice, scroll the voice rows and download instructions out of view: playback must continue. Closing Settings or changing the voice stops it. With only standard voices installed, Automatic should still prefer the phone’s English dialect where available.
 
-
-## Multiple targets, recovery schedule and rotation
-
-- Identify a bottle, then ask how to open it. The bottle should retain its ID and highlight while a new lid/button target is added with the bottle as its parent. Repeat across several follow-ups; unrelated objects must not inherit each other's IDs. Retain at most six objects.
-- Make two manual selections before asking a question. Confirm both are associated with one fresh camera frame, and old objects persist after the answer. In Settings → Remembered objects, forget one target and clear all; forgotten targets must not reappear from recovery callbacks.
-- Occlude a target: hide its box and search approximately once a second for the full minute. After one minute, it must remain hidden/dormant with no more recovery scans. A new question restarts local recovery. Other visible targets must continue tracking throughout.
-- Roll the phone slowly through positive and negative angles while pointing at a textured object: outlines should rotate with it without arbitrary expiry. Repeat with the mirrored front camera and verify the angle/position reflect together. Move/rotate the object itself, change distance, occlude/reintroduce it rotated, and test distinct competing lookalikes.
-- Measure preview smoothness with several live trackers and several missing targets. Recovery searches are scheduled for at most one lost object per captured frame. Confirm no extra Gemini/Serper calls occur for rotation or recovery.
-- Test camera flip, a new task, backgrounding and clearing/forgetting targets while a reply is in flight. No old-camera or old-task boxes should be reintroduced. Large out-of-plane rotations, uniform surfaces and occlusion remain best-effort cases and must not show frozen positions.
-
-
-## Snapshot-history and recovery responsiveness
-
-- Track a textured object for 10, 20 and 60 seconds while changing its view gradually. Inspect that source/newest views remain while intermediate history is thinned; memory must not grow indefinitely. Return to an earlier view and check recovery against that older snapshot.
-- Lose one or several targets, then immediately ask a question. Camera capture and JPEG encoding must not wait for the full-image search to finish. Compare local capture-to-send delay separately from Serper/Gemini response latency.
-- While a background search is running, clear/forget the object, switch cameras, start a new task, or background the app. A result from the old target instance or loss revision must never reappear. A recovery result is replayed from its own source frame before drawing, not applied directly to the latest image.
-- Check CPU/thermal behavior on the actual phone with several missing objects: only one full-image background scan can be in flight, and pending target deadlines are served fairly. Once a lost target reaches one minute, it must stop scheduling work until a new question restarts recovery.
-- Verify uniform views are not used as identity templates; appearance changes and lookalikes remain best-effort cases. No history/recovery operation should generate extra provider calls or write camera images to disk.
-
-
-## Apple foreground-mask experimental branch
-
-These replace the rectangle/appearance-recovery checks on this branch. Rebuild and run on a physical iPhone:
-
-- Ask to identify a distinct foreground object. Confirm the tint follows its silhouette, including gaps around it, rather than tinting a full rectangular region or the entire camera.
-- Move around the object and rotate the phone slightly. The silhouette must update to the current viewpoint. Try the front camera too: the tint must mirror with the preview.
-- Cover the object briefly, then uncover it. A stale tint must disappear within 0.8 seconds; once the positional tracker is lost, ask a new camera question to re-localize it. A different nearby object must not acquire the lost identity from mask geometry alone.
-- Identify two separate objects. Confirm each gets its own tint. Ask about a small lid/button: if Apple only returns the whole object, there should be no misleading whole-object highlight for that part.
-- Clear/forget selections, switch cameras and background the app during segmentation. Old results must never appear afterward.
-- Speak while objects are lost. Check camera smoothness, response latency, device warmth and mask refresh rate. Actual Vision inference speed depends on the phone; a worker result older than 0.8 seconds is discarded.
-
-## Question-aware highlighting (Apple masks branch)
-
-- Ask where one visible bottle is; verify a filled silhouette or soft filled area points
-  to that bottle. Ask how to open it: the visible opening control should be the
-  target, with a soft fill restricted to that area when segmentation cannot isolate it.
-- Test a screw cap and a push-release lid. The assistant should inspect the
-  actual mechanism; hide it and verify it requests a better view instead of
-  pointing at an invented button. Repeat with a zipper, keyboard key or switch.
-- Ask for all visible bottles with 2–6 distinct bottles in view. Check separate
-  labeled targets and no giant group box. Try a seventh: expect the six-at-a-time
-  limit to be stated. Ask an ambiguous singular follow-up and expect clarification.
-- Ask about an unrelated object: previous targets should stop glowing but remain
-  in Remembered objects. General conversation/unclear answers should clear the
-  old highlights. Start a new question, then simulate a network/provider error:
-  the preceding answer’s highlights must stay hidden. Revisit an existing ID after moving it and check new coordinates
-  replace the old tracked position.
-- Move a target out of frame and bring a similar object in. It must not revive
-  the old identity based on mask geometry alone. Ask a new camera question to
-  re-localize it. Test a slow response after the source frame leaves the ring;
-  expect a visible view-changed message and no stale pointer.
-- Move and rotate the phone during segmentation; check silhouettes, localized
-  part fills and labels on rear/front cameras, including letterboxing. Small
-  controls must not expand into their enclosing object. Background/close during
-  analysis must still cancel without leaving old highlights.
-
-## Audio lifecycle and main-thread warnings
-
-- Rebuild the app and run 10–20 spoken question/reply turns with the camera open.
-  Check for UI freezes, clipped replies, silence gaps, repeated main-thread
-  AVAudioSession/SessionCore warnings and empty-buffer logs. Record any remaining
-  warning alongside the exact action; internal iOS messages may still occur.
-- Mute/unmute rapidly during microphone startup, then background/lock while it
-  starts. The mic must stay stopped after cancellation. Reopen and verify it
-  resumes only according to the saved mute/permission state.
-- Start a reply and immediately stop it or leave the screen. A late prepared
-  utterance must not play, and the microphone must not start while speech is
-  pending or playing. Check the short listening delay after speech finishes.
-- Deny microphone/speech permissions and use typed questions. Error messages
-  should remain friendly and the UI responsive. Test the voice preview in
-  Settings without enabling background microphone recording.
-- Trigger a phone-call/Siri interruption, reconnect wired/Bluetooth audio, and
-  verify route changes do not leave duplicate taps or a silent recognition loop.
-  After an interruption, follow the Unmute recovery message.
-- If available, use iPhone Developer Settings → Reset Media Services. The app
-  should show the recovery message, discard old audio objects and stay silent
-  until the user reconnects with Unmute; a pending AI response must not restart
-  old playback automatically.
-- Run the SpeechAudioWorkerTests suite in Xcode. These injected-session tests
-  cover ordering/cancellation without opening the microphone; they do not
-  replace the physical-device checks above. See AUDIO.md for the implementation.
-
 ## Info-toggle search permission
 
 - With info OFF, ask for a current price or a manual. Confirm zero Serper or
@@ -194,20 +118,10 @@ These replace the rectangle/appearance-recovery checks on this branch. Rebuild a
 - Turning info ON alone must not submit a question. Saved links can be reopened
   without a new search, and saved OFF preferences must survive app relaunches.
 
-## Outline spillover and occluding hands
 
-- Show a bottle alone, then hold it with a hand extending past its sides. A
-  merged hand/bottle mask should be rejected rather than expanding the target.
-  Check the hand, neighboring objects and the background do not acquire tint
-  outside the AI target region over repeated refreshes.
-- Place disconnected distractors near the bottle and verify they do not become
-  part of its silhouette. Two comparable disconnected foreground components
-  should fall back to a quiet “Area” fill rather than guessing one outline.
-- Repeat with fingers crossing the object, reflective/transparent objects and
-  small controls. Separation inside the same target region is a known limitation;
-  do not claim perfect hand exclusion. Try a closer, clearer view.
-- Test rear/front cameras and asymmetrical object positions at the top/bottom of
-  the image to catch mask-orientation or clipping regressions. Verify the area
-  fallback stays subtle and no corner-frame presentation returns.
-- Run ForegroundIsolationTests in Xcode. These pure pixel-policy tests do not
-  establish Apple's actual segmentation accuracy, latency or device frame rate.
+## Branch integration
+
+- Confirm the camera uses the visual-assistant square/corner marker, including guided steps and pointing; no silhouette fill or foreground-mask request should run.
+- Confirm your existing ignored Signing.local.xcconfig still resolves your own team and bundle identifier after pulling.
+- Exercise cloud voice, spoken interruptions, a saved walkthrough, and the tools checklist.
+- Check incoming voice playback for main-thread audio warnings on the target phone. Native compilation and audio/device behavior require Xcode verification.
