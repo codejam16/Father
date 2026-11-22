@@ -1035,6 +1035,9 @@ private struct WalkthroughOverlay: View {
     @State private var followVoice = true
     @State private var heardVoice = false
     @State private var showAllSteps = false
+    /// Height of the step description at the bottom (it grows with the all-steps list), so the
+    /// zoom bubble is never placed underneath it.
+    @State private var captionHeight: CGFloat = 220
 
     private var count: Int { walkthrough.beats.count }
     private static let accent = Color(red: 0.30, green: 0.82, blue: 1.0)
@@ -1058,7 +1061,10 @@ private struct WalkthroughOverlay: View {
                     .position(x: fitted.midX, y: fitted.midY)
                 TimelineView(.animation) { timeline in
                     Canvas { context, _ in
-                        draw(in: &context, rect: fitted, elapsed: timeline.date.timeIntervalSince(beatStart))
+                        // Where a zoom bubble can go: below the X button, above the step description.
+                        let visible = CGRect(x: 0, y: 64, width: geometry.size.width,
+                                             height: max(0, geometry.size.height - captionHeight - 64 - 8))
+                        draw(in: &context, rect: fitted, visible: visible, elapsed: timeline.date.timeIntervalSince(beatStart))
                     }
                 }
                 .allowsHitTesting(false)
@@ -1183,6 +1189,11 @@ private struct WalkthroughOverlay: View {
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20))
         .padding(.horizontal, 16)
         .padding(.bottom, 20)
+        .background(GeometryReader { proxy in
+            Color.clear
+                .onAppear { captionHeight = proxy.size.height }
+                .onChange(of: proxy.size.height) { _, height in captionHeight = height }
+        })
     }
 
     /// Every step written out; tap one to show it.
@@ -1226,7 +1237,7 @@ private struct WalkthroughOverlay: View {
         CGPoint(x: rect.minX + unit.x * rect.width, y: rect.minY + unit.y * rect.height)
     }
 
-    private func draw(in context: inout GraphicsContext, rect: CGRect, elapsed: Double) {
+    private func draw(in context: inout GraphicsContext, rect: CGRect, visible: CGRect, elapsed: Double) {
         for (offset, beat) in walkthrough.beats.enumerated() where offset <= index {
             let current = offset == index
             let region = beat.unitRegion.map { place($0, in: rect) }
@@ -1245,7 +1256,7 @@ private struct WalkthroughOverlay: View {
             }
         }
         if index < count, walkthrough.beats[index].zoom == true, let box = walkthrough.beats[index].box {
-            drawZoom(screenRect(box, rect), bounds: rect, in: &context, elapsed: elapsed)
+            drawZoom(screenRect(box, rect), bounds: rect, visible: visible, in: &context, elapsed: elapsed)
         }
     }
 
@@ -1311,13 +1322,17 @@ private struct WalkthroughOverlay: View {
     }
 
     /// A magnified bubble of a small part, in the corner farthest from it, linked by a dashed line.
-    private func drawZoom(_ target: CGRect, bounds: CGRect, in context: inout GraphicsContext, elapsed: Double) {
+    private func drawZoom(_ target: CGRect, bounds: CGRect, visible: CGRect, in context: inout GraphicsContext, elapsed: Double) {
         guard target.width > 2, target.height > 2 else { return }
-        let diameter = min(150, bounds.width * 0.42)
+        // Place the bubble on the photo where nothing covers it (not under the X or the step text).
+        var area = bounds.intersection(visible)
+        if area.isNull || area.height < 90 { area = visible }
+        guard area.width > 60, area.height > 60 else { return }
+        let diameter = min(150, area.width * 0.42, area.height - 24)
         let inset = diameter / 2 + 12
         let corners = [
-            CGPoint(x: bounds.minX + inset, y: bounds.minY + inset), CGPoint(x: bounds.maxX - inset, y: bounds.minY + inset),
-            CGPoint(x: bounds.minX + inset, y: bounds.maxY - inset), CGPoint(x: bounds.maxX - inset, y: bounds.maxY - inset),
+            CGPoint(x: area.minX + inset, y: area.minY + inset), CGPoint(x: area.maxX - inset, y: area.minY + inset),
+            CGPoint(x: area.minX + inset, y: area.maxY - inset), CGPoint(x: area.maxX - inset, y: area.maxY - inset),
         ]
         let part = CGPoint(x: target.midX, y: target.midY)
         guard let center = corners.max(by: { hypot($0.x - part.x, $0.y - part.y) < hypot($1.x - part.x, $1.y - part.y) }) else { return }

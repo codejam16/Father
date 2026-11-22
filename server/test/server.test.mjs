@@ -535,3 +535,22 @@ test('if the everyday model is busy, the explanation model answers instead', asy
   });
   assert.deepEqual(models, ['gemini-3.5-flash-lite', 'gemini-3.5-flash-lite', 'gemini-3.8-flash']);
 });
+
+test('if a model does not answer in time, the other model answers instead', async () => {
+  const models = [];
+  const settings = { ...loadConfig({ GEMINI_MODEL: 'gemini-3.5-flash-lite', EXPLAIN_MODEL: 'gemini-3.8-flash' }), diagnosticLogPath: null, diagnosticLogger: () => {}, retryDelayMs: 0 };
+  const routed = { ...modelFor({ question: 'Explain this circuit' }, settings), timeoutMs: 50 };
+  assert.equal(modelFor({ question: 'Explain this circuit' }, settings).timeoutMs, 20_000);
+  const ok = { ok: true, json: async () => ({ candidates: [{ finishReason: 'STOP', content: { parts: [{ text: '{}' }] } }] }) };
+  // AbortSignal.timeout doesn't keep Node alive on its own (a running server does).
+  const keepAlive = setInterval(() => {}, 10);
+  const payload = await generateWithSchemaFallback({ contents: [] }, routed, async (url, { signal }) => {
+    models.push(url.match(/models\/([^:]+):/)[1]);
+    if (url.includes('gemini-3.8-flash')) {
+      return new Promise((_, reject) => signal.addEventListener('abort', () => reject(signal.reason)));
+    }
+    return ok;
+  }).finally(() => clearInterval(keepAlive));
+  assert.ok(payload.candidates);
+  assert.deepEqual(models, ['gemini-3.8-flash', 'gemini-3.5-flash-lite']);
+});
