@@ -46,7 +46,6 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
         let id: UUID
         let box: NormalizedBox
         let mask: CGImage
-        let reanchorObject: Bool
     }
     private var configured = false
     private var input: AVCaptureDeviceInput?
@@ -579,22 +578,19 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
                     self.lastSegmentationError = nil
                     // Never display masks inferred from a camera view that is already stale.
                     guard newest.time - frame.time < 0.8,
-                          let sourceIndex = self.frames.firstIndex(where: { $0.id == frame.id }) else { return }
+                          self.frames.contains(where: { $0.id == frame.id }) else { return }
+                    let acceptedIDs = Set(masks.map(\.id))
+                    for target in self.targets where inputIDs.contains(target.instanceID) && !acceptedIDs.contains(target.instanceID) {
+                        // A fresh rejection invalidates the older outline immediately.
+                        target.foregroundMask = nil
+                        target.foregroundMaskBox = nil
+                        target.foregroundMaskTime = -Double.infinity
+                    }
                     for match in masks {
                         guard let target = self.targets.first(where: { $0.instanceID == match.id }) else { continue }
                         guard target.tracker != nil else { continue }
-                        if match.reanchorObject {
-                            // Fresh whole-object silhouettes correct positional drift.
-                            // Parts never get expanded to an enclosing object's bounds.
-                            target.pose = RotatedBox(box: match.box)
-                            target.lastBox = match.box; target.lastVisionBox = match.box
-                            target.stability = TrackingStability()
-                            self.seedVision(target, box: match.box)
-                            for replay in self.frames[sourceIndex...] {
-                                guard target.tracker != nil else { break }
-                                self.advanceTracker(target, on: replay, allowAppearanceCheck: false)
-                            }
-                        }
+                        // A mask refines pixels only. Feeding its larger bounds back
+                        // into tracking can ratchet the target onto a hand/background.
                         target.foregroundMaskBox = match.box
                         target.foregroundMask = match.mask
                         target.foregroundMaskTime = frame.time
@@ -610,11 +606,11 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
         let handler = VNImageRequestHandler(cvPixelBuffer: frame.pixels, orientation: .up)
         try handler.perform([request])
         guard let observation = request.results?.first else { return [] }
-        var instances: [(index: Int, box: NormalizedBox)] = []
+        var instances: [(index: Int, box: NormalizedBox, mask: CVPixelBuffer)] = []
         // Use Vision's per-instance masks, not the instance-label buffer.
-        for index in observation.allInstances {
+        for index in observation.allInstances.prefix(16) {
             let mask = try observation.generateMask(forInstances: IndexSet(integer: index))
-            if let box = Self.foregroundBounds(mask) { instances.append((index, box)) }
+            if let box = Self.foregroundBounds(mask) { instances.append((index, box, mask)) }
         }
         var claimed = Set<Int>()
         var results: [SegmentedTarget] = []
@@ -623,14 +619,55 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
             guard let selected = ForegroundAssociation.match(target: input.box.unitRect,
                                                              candidates: available.map { $0.box.unitRect }, isPart: input.isPart) else { continue }
             let instance = available[selected]
+            guard let pixels = Self.foregroundPixels(instance.mask),
+                  let gate = pixels.isolatedComponent(in: input.box.unitRect),
+                  let provider = CGDataProvider(data: Data(gate) as CFData),
+                  let gateImage = CGImage(width: pixels.width, height: pixels.height, bitsPerComponent: 8,
+                    bitsPerPixel: 8, bytesPerRow: pixels.width, space: CGColorSpaceCreateDeviceGray(),
+                    bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.none.rawValue), provider: provider,
+                    decode: nil, shouldInterpolate: false, intent: .defaultIntent) else { continue }
             let mask = try observation.generateScaledMaskForImage(forInstances: IndexSet(integer: instance.index), from: handler)
             let image = CIImage(cvPixelBuffer: mask)
-            guard let cgImage = segmentationContext.createCGImage(image, from: image.extent,
+            let component = CIImage(cgImage: gateImage)
+                .applyingFilter("CIMorphologyMaximum", parameters: ["inputRadius": 1.0])
+                .cropped(to: CGRect(x: 0, y: 0, width: CGFloat(pixels.width), height: CGFloat(pixels.height)))
+                .transformed(by: CGAffineTransform(scaleX: image.extent.width / CGFloat(pixels.width),
+                                                   y: image.extent.height / CGFloat(pixels.height)))
+            let region = input.box.visionRect
+            let clip = CGRect(x: region.minX * image.extent.width, y: region.minY * image.extent.height,
+                              width: region.width * image.extent.width, height: region.height * image.extent.height)
+                .intersection(image.extent)
+            let black = CIImage(color: .black).cropped(to: image.extent)
+            let constrained = image.applyingFilter("CIMultiplyCompositing", parameters: [kCIInputBackgroundImageKey: component])
+                .cropped(to: clip).composited(over: black)
+            guard let cgImage = segmentationContext.createCGImage(constrained, from: image.extent,
                 format: .L8, colorSpace: CGColorSpaceCreateDeviceGray()) else { continue }
-            results.append(SegmentedTarget(id: input.id, box: input.isPart ? input.box : instance.box, mask: cgImage, reanchorObject: !input.isPart))
+            results.append(SegmentedTarget(id: input.id, box: input.box, mask: cgImage))
             claimed.insert(instance.index)
         }
         return results
+    }
+
+    private static func foregroundPixels(_ mask: CVPixelBuffer) -> ForegroundMaskPixels? {
+        let format = CVPixelBufferGetPixelFormatType(mask)
+        guard [kCVPixelFormatType_OneComponent32Float, kCVPixelFormatType_OneComponent8].contains(format),
+              CVPixelBufferLockBaseAddress(mask, .readOnly) == kCVReturnSuccess else { return nil }
+        defer { CVPixelBufferUnlockBaseAddress(mask, .readOnly) }
+        let width = CVPixelBufferGetWidth(mask), height = CVPixelBufferGetHeight(mask)
+        guard width > 0, height > 0, width <= 2048, height <= 2048, width * height <= 1_048_576,
+              let base = CVPixelBufferGetBaseAddress(mask) else { return nil }
+        let stride = CVPixelBufferGetBytesPerRow(mask)
+        var values = [UInt8](repeating: 0, count: width * height)
+        for y in 0..<height {
+            let row = base.advanced(by: y * stride)
+            for x in 0..<width {
+                if format == kCVPixelFormatType_OneComponent32Float {
+                    let value = row.assumingMemoryBound(to: Float.self)[x]
+                    values[y * width + x] = value.isFinite ? UInt8((min(1, max(0, value)) * 255).rounded()) : 0
+                } else { values[y * width + x] = row.assumingMemoryBound(to: UInt8.self)[x] }
+            }
+        }
+        return ForegroundMaskPixels(width: width, height: height, values: values)
     }
 
     /// Mask rows, like our upright camera buffers and API coordinates, start at the top.

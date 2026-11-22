@@ -552,3 +552,50 @@ final class WebSearchPermissionTests: XCTestCase {
         XCTAssertFalse(request.searchEveryQuestion)
     }
 }
+
+final class ForegroundIsolationTests: XCTestCase {
+    private func pixels(_ points: [(Int, Int)], size: Int = 12) throws -> ForegroundMaskPixels {
+        var values = [UInt8](repeating: 0, count: size * size)
+        for (x, y) in points { values[y * size + x] = 255 }
+        return try XCTUnwrap(ForegroundMaskPixels(width: size, height: size, values: values))
+    }
+    private func rectangle(_ xs: Range<Int>, _ ys: Range<Int>) -> [(Int, Int)] {
+        ys.flatMap { y in xs.map { x in (x, y) } }
+    }
+    func testCleanObjectKeepsItsForegroundPixels() throws {
+        let source = try pixels(rectangle(3..<9, 2..<10))
+        let region = CGRect(x: 0.25, y: 2.0 / 12, width: 0.5, height: 8.0 / 12)
+        let result = try XCTUnwrap(source.isolatedComponent(in: region))
+        XCTAssertEqual(result, source.values)
+    }
+    func testMergedHandExtendingOutsideObjectRegionIsRejected() throws {
+        let object = rectangle(3..<9, 2..<10)
+        let hand = rectangle(0..<3, 3..<9)
+        let source = try pixels(object + hand)
+        XCTAssertNil(source.isolatedComponent(in: CGRect(x: 0.25, y: 2.0 / 12, width: 0.5, height: 8.0 / 12)))
+    }
+    func testDisconnectedSpecklesAndOutsidePixelsCannotJoinTheObject() throws {
+        let object = rectangle(5..<7, 2..<10)
+        let source = try pixels(object + [(3, 2), (0, 0)])
+        let region = CGRect(x: 0.25, y: 2.0 / 12, width: 0.5, height: 8.0 / 12)
+        let result = try XCTUnwrap(source.isolatedComponent(in: region))
+        XCTAssertEqual(result[2 * 12 + 3], 0)
+        XCTAssertEqual(result[0], 0)
+        XCTAssertEqual(result.filter { $0 > 0 }.count, object.count)
+    }
+    func testTwoComparableComponentsAreAmbiguous() throws {
+        let source = try pixels(rectangle(1..<3, 2..<8) + rectangle(7..<9, 2..<8))
+        XCTAssertNil(source.isolatedComponent(in: CGRect(x: 0, y: 0, width: 1, height: 1)))
+    }
+    func testForegroundBoundsCannotExpandToMuchLargerNeighbor() {
+        let object = CGRect(x: 0.3, y: 0.2, width: 0.2, height: 0.4)
+        let merged = object.insetBy(dx: -0.1, dy: -0.1)
+        XCTAssertNil(ForegroundAssociation.match(target: object, candidates: [merged]))
+    }
+    func testEmptyAndInvalidMasksHaveNoObjectOutline() throws {
+        XCTAssertNil(ForegroundMaskPixels(width: 12, height: 12, values: []))
+        let empty = try pixels([])
+        XCTAssertNil(empty.isolatedComponent(in: CGRect(x: 0, y: 0, width: 1, height: 1)))
+        XCTAssertNil(empty.isolatedComponent(in: CGRect(x: 2, y: 2, width: 1, height: 1)))
+    }
+}

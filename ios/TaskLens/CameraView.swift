@@ -122,7 +122,7 @@ struct CameraStage: View {
         let pose = highlight.pose
         return ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: highlight.kind == .part ? 5 : 14)
-                .fill(color.opacity(highlight.isFocused ? 0.30 : 0.23))
+                .fill(color.opacity(highlight.isFocused ? 0.16 : 0.12))
                 .blur(radius: highlight.kind == .part ? 1 : 3)
                 .frame(width: max(8, pose.size.width * image.width), height: max(8, pose.size.height * image.height))
                 .rotationEffect(.radians(mirrored ? -pose.angle : pose.angle))
@@ -139,7 +139,7 @@ struct CameraStage: View {
         let pose = highlight.pose
         let x = image.minX + (mirrored ? 1 - pose.center.x : pose.center.x) * image.width
         let y = image.minY + max(0, pose.center.y - pose.size.height / 2) * image.height
-        return Text(highlight.label).font(.system(size: 10, weight: .semibold)).lineLimit(1)
+        return Text(highlight.mask == nil ? "Area: " + highlight.label : highlight.label).font(.system(size: 10, weight: .semibold)).lineLimit(1)
             .foregroundStyle(color).padding(.horizontal, 7).padding(.vertical, 4)
             .background(.black.opacity(0.6), in: Capsule()).frame(maxWidth: 140)
             .position(x: min(max(x, image.minX + 70), image.maxX - 70), y: max(image.minY + 14, y - 12))

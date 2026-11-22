@@ -193,3 +193,21 @@ These replace the rectangle/appearance-recovery checks on this branch. Rebuild a
   already sent to a provider may still count against its usage.
 - Turning info ON alone must not submit a question. Saved links can be reopened
   without a new search, and saved OFF preferences must survive app relaunches.
+
+## Outline spillover and occluding hands
+
+- Show a bottle alone, then hold it with a hand extending past its sides. A
+  merged hand/bottle mask should be rejected rather than expanding the target.
+  Check the hand, neighboring objects and the background do not acquire tint
+  outside the AI target region over repeated refreshes.
+- Place disconnected distractors near the bottle and verify they do not become
+  part of its silhouette. Two comparable disconnected foreground components
+  should fall back to a quiet “Area” fill rather than guessing one outline.
+- Repeat with fingers crossing the object, reflective/transparent objects and
+  small controls. Separation inside the same target region is a known limitation;
+  do not claim perfect hand exclusion. Try a closer, clearer view.
+- Test rear/front cameras and asymmetrical object positions at the top/bottom of
+  the image to catch mask-orientation or clipping regressions. Verify the area
+  fallback stays subtle and no corner-frame presentation returns.
+- Run ForegroundIsolationTests in Xcode. These pure pixel-policy tests do not
+  establish Apple's actual segmentation accuracy, latency or device frame rate.

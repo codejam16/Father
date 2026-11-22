@@ -554,7 +554,7 @@ enum ForegroundAssociation {
             let candidateArea = candidate.width * candidate.height
             let ratio = candidateArea / area
             // In particular, don't paint a whole bottle when the target is its lid.
-            guard ratio >= (isPart ? 0.5 : 0.3), ratio <= (isPart ? 1.25 : 3) else { return nil }
+            guard ratio >= (isPart ? 0.5 : 0.3), ratio <= (isPart ? 1.25 : 1.6) else { return nil }
             if isPart {
                 let allowed = target.insetBy(dx: -target.width * 0.1, dy: -target.height * 0.1)
                 let inside = allowed.intersection(candidate)
@@ -563,10 +563,76 @@ enum ForegroundAssociation {
             let intersection = target.intersection(candidate)
             let shared = intersection.isNull ? 0 : intersection.width * intersection.height
             let score = shared / max(0.00001, area + candidateArea - shared)
-            return score >= (isPart ? 0.55 : 0.35) ? (index, score) : nil
+            return score >= (isPart ? 0.55 : 0.5) ? (index, score) : nil
         }.sorted { $0.1 > $1.1 }
         guard let best = ranked.first else { return nil }
         if ranked.count > 1, best.1 - ranked[1].1 < 0.12 { return nil }
         return best.0
+    }
+}
+
+/// Low-resolution per-instance probabilities, with top-left image coordinates.
+/// Reject merged foreground and isolate a single connected object inside its AI region.
+struct ForegroundMaskPixels {
+    let width: Int
+    let height: Int
+    let values: [UInt8]
+
+    init?(width: Int, height: Int, values: [UInt8]) {
+        guard width > 0, height > 0, width <= 2048, height <= 2048,
+              width * height <= 1_048_576, values.count == width * height else { return nil }
+        self.width = width; self.height = height; self.values = values
+    }
+
+    func isolatedComponent(in target: CGRect) -> [UInt8]? {
+        guard [target.minX, target.minY, target.width, target.height].allSatisfy(\.isFinite) else { return nil }
+        let region = target.intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+        guard !region.isNull, !region.isEmpty else { return nil }
+        let x1 = max(0, Int(floor(region.minX * CGFloat(width))))
+        let y1 = max(0, Int(floor(region.minY * CGFloat(height))))
+        let x2 = min(width, Int(ceil(region.maxX * CGFloat(width))))
+        let y2 = min(height, Int(ceil(region.maxY * CGFloat(height))))
+        guard x2 > x1, y2 > y1 else { return nil }
+        var total = 0, outside = 0
+        for y in 0..<height {
+            for x in 0..<width where values[y * width + x] >= 128 {
+                total += 1
+                if x < x1 || x >= x2 || y < y1 || y >= y2 { outside += 1 }
+            }
+        }
+        // A hand/person merged into the object's mask usually extends beyond
+        // its semantic region. Do not grow the region to accommodate that mask.
+        guard total >= 4, Double(outside) / Double(total) <= 0.15 else { return nil }
+        var visited = [Bool](repeating: false, count: values.count)
+        var best: [Int] = [], runnerUp = 0
+        for y in y1..<y2 {
+            for x in x1..<x2 {
+                let start = y * width + x
+                guard values[start] >= 128, !visited[start] else { continue }
+                var component = [start], head = 0
+                visited[start] = true
+                while head < component.count {
+                    let pixel = component[head]; head += 1
+                    let px = pixel % width, py = pixel / width
+                    for dy in -1...1 {
+                        for dx in -1...1 where dx != 0 || dy != 0 {
+                            let nx = px + dx, ny = py + dy
+                            guard nx >= x1, nx < x2, ny >= y1, ny < y2 else { continue }
+                            let next = ny * width + nx
+                            if !visited[next], values[next] >= 128 {
+                                visited[next] = true; component.append(next)
+                            }
+                        }
+                    }
+                }
+                if component.count > best.count { runnerUp = best.count; best = component }
+                else { runnerUp = max(runnerUp, component.count) }
+            }
+        }
+        let minimum = max(4, Int(Double((x2 - x1) * (y2 - y1)) * 0.06))
+        guard best.count >= minimum, Double(runnerUp) < Double(best.count) * 0.35 else { return nil }
+        var gate = [UInt8](repeating: 0, count: values.count)
+        for pixel in best { gate[pixel] = 255 }
+        return gate
     }
 }

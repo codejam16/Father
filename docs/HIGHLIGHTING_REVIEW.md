@@ -12,7 +12,7 @@ merge unrelated scanner features or change local signing configuration.
 | The model's object list did not distinguish the current action target from a contextual parent. Earlier objects stayed lit. | Explicit object/part and primary/context metadata. Only the current answer's primary records glow; a new question hides old paint while preserving identity/focus for follow-ups. A failed request therefore leaves no old action cue. |
 | Seeding an existing ID returned early and discarded corrected camera coordinates. | New answers re-seed from their actual source frame, including existing IDs. An expired frame clears presentation and gives a visible request to ask again. |
 | Every target in a multi-object response became focused in succession. | Six distinct primary matches are supported, with no arbitrary single focus after a plural answer. Singular ambiguity asks for clarification. |
-| Fresh masks reset the target's tracker to the mask bounds; approximate part/object association could enlarge the target. | Fresh whole-object masks re-anchor positional tracking to prevent drift. Part-mask geometry is stricter, and parts never expand onto an enclosing object. Low-confidence or parent-sized drifting part tracks are discarded. |
+| Fresh masks reset the target's tracker to the mask bounds; approximate part/object association could enlarge the target. | Masks never re-anchor or enlarge tracking. Geometry gates are tighter; pixel-level spillover rejects merged foreground, and only one unambiguous connected component inside the target region is rendered. Low-confidence or parent-sized drifting part tracks are discarded. |
 | Foreground geometry could revive a lost identity without proving it was the same object. | The mask worker processes current visible primary tracks. Lost objects need a new visual answer for re-identification, instead of mask-only reassociation to a similar bottle. |
 | Empty arrays could fall back to legacy coordinates, and the legacy target could select a parent before its child. | Explicit arrays are authoritative, including `[]`. Legacy clients receive a primary component as their single pointer. |
 
@@ -41,3 +41,31 @@ Tracking between fresh masks is an approximation and can drift with fast motion,
 perspective changes or occlusion. Coordinates from an expired source frame are
 never reused as current coordinates. No extra provider requests, periodic cloud
 analysis, or automatic retries were added.
+
+## Outline spillover refinement
+
+The whole-object matcher previously accepted foreground bounds up to three times
+its target region and fed those bounds back into tracking. A merged hand/object
+mask could therefore enlarge the search region over successive refreshes.
+
+Mask pixels are now decorations inside the independent AI/Vision target region.
+Whole-object candidate bounds are capped at 1.6 times that region, with at least
+0.5 intersection-over-union. Per-instance low-resolution pixels are checked:
+more than 15% foreground outside the intended region rejects the mask. A single
+connected component must dominate; comparable disconnected components reject an
+ambiguous mask. Isolated speckles are removed. A one-pixel edge gate preserves
+antialiasing in the native high-resolution mask, and final clipping prevents any
+rendered mask from extending beyond the target box. Only 16 foreground candidates
+are examined per inference, with the existing single-worker/latest-frame limits.
+A fresh rejection clears the previous mask immediately rather than retaining it
+until its age limit.
+
+These changes limit spillover; they do not turn Apple's foreground segmenter
+into a semantic object/part model. Fingers overlapping a bottle *inside* the
+same region may remain merged, and an incorrect AI region still needs a new
+view/question. A rejected/missing outline uses the quieter “Area” fill to identify
+it as approximate. Precise separation of touching/occluding objects would require
+a target-specific segmentation model and real-device evaluation. No extra cloud
+calls or model downloads were added. Native tests cover clean objects, merged
+foreground, disconnected speckles, competing components and invalid masks; they
+still need Xcode execution.
