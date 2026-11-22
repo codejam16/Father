@@ -54,8 +54,10 @@ export function loadConfig(env = process.env) {
   if (explainModel && !['gemini-3.8-flash', 'gemini-3.5-flash-lite'].includes(explainModel)) throw new Error('EXPLAIN_MODEL must be gemini-3.8-flash, gemini-3.5-flash-lite or same.');
   const thinkingLevel = (env.GEMINI_THINKING_LEVEL ?? 'auto').trim().toUpperCase();
   if (!['AUTO', 'MINIMAL', 'LOW', 'MEDIUM', 'HIGH'].includes(thinkingLevel)) throw new Error('GEMINI_THINKING_LEVEL must be auto, minimal, low, medium or high.');
+  const quickLocateMode = (env.QUICK_LOCATE_MODE ?? 'fast').trim().toLowerCase();
+  if (!['fast', 'detailed'].includes(quickLocateMode)) throw new Error('QUICK_LOCATE_MODE must be fast or detailed.');
   const config = {
-    mode, model, explainModel, thinkingLevel, apiKey: env.GEMINI_API_KEY ?? '', appToken: env.APP_TOKEN ?? '',
+    mode, model, explainModel, thinkingLevel, quickLocateMode, apiKey: env.GEMINI_API_KEY ?? '', appToken: env.APP_TOKEN ?? '',
     port: integer(env.PORT, 8787, 65535), host: env.HOST ?? '127.0.0.1',
     maxOutputTokens: integer(env.MAX_OUTPUT_TOKENS, 2048, 4096),
     diagnosticLogPath: fileURLToPath(new URL('../.data/provider-errors.jsonl', import.meta.url)),
