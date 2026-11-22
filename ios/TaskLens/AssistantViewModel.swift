@@ -1,6 +1,7 @@
 import Combine
 import Foundation
 import CoreGraphics
+import CoreLocation
 
 @MainActor
 final class AssistantViewModel: ObservableObject {
@@ -210,6 +211,43 @@ final class AssistantViewModel: ObservableObject {
                     ?? "I couldn't finish that request. Please try again."
                 errorMessage = message
                 if settings.spokenReplies { speech.speak(message, voiceIdentifier: settings.voiceIdentifier) }
+            }
+        }
+    }
+
+    func verifyLandmark(_ landmarkId: String, language: String, location: CLLocation,
+                        completion: @escaping (DetourVerification) -> Void) {
+        guard isActive, !isBusy, !settings.demoMode else { return }
+        clearSelection(); isBusy = true; errorMessage = nil
+        updateListening(); speech.stopSpeaking()
+        let id = UUID(); workID = id
+        let endpoint = settings.serverURL, token = settings.token
+        work = Task {
+            defer {
+                if workID == id { isBusy = false; workID = nil; updateListening() }
+            }
+            do {
+                let frame = try await camera.snapshot()
+                try Task.checkCancellation()
+                let input = DetourVerificationRequest(landmarkId: landmarkId, language: language,
+                    frame: AnalysisRequest(frame: frame, question: "Check this discovery", task: "", history: [], selection: nil),
+                    location: .init(latitude: location.coordinate.latitude, longitude: location.coordinate.longitude,
+                        accuracy: location.horizontalAccuracy, timestamp: ISO8601DateFormatter().string(from: location.timestamp)))
+                let result = try await client.verify(input, endpoint: endpoint, token: token)
+                try Task.checkCancellation()
+                guard workID == id, isActive else { return }
+                if let target = result.target, result.found {
+                    camera.point(at: target.box, frameID: frame.id, label: target.label, source: .assistant)
+                }
+                messages.append(ChatMessage(role: .user, content: "Is this the discovery?"))
+                messages.append(ChatMessage(role: .assistant, content: result.reason))
+                if messages.count > 40 { messages.removeFirst(messages.count - 40) }
+                lastReplyWasDemo = false; showAnswered(); completion(result)
+                if settings.spokenReplies { speech.speak(result.reason, voiceIdentifier: settings.voiceIdentifier) }
+            } catch is CancellationError { }
+            catch {
+                guard workID == id else { return }
+                errorMessage = (error as? TaskLensError)?.localizedDescription ?? "Could not check that landmark. Try a clearer view."
             }
         }
     }

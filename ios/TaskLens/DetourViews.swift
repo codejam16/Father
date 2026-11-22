@@ -56,14 +56,11 @@ struct DetourRootView: View {
             store.navigation.setScannerOpen(open)
         }
         .fullScreenCover(item: $store.scannerPresentation, onDismiss: store.closeScanner) { presentation in
-            ContentView(model: store.scanner, discoveryContext: presentation.context)
-                .overlay(alignment: .topLeading) {
-                    Button { store.scannerPresentation = nil } label: {
-                        Image(systemName: "chevron.down").font(.headline).foregroundStyle(.white)
-                            .frame(width: 42, height: 42).background(.ultraThinMaterial, in: Circle())
-                    }
-                    .padding(.leading, 16).padding(.top, 12).accessibilityLabel("Return to Detour")
-                }
+            DetourScannerView(store: store, scanner: store.scanner, presentation: presentation)
+        }
+        .sheet(item: $store.selectedClue, onDismiss: store.completeClueDismissal) { poi in
+            NavigationStack { DetourClueView(store: store, navigation: store.navigation, poi: poi) }
+                .presentationDetents([.medium]).presentationDragIndicator(.visible)
         }
         .onChange(of: scenePhase) { _, phase in store.setForeground(phase == .active) }
     }
@@ -125,9 +122,9 @@ private struct DetourHome: View {
                 if let recent = store.history.first {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack { Text("YOUR LAST DETOUR").font(.caption.weight(.bold)); Spacer(); if recent.simulated { Text("SIMULATION").font(.caption2.bold()).foregroundStyle(.orange) } }
-                        Text("\(recent.discoveries.count) discoveries · \(Int(recent.metres)) m").font(.title3.bold())
+                        Text("\(recent.foundNames?.count ?? 0) found · \(Int(recent.metres)) m").font(.title3.bold())
                         Text(recent.date, style: .date).font(.caption).foregroundStyle(.secondary)
-                        if let first = recent.discoveries.first { Text(first).font(.subheadline) }
+                        if let first = recent.foundNames?.first { Text(first).font(.subheadline) }
                     }.frame(maxWidth: .infinity, alignment: .leading).detourCard()
                 }
                 Text("Real walking routes. Small discoveries. More eyes-up time.").font(.footnote).foregroundStyle(.secondary)
@@ -192,12 +189,15 @@ private struct DetourPreferencesView: View {
                             }
                         }
                     } else {
-                        DetourMap(start: store.start, stops: [], plan: nil, showUser: navigation.canUseLocation) { point in store.chooseStart(point, name: "Dropped map pin") }
+                        DetourMap(start: store.start, stops: [], plan: nil, showUser: navigation.canUseLocation, select: { point in store.chooseStart(point, name: "Dropped map pin") })
                             .frame(height: 230).clipShape(RoundedRectangle(cornerRadius: 18))
                         Text("Tap the map to set a start.").font(.caption).foregroundStyle(.secondary)
                     }
                     if startMode != 0 { Text(store.startName).font(.subheadline) }
                 }
+            }
+            Section("Destination · optional") {
+                DetourDestinationPicker(store: store, navigation: navigation)
             }
             Section("Time outside") {
                 Picker("Duration", selection: $store.preferences.minutes) { ForEach([15, 30, 45, 60], id: \.self) { Text("\($0) min").tag($0) } }.pickerStyle(.segmented)
@@ -214,12 +214,13 @@ private struct DetourPreferencesView: View {
                 }
             }
             Section("Make it yours") {
-                Toggle("Return to starting point", isOn: $store.preferences.returnToStart)
+                Toggle("Return to starting point", isOn: $store.preferences.returnToStart).disabled(store.destination != nil)
+                if store.destination != nil { Text("This walk finishes at your destination. Its walking time is included in your budget.").font(.caption).foregroundStyle(.secondary) }
                 Toggle("Prefer new discoveries", isOn: $store.preferences.preferNew)
                 Picker("Discovery frequency", selection: $store.preferences.frequency) { ForEach(DetourFrequency.allCases, id: \.self) { Text($0.rawValue.capitalized).tag($0) } }
                 Picker("Walking pace", selection: $store.preferences.pace) { ForEach(DetourPace.allCases, id: \.self) { Text($0.rawValue.capitalized).tag($0) } }
                 Picker("Narration", selection: $store.preferences.language) { Text("English").tag("en"); Text("Français").tag("fr") }
-                Toggle("Automatically read source summaries", isOn: $store.preferences.automaticStories)
+                Toggle("Read stories after finding landmarks", isOn: $store.preferences.automaticStories)
                 Toggle("Optional AI-written stories", isOn: $store.preferences.aiStories)
                 Text("AI stories use your connected backend. Without one, sourced summaries still work. Street instruction wording follows the map service’s device language.").font(.caption).foregroundStyle(.secondary)
             }
@@ -259,20 +260,23 @@ private struct DetourPreview: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 if plan.simulated { DetourSimulationBanner() }
-                DetourMap(start: plan.start, stops: plan.stops, plan: plan, showUser: store.navigation.canUseLocation && !plan.simulated)
+                DetourMap(start: plan.start, stops: plan.stops, plan: plan, showUser: store.navigation.canUseLocation && !plan.simulated,
+                          showClue: { store.selectedClue = $0 })
                     .frame(height: 320).clipShape(RoundedRectangle(cornerRadius: 26))
                 HStack(spacing: 20) {
                     metric("\(Int(ceil(plan.estimatedSeconds / 60))) min", caption: plan.simulated ? "Demo timing" : "Walk + brief stops")
                     metric(String(format: "%.1f km", plan.distance / 1000), caption: plan.simulated ? "Schematic distance" : "Pedestrian paths")
                     metric("\(plan.stops.count)", caption: "Discoveries")
                 }.frame(maxWidth: .infinity).detourCard()
+                if let name = plan.destinationName { Label("Finish: " + name, systemImage: "flag.checkered").font(.subheadline.weight(.semibold)) }
+                Text("Tap a discovery pin for a clue. Find the real thing when you arrive, or simply walk past.").font(.footnote).foregroundStyle(.secondary)
                 ForEach(plan.notes, id: \.self) { Text($0).font(.footnote).foregroundStyle(.secondary) }
                 Text("ALONG YOUR WAY").font(.caption.weight(.bold)).foregroundStyle(.secondary)
                 ForEach(Array(plan.stops.enumerated()), id: \.element.id) { index, poi in
-                    NavigationLink { DetourPOIDetail(poi: poi, language: store.preferences.language) } label: {
+                    Button { store.selectedClue = poi } label: {
                         HStack(spacing: 12) {
                             Text("\(index + 1)").font(.headline).frame(width: 34, height: 34).background(DetourStyle.sage.opacity(0.3), in: Circle())
-                            VStack(alignment: .leading, spacing: 4) { Text(poi.name).font(.headline); Text(poi.sourceName).font(.caption).foregroundStyle(.secondary) }
+                            VStack(alignment: .leading, spacing: 4) { Text("Discovery \(index + 1)").font(.headline); Text(poi.clue).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
                             Spacer(); Image(systemName: "chevron.right").font(.caption)
                         }.frame(maxWidth: .infinity, alignment: .leading).detourCard()
                     }.buttonStyle(.plain)
@@ -297,7 +301,8 @@ private struct DetourWalkView: View {
             VStack(spacing: 0) {
                 if plan.simulated { DetourSimulationBanner() }
                 DetourMap(start: plan.start, stops: plan.stops, plan: plan, showUser: navigation.canUseLocation && !plan.simulated,
-                          simulatedPosition: navigation.simulationPosition)
+                          simulatedPosition: navigation.simulationPosition, foundIds: Set(store.found.map(\.id)),
+                          showClue: { store.selectedClue = $0 })
                     .overlay(alignment: .top) { guidance.padding(14) }
                     .safeAreaInset(edge: .bottom) { controls(plan: plan) }
             }
@@ -321,20 +326,27 @@ private struct DetourWalkView: View {
             TimelineView(.periodic(from: .now, by: 1)) { _ in
                 HStack {
                     Label("\(Int(navigation.elapsed / 60)) min", systemImage: "clock")
-                    Spacer(); Text("\(navigation.visited.count) / \(plan.stops.count) discovered")
+                    Spacer(); Text("\(store.found.count) found · \(navigation.visited.count) nearby")
                     Spacer(); Text("\(Int(navigation.metresWalked)) m")
                 }.font(.caption).foregroundStyle(.secondary)
             }
             if let poi = navigation.arrival {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("A LITTLE DISCOVERY").font(.caption2.weight(.bold)).foregroundStyle(.secondary)
-                    Text(poi.name).font(.title3.bold())
-                    HStack {
-                        Button { store.readStory(poi) } label: { Label(store.loadingStory ? "Preparing…" : "Listen", systemImage: "speaker.wave.2") }.disabled(store.loadingStory)
-                        Spacer(); Button("Scan", action: store.openScanner)
-                        Spacer(); Button("Skip story", action: store.skipStory)
-                    }.font(.subheadline.weight(.semibold))
-                    NavigationLink("About this place and sources") { DetourPOIDetail(poi: poi, language: store.preferences.language) }.font(.caption)
+                    let isFound = store.found.contains(where: { $0.id == poi.id })
+                    Label(isFound ? "FOUND" : "YOU’RE NEARBY", systemImage: isFound ? "checkmark.seal.fill" : "sparkles")
+                        .font(.caption2.weight(.bold)).foregroundStyle(.secondary)
+                    Text(isFound ? poi.name : poi.clue).font(.subheadline.weight(.semibold)).lineLimit(3)
+                    if isFound {
+                        HStack {
+                            Button { store.readStory(poi) } label: { Label(store.loadingStory ? "Preparing…" : "Hear its story", systemImage: "speaker.wave.2") }.disabled(store.loadingStory)
+                            Spacer(); Button("Keep walking", action: store.skipStory)
+                        }.font(.subheadline.weight(.semibold))
+                    } else {
+                        HStack {
+                            Button { store.findLandmark(poi) } label: { Label("Find it", systemImage: "viewfinder") }.disabled(navigation.paused)
+                            Spacer(); Button("Keep walking", action: store.skipStory)
+                        }.font(.subheadline.weight(.semibold))
+                    }
                 }.frame(maxWidth: .infinity, alignment: .leading).padding(15).background(DetourStyle.sage.opacity(0.22), in: RoundedRectangle(cornerRadius: 20))
             }
             if plan.simulated {
@@ -347,13 +359,144 @@ private struct DetourWalkView: View {
                 Button(action: store.openScanner) { Image(systemName: "viewfinder") }.accessibilityLabel("Explore with AI")
                 Button(action: navigation.toggleVoiceCommands) { Image(systemName: navigation.voiceCommands ? "mic.fill" : "mic.slash") }.accessibilityLabel(navigation.voiceCommands ? "Disable voice commands" : "Enable foreground voice commands")
             }.font(.headline)
-            if navigation.voiceCommands { Text("While this screen is open: say story, skip, repeat, scan or pause. Locked-screen guidance continues with the microphone off.").font(.caption2).foregroundStyle(.secondary) }
+            if navigation.voiceCommands { Text("While this screen is open: say find, skip, repeat, scan or pause. Locked-screen guidance continues with the microphone off.").font(.caption2).foregroundStyle(.secondary) }
             HStack {
                 DetourAttributionLink()
                 Spacer()
                 Button("End walk") { store.finish(completed: navigation.fraction >= 0.94) }.font(.caption.weight(.semibold))
             }
         }.padding(18).background(.regularMaterial, in: UnevenRoundedRectangle(topLeadingRadius: 26, topTrailingRadius: 26))
+    }
+}
+
+@MainActor
+private struct DetourDestinationPicker: View {
+    @ObservedObject var store: DetourStore
+    @ObservedObject var navigation: DetourNavigation
+    @State private var expanded = false
+    @State private var mode = 0
+    @State private var query = ""
+    @State private var searching = false
+    @State private var results: [MKMapItem] = []
+    var body: some View {
+        if let destination = store.destination {
+            Label(store.destinationName, systemImage: "flag.checkered")
+            Text(String(format: "%.4f, %.4f", destination.latitude, destination.longitude)).font(.caption).foregroundStyle(.secondary)
+            Button("Remove destination") { store.destination = nil; store.destinationName = ""; expanded = false }
+        }
+        Button(expanded ? "Hide destination picker" : store.destination == nil ? "Add a destination" : "Change destination") { expanded.toggle() }
+        if expanded {
+            Picker("Choose destination", selection: $mode) { Text("Search").tag(0); Text("Map pin").tag(1) }.pickerStyle(.segmented)
+            if mode == 0 {
+                HStack {
+                    TextField("Where would you like to finish?", text: $query).onSubmit { search() }
+                    Button(action: search) {
+                        if searching { ProgressView() } else { Image(systemName: "magnifyingglass") }
+                    }.disabled(searching || query.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+                ForEach(Array(results.enumerated()), id: \.offset) { _, item in
+                    Button {
+                        store.chooseDestination(DetourPoint(item.placemark.coordinate), name: item.name ?? "Selected destination")
+                        results = []; expanded = false
+                    } label: {
+                        VStack(alignment: .leading) {
+                            Text(item.name ?? "Place")
+                            Text(item.placemark.title ?? "").font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            } else {
+                DetourMap(start: store.destination ?? store.start, stops: [], plan: nil, showUser: navigation.canUseLocation && !store.preferences.simulation, pointLabel: "Destination pin",
+                    select: { store.chooseDestination($0, name: "Dropped destination pin") })
+                    .frame(height: 230).clipShape(RoundedRectangle(cornerRadius: 18))
+                Text("Tap the map to choose where the walk finishes.").font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+    private func search() {
+        guard !searching, !query.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        searching = true; let text = query
+        Task {
+            defer { searching = false }
+            let request = MKLocalSearch.Request(); request.naturalLanguageQuery = text
+            request.region = MKCoordinateRegion(center: store.start.coordinate, latitudinalMeters: 8000, longitudinalMeters: 8000)
+            do { results = try await MKLocalSearch(request: request).start().mapItems }
+            catch { store.message = "Destination search is unavailable. Choose a map pin instead." }
+        }
+    }
+}
+
+@MainActor
+private struct DetourClueView: View {
+    @ObservedObject var store: DetourStore
+    @ObservedObject var navigation: DetourNavigation
+    let poi: DetourPOI
+    private var isFound: Bool { store.found.contains(where: { $0.id == poi.id }) }
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                Label(isFound ? "You found it" : "A clue for your walk", systemImage: isFound ? "checkmark.seal.fill" : "sparkles")
+                    .font(.title2.bold()).foregroundStyle(DetourStyle.accent)
+                Text(isFound ? poi.name : poi.clue).font(.headline)
+                Text(isFound ? poi.summary(language: store.preferences.language) : "The pin gets you close. Look around for the real thing, then use the camera to check it. You can always keep walking.")
+                    .font(.subheadline).foregroundStyle(.secondary)
+                if isFound {
+                    NavigationLink("Details and sources") { DetourPOIDetail(poi: poi, language: store.preferences.language) }
+                }
+                if navigation.active && !isFound {
+                    Button { store.findLandmark(poi) } label: { Label("Find it with the camera", systemImage: "viewfinder") }
+                        .buttonStyle(DetourPrimaryButton()).disabled(navigation.paused)
+                } else if !navigation.active { Text("Start your walk to find this discovery.").font(.caption).foregroundStyle(.secondary) }
+                Button(navigation.active ? "Keep walking" : "Back to route") {
+                    if navigation.arrival?.id == poi.id { store.skipStory() }
+                    store.selectedClue = nil
+                }.frame(maxWidth: .infinity)
+            }.padding(24)
+        }.background(DetourStyle.sage.opacity(0.10))
+    }
+}
+
+@MainActor
+private struct DetourScannerView: View {
+    @ObservedObject var store: DetourStore
+    @ObservedObject var scanner: AssistantViewModel
+    let presentation: DetourStore.ScannerPresentation
+    var body: some View {
+        ContentView(model: scanner, discoveryContext: presentation.context)
+            .overlay(alignment: .topLeading) {
+                Button { store.scannerPresentation = nil } label: {
+                    Image(systemName: "chevron.down").font(.headline).foregroundStyle(.white)
+                        .frame(width: 42, height: 42).background(.ultraThinMaterial, in: Circle())
+                }.padding(.leading, 16).padding(.top, 12).accessibilityLabel("Return to Detour")
+            }
+            .safeAreaInset(edge: .bottom) {
+                if let poi = presentation.landmark { checkCard(poi) }
+            }
+            .preferredColorScheme(.dark)
+    }
+    private func checkCard(_ poi: DetourPOI) -> some View {
+        let isFound = store.found.contains(where: { $0.id == poi.id })
+        return VStack(alignment: .leading, spacing: 10) {
+            Label(isFound ? "Found: " + poi.name : "Find this discovery", systemImage: isFound ? "checkmark.seal.fill" : "viewfinder").font(.headline)
+            Text(store.verificationMessage ?? poi.clue).font(.subheadline).lineLimit(4)
+            if isFound {
+                Button("Back to my walk") { store.scannerPresentation = nil }.buttonStyle(DetourPrimaryButton())
+            } else {
+                Button { store.verifyLandmark(poi) } label: {
+                    HStack { if scanner.isBusy { ProgressView() }; Text(scanner.isBusy ? "Checking…" : "Check camera view") }.frame(maxWidth: .infinity)
+                }.buttonStyle(DetourPrimaryButton()).disabled(scanner.isBusy)
+                Text("Only this check can mark it found. Unclear views stay unconfirmed.").font(.caption2).foregroundStyle(.secondary)
+            }
+        }.padding(16).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24)).padding(.horizontal, 14).padding(.bottom, 8)
+    }
+}
+
+private struct DetourMapTap: ViewModifier {
+    let enabled: Bool
+    let tapped: (CGPoint) -> Void
+    @ViewBuilder func body(content: Content) -> some View {
+        if enabled { content.onTapGesture(coordinateSpace: .local, perform: tapped) }
+        else { content }
     }
 }
 
@@ -371,16 +514,25 @@ private struct DetourMap: View {
     let stops: [DetourPOI]
     let plan: DetourPlan?
     let showUser: Bool
+    var pointLabel = "Starting point"
     var simulatedPosition: DetourPoint? = nil
     var select: ((DetourPoint) -> Void)? = nil
+    var foundIds: Set<String> = []
+    var showClue: ((DetourPOI) -> Void)? = nil
+    @State private var selectedID: String?
     @State private var camera: MapCameraPosition = .automatic
     var body: some View {
         MapReader { proxy in
-            Map(position: $camera) {
+            Map(position: $camera, selection: $selectedID) {
                 if showUser { UserAnnotation() }
-                Marker("Starting point", systemImage: "flag.fill", coordinate: start.coordinate).tint(DetourStyle.forest)
-                ForEach(stops) { poi in
-                    Marker(poi.name, systemImage: "sparkles", coordinate: poi.point.coordinate).tint(DetourStyle.orange)
+                Marker(pointLabel, systemImage: "flag.fill", coordinate: start.coordinate).tint(DetourStyle.forest)
+                ForEach(Array(stops.enumerated()), id: \.element.id) { index, poi in
+                    Marker(foundIds.contains(poi.id) ? poi.name : "Discovery \(index + 1)",
+                           systemImage: foundIds.contains(poi.id) ? "checkmark.seal.fill" : "sparkles", coordinate: poi.point.coordinate)
+                        .tint(foundIds.contains(poi.id) ? DetourStyle.forest : DetourStyle.orange).tag(poi.id)
+                }
+                if let destination = plan?.destination {
+                    Marker(plan?.destinationName ?? "Destination", systemImage: "flag.checkered", coordinate: destination.coordinate).tint(DetourStyle.forest)
                 }
                 if let plan {
                     ForEach(plan.legs) { leg in
@@ -397,9 +549,13 @@ private struct DetourMap: View {
                 }
             }
             .mapControls { MapCompass(); MapScaleView() }
-            .onTapGesture { location in
-                guard let select, let coordinate = proxy.convert(location, from: .local) else { return }
-                select(DetourPoint(coordinate))
+            .modifier(DetourMapTap(enabled: select != nil, tapped: { location in
+                guard let coordinate = proxy.convert(location, from: .local) else { return }
+                select?(DetourPoint(coordinate))
+            }))
+            .onChange(of: selectedID) { _, id in
+                if let poi = stops.first(where: { $0.id == id }) { showClue?(poi) }
+                selectedID = nil
             }
         }
         .onAppear { fit() }
@@ -472,10 +628,11 @@ private struct DetourSummaryView: View {
                 HStack(spacing: 26) {
                     VStack { Text("\(Int(summary.seconds / 60))").font(.title.bold()); Text("minutes").font(.caption) }
                     VStack { Text("\(Int(summary.metres)) m").font(.title.bold()); Text(summary.simulated ? "schematic" : "walked").font(.caption) }
-                    VStack { Text("\(summary.discoveries.count)").font(.title.bold()); Text("discoveries").font(.caption) }
+                    VStack { Text("\(summary.foundNames?.count ?? 0)").font(.title.bold()); Text("found").font(.caption) }
                 }.detourCard()
-                ForEach(Array(summary.discoveries.enumerated()), id: \.offset) { _, name in Text(name).frame(maxWidth: .infinity, alignment: .leading).detourCard() }
-                if summary.discoveries.isEmpty { Text("Your next discovery is waiting.").foregroundStyle(.secondary) }
+                ForEach(Array((summary.foundNames ?? []).enumerated()), id: \.offset) { _, name in Text(name).frame(maxWidth: .infinity, alignment: .leading).detourCard() }
+                Text("Passed near \(summary.discoveries.count) discoveries. Nearby stops only count as found after a successful camera check.").font(.footnote).foregroundStyle(.secondary)
+                if (summary.foundNames ?? []).isEmpty { Text("Your next discovery is waiting.").foregroundStyle(.secondary) }
                 Button("Back to Detour", action: done).buttonStyle(DetourPrimaryButton())
             }.padding(23)
         }

@@ -129,3 +129,20 @@ The existing `/analyze` contract is preserved. Detour endpoints use the same `Au
 - `POST /detour/story` with `{ "landmarkId": "montreal_art_<known-id>", "language": "en" }` (or `fr`): only known curated IDs are accepted; client facts, URLs and coordinates are not used. Returns `{story, generated, sourceUrls}`. Mock mode returns a sourced record without a provider call. Successful AI stories are cached by model/landmark/language; failed calls are not retried automatically. Story generation is opt-in on the phone and falls back to the source record on failure.
 
 Precise start coordinates are necessary for nearby discovery but are not included in request log labels. MapKit path computation remains on the iPhone. Gemini does not produce routes or time estimates. See DETOUR.md for attribution, data snapshot provenance and operational limits.
+
+### `POST /detour/verify`
+
+Uses the same Bearer token and JSON/image size limits as `/analyze`.
+Request: `{landmarkId, language: "en"|"fr", frame: {frameId, capturedAt, image},
+location: {latitude, longitude, accuracy, timestamp}}`. `image` uses the existing
+JPEG/base64 payload. Frame and location timestamps must be within 30 seconds,
+location accuracy at most 65 m, and distance to the server-owned record at most
+100 m. Only known catalog/cached discovery IDs are accepted; arbitrary URLs,
+client facts and ordinary chat replies cannot create a verified find.
+
+Response: `{frameId, landmarkId, found, reason, needsClearerView, target}`.
+`target` is null or `{label, box: [ymin,xmin,ymax,xmax]}` on 0–1000. One Gemini
+call per deliberate live check, no automatic retries. Medium/low confidence,
+insufficient evidence and unclear views always return `found: false`. Mock mode
+makes zero provider calls and never awards finds. `landmark_not_nearby` is HTTP
+400; `unknown_landmark` is HTTP 404 (refresh discovery after a backend restart).

@@ -8,9 +8,19 @@ final class DetourRoutePlanner {
     init(routeProvider: ((DetourPoint, DetourPoint, DetourPOI?) async throws -> DetourLeg)? = nil) { self.routeProvider = routeProvider }
 
     func generate(start: DetourPoint, landmarks: [DetourPOI], preferences: DetourPreferences,
-                  visited: Set<String>, status: (String) -> Void) async throws -> DetourPlan {
+                  visited: Set<String>, destination: DetourPoint? = nil, destinationName: String? = nil, status: (String) -> Void) async throws -> DetourPlan {
         cache.removeAll()
-        if preferences.simulation { return try simulation(landmarks: landmarks, preferences: preferences, visited: visited) }
+        if preferences.simulation { return try simulation(landmarks: landmarks, preferences: preferences, visited: visited, destination: destination, destinationName: destinationName) }
+        let endpoint = destination ?? (preferences.returnToStart ? start : nil)
+        let budget = Double(preferences.minutes * 60)
+        var direct: DetourLeg?
+        if let endpoint, start.distance(to: endpoint) >= 20 {
+            status("Checking the walk to your destination…")
+            direct = try await leg(from: start, to: endpoint, landmark: nil)
+            guard (direct?.seconds ?? 0) * preferences.pace.multiplier <= budget else {
+                throw TaskLensError.message("Your destination does not fit this time budget on foot. Choose a closer destination or allow more time.")
+            }
+        }
         let wanted = Set(preferences.interests.map(\.rawValue))
         let surprise = preferences.interests.contains(.surprise)
         let candidates = landmarks.filter { $0.routable && start.distance(to: $0.point) >= 50 }
@@ -20,17 +30,19 @@ final class DetourRoutePlanner {
             }
         var stops: [DetourPOI] = [], legs: [DetourLeg] = [], elapsed = 0.0, previous = start
         var finalReturn: DetourLeg?
-        let budget = Double(preferences.minutes * 60)
         var checked = 0
         for candidate in candidates.prefix(10) {
             try Task.checkCancellation()
             if stops.count >= preferences.frequency.stopLimit { break }
             if stops.contains(where: { $0.point.distance(to: candidate.point) < 75 }) { continue }
             checked += 1
-            status("Checking pedestrian route \(checked) · \(candidate.name)")
+            status("Checking pedestrian route \(checked)…")
             do {
                 let outbound = try await leg(from: previous, to: candidate.point, landmark: candidate)
-                let back = preferences.returnToStart ? try await leg(from: candidate.point, to: start, landmark: nil) : nil
+                let back: DetourLeg?
+                if let endpoint, candidate.point.distance(to: endpoint) >= 20 {
+                    back = try await leg(from: candidate.point, to: endpoint, landmark: nil)
+                } else { back = nil }
                 let walking = elapsed + outbound.seconds * preferences.pace.multiplier
                 let estimate = walking + (back?.seconds ?? 0) * preferences.pace.multiplier + Double(stops.count + 1) * preferences.frequency.dwell
                 guard estimate <= budget else { continue }
@@ -44,6 +56,11 @@ final class DetourRoutePlanner {
                 continue
             }
         }
+        if stops.isEmpty, destination != nil, let direct {
+            return DetourPlan(start: start, stops: [], legs: [direct], estimatedSeconds: direct.seconds * preferences.pace.multiplier,
+                simulated: false, notes: ["Your destination fits, but no extra landmark stop fits this time budget."],
+                destination: destination, destinationName: destinationName)
+        }
         guard !stops.isEmpty else {
             throw TaskLensError.message("No pedestrian route fits this time budget here. Try a longer walk, another start, or the clearly labelled indoor simulation.")
         }
@@ -54,7 +71,7 @@ final class DetourRoutePlanner {
         }
         return DetourPlan(start: start, stops: stops, legs: legs,
                           estimatedSeconds: elapsed + Double(stops.count) * preferences.frequency.dwell,
-                          simulated: false, notes: notes)
+                          simulated: false, notes: notes, destination: destination, destinationName: destinationName)
     }
 
     private func score(_ poi: DetourPOI, wanted: Set<String>, surprise: Bool, visited: Set<String>,
@@ -102,7 +119,7 @@ final class DetourRoutePlanner {
     }
 
     // Explicitly schematic: these lines/times are never used by live GPS guidance.
-    private func simulation(landmarks: [DetourPOI], preferences: DetourPreferences, visited: Set<String>) throws -> DetourPlan {
+    private func simulation(landmarks: [DetourPOI], preferences: DetourPreferences, visited: Set<String>, destination: DetourPoint?, destinationName: String?) throws -> DetourPlan {
         let wanted = Set(preferences.interests.map(\.rawValue))
         let ranked = landmarks.filter(\.routable).sorted {
             score($0, wanted: wanted, surprise: preferences.interests.contains(.surprise), visited: visited, preferences: preferences, start: .montreal)
@@ -119,12 +136,13 @@ final class DetourRoutePlanner {
                                   steps: [DetourStep(instruction: "Simulation: advance to \(stop.name).", startDistance: 0)]))
             previous = stop.point
         }
-        if preferences.returnToStart {
-            legs.append(DetourLeg(start: previous, end: start, landmark: nil, points: [previous, start],
-                                  distance: previous.distance(to: start), seconds: 60,
-                                  steps: [DetourStep(instruction: "Simulation: return to the start.", startDistance: 0)]))
+        if let end = destination ?? (preferences.returnToStart ? start : nil) {
+            legs.append(DetourLeg(start: previous, end: end, landmark: nil, points: [previous, end],
+                                  distance: previous.distance(to: end), seconds: 60,
+                                  steps: [DetourStep(instruction: "Simulation: continue to the finish.", startDistance: 0)]))
         }
         return DetourPlan(start: start, stops: stops, legs: legs, estimatedSeconds: Double(legs.count * 60), simulated: true,
-                          notes: ["INDOOR SIMULATION. Dashed straight lines are schematic, not pedestrian routes. Timing and positions are simulated. No live GPS or AI calls are required."])
+                          notes: ["INDOOR SIMULATION. Dashed straight lines are schematic, not pedestrian routes. Timing and positions are simulated. No live GPS or AI calls are required."],
+                          destination: destination, destinationName: destinationName)
     }
 }

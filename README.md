@@ -2,15 +2,16 @@
 
 **Look up. Listen in. Discover more.**
 
-A native iPhone walking-discovery app built around the existing TaskLens camera assistant. Choose a starting point, time and interests; preview a real pedestrian route; hear directions and discover sourced nearby landmarks. Open the AI scanner from home or during a walk.
+A native iPhone walking-discovery app built around the existing TaskLens camera assistant. Choose a starting point, optional destination, time and interests; preview a real pedestrian route; hear directions and discover sourced nearby landmarks. Open the AI scanner from home or during a walk.
 
 This branch is **`feature/detour-walking-discovery`**, based on `starter/visual-assistant`. There are no accounts or social features.
 
 ## What is implemented
 
-- Adaptive SwiftUI home, GPS/search/map-pin starts, 15/30/45/60-minute preferences, interests, pace, discovery frequency, return-to-start, novelty and English/French narration.
+- Adaptive SwiftUI home, GPS/search/map-pin starts, searched/map-pin destinations, 15/30/45/60-minute preferences, interests, pace, discovery frequency, return-to-start, novelty and English/French narration.
 - MapKit walking legs with a bounded route-selection heuristic and real provider travel estimates. Routes are checked against the time budget; failed paths are never drawn as invented straight-line directions.
-- Active walking map, location progress, spoken directions, proximity discoveries, Listen/Skip/Scan actions, local notifications and local completion summaries.
+- Active walking map, location progress, spoken directions, tappable discovery clues, nearby Find it/Keep walking prompts, local notifications and local completion summaries.
+- Deliberate AI camera checks mark landmarks found only after a confident visual match near the pin. Unclear views stay unconfirmed, and found history is separate from nearby stops.
 - Background location/audio configuration for foreground-started walks. The camera pauses when locked; navigation has a separate lifecycle. Background microphone conversation is not promised.
 - 35 sourced municipal public-art records bundled for central Montréal, optional cached Overpass discovery, explicit Wikipedia/Wikidata references and bounded Wikipedia article enrichment. Indoor/unknown-entrance objects are not silently routed as outdoor entrances.
 - Sourced local readings and optional Gemini-written stories grounded in server-owned records. Story playback respects navigation prompts and cancellation.

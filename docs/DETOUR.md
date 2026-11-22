@@ -8,8 +8,8 @@ Branch: `feature/detour-walking-discovery`. The existing `starter/visual-assista
 2. Open `ios/TaskLens.xcodeproj`, keep the **TaskLens** scheme, select your iPhone and Personal Team, and Run. The installed display name is **Detour**. The scheme/module/binary names remain TaskLens so existing signing and tests stay compatible.
 3. Start Exploring → enable **Indoor simulation** → Generate → preview the explicitly schematic route → Start → Advance Demo. This path needs no GPS, backend, or AI generation. Apple map tiles still need connectivity or an existing cache; the map is not an offline map download.
 4. For a real walk, disable simulation, grant location permission via **Use current location**, and wait for a good fix. You can also search for a starting place or tap the map. Location denial still permits manual previews and simulation; it never pretends to start GPS navigation.
-5. Generate a real route. MapKit must return actual `.walking` routes that fit the chosen time budget, including the return leg when enabled and a stop allowance. No route is replaced by straight lines on failure.
-6. Start near the marked start. Choose Listen, Skip story, or Scan when a discovery appears. Source summaries work locally. Optional AI stories and camera analysis need the existing backend connection; the scanner's Demo responses setting remains authoritative.
+5. Generate a real route. MapKit must return actual `.walking` routes that fit the chosen time budget, including the destination/return leg and a stop allowance. No route is replaced by straight lines on failure.
+6. Start near the marked start. Tap discovery pins for a clue. Nearby prompts offer Find it or Keep walking; successful camera checks mark finds and reveal the record. Source summaries work locally after finding. Optional AI stories and camera analysis need the existing backend connection; the scanner's Demo responses setting remains authoritative.
 7. For AI, keep the existing `server/.env` values and run `cd server && npm start`. The scanner still uses authenticated `POST /analyze`; the new services are under `/detour/`. A real phone needs the Mac's reachable LAN address, not localhost. Outside that network, point the app at your own reachable backend to use optional cloud features. Already-calculated navigation and source summaries do not depend on that backend.
 
 ## Architecture
@@ -18,7 +18,7 @@ Branch: `feature/detour-walking-discovery`. The existing `starter/visual-assista
 - `DetourModels.swift`: normalized public POIs, persistent preferences/history, route legs, and bounded path projection.
 - `DetourRoutePlanner.swift`: ranks nearby candidates by real interest matches, novelty and geographic proximity, evaluates up to ten candidates with MapKit, and includes real pedestrian travel estimates and optional return travel in admission decisions. It is a bounded greedy heuristic, not a globally optimal city tour solver. The same selections will often repeat when priorities/availability have not changed.
 - `DetourNavigation.swift`: foreground-started Core Location session, path progress, spoken MapKit instructions, arrival detection, notification actions, pause/resume and explicit schematic simulation. It owns a separate instance of the existing SpeechService, so the scanner can stop when locked without stopping walking location updates.
-- `DetourStore.swift`: coordinates route generation, local summaries (last 30), cancellation, source/AI narration, and reuse of the existing scanner. Real discoveries affect future novelty ranking; simulation discoveries do not.
+- `DetourStore.swift`: coordinates route generation, local summaries (last 30), cancellation, source/AI narration, and reuse of the existing scanner. Camera-confirmed finds affect future novelty ranking; nearby-only stops and simulation do not.
 - `landmarks.mjs`: source normalization, filtering, bounded Overpass calls, deduplication and a 15-minute/32-area cache. It does not run on every GPS update. OSM is requested before merging the bundled municipal catalog. Source outages are explicit and fall back to the catalog.
 - `landmark-enrichment.mjs`: optionally batches up to four **explicitly linked** OSM Wikipedia article references, at most English and French. Missing, failed or unlinked articles leave mapped descriptions unchanged. Wikidata IDs are retained as reference links. There is no speculative name matching or arbitrary source fetching.
 - `detour-story.mjs`: optional Gemini narration from server-owned municipal records and facts only, with source links and bounded cached output. It cannot accept client-invented history, URLs or coordinates. Generated stories still need source checking; schema checks cannot prove every generated claim is true.
@@ -50,7 +50,7 @@ OSM: [© OpenStreetMap contributors](https://www.openstreetmap.org/copyright), *
 - Arrival uses a 45 m proximity check plus path progress near the leg endpoint; this is approximate, not proof the camera faces a specific object. Initial real navigation requires a recent GPS fix within 150 m of the route start. Manual previews never substitute for current GPS.
 - Direction prompts interrupt stories. Narration waits for current prompts to finish; skipping a story or opening the scanner cancels pending narration so a late provider reply cannot take over. Sources remain available to inspect.
 - The scanner remains fully functional with its own captions, selection, research, voice picker and history. It receives the nearby landmark as a **candidate** plus source facts, never a guaranteed identification. Opening it suspends navigation speech; closing it restores the walk. Camera/microphone handling continues to pause when the scanner leaves the foreground.
-- Foreground voice commands are opt-in: story, skip, repeat, scan and pause. Speech recognition is **off when the screen is locked**; spoken route cues, notification actions and optional automatic source narration can continue. The app does not promise always-listening background conversation. Notification actions offer Listen, Skip and Scan; Scan opens the foreground app.
+- Foreground voice commands are opt-in: find, story, skip, repeat, scan and pause. Speech recognition is **off when the screen is locked**; spoken route cues, notification actions can continue. Optional source narration starts after a find when the scanner closes. The app does not promise always-listening background conversation. Notification actions offer Find it and Keep walking; Find it opens the foreground app.
 - Narration can use English/French voices and records. MapKit instruction text follows the device/map-service language; the app does not ask an LLM to translate or invent safety-critical street directions. The main UI is English.
 - Live walks require network during route calculation; optional cloud scanning/enrichment also requires network. Offline navigation-map downloads, continuous app-termination recovery, account/social features and route resume after a process restart are outside this MVP.
 
@@ -67,3 +67,37 @@ xcodebuild -project ios/TaskLens.xcodeproj -scheme TaskLens -destination 'generi
 ```
 
 Use Product → Test on an available simulator/device for the native tests. Rehearse the actual outdoor route with a real iPhone before presenting locked-screen guidance. See DEVICE_CHECKS.md for GPS, audio interruption, source access, skip/cancellation and simulation checks.
+
+## Destination and landmark finding
+
+A walk can now finish at an optional searched place or dropped destination pin.
+That endpoint takes precedence over return-to-start. Planning checks Apple's
+actual walking route to the endpoint before adding stops and includes the final
+leg in every time-budget check. If the destination fits but extra stops do not,
+Detour offers the direct pedestrian route with an explanation. Recalculation
+retains the chosen endpoint. Indoor simulation remains explicitly schematic.
+
+Tap any discovery pin in the preview or active walk for a brief material/category
+clue. Unfound pins hide the landmark's title. Accurate GPS within about 45 m of an
+on-route stop triggers a spoken nearby prompt and optional notification, with
+**Find it** and **Keep walking** actions. Passing near a stop is recorded separately
+from finding it. Ignoring a stop does not block the next route leg.
+
+Find it opens the existing scanner with an extra **Check camera view** control.
+The deliberate check makes one `/detour/verify` request; ordinary chat answers
+cannot award a find. It needs a live walk, current GPS within 100 m (accuracy at
+most 65 m), a fresh camera frame, and live AI settings. The backend looks up the
+landmark in its own municipal catalog or discovery cache and sends only that
+record and the frame to Gemini. Client-supplied facts are ignored. A high-confidence
+visual match with readable identification or source-supported distinctive features
+is required. Generic/uncertain views remain unconfirmed. A valid returned box uses
+the existing frame-aware highlight tracker. Dismissal/backgrounding cancels the
+check; no automatic provider retries or background camera loops were added.
+
+This is an AI-assisted prototype check, not a guarantee of identity or an
+anti-cheating system. The records do not include reference photographs; many
+objects will need a readable identifying plaque. Demo mode and simulation never
+award real finds. Successful finds reveal the title and sourced description and
+are saved in walk history separately from nearby stops. Legacy histories retain
+their nearby counts without being relabelled as verified finds. Automatic stories,
+when enabled, play after a successful find once the scanner closes.

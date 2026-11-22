@@ -108,3 +108,26 @@ Use one clear, low-risk task and distinctive objects. Confirm that identifying a
 - Test English/French records and narration; street direction text follows the device map language. Background voice conversation is not implemented. Force-quit recovery is not uninterrupted navigation.
 - Disconnect Overpass/Wikipedia/backend: bundled discoveries/source readings still work; real route calculation still needs MapKit connectivity. No fake historic facts, prices, entrances or successful provider results should appear.
 - Finish/end a live walk, reopen the app and confirm recent summaries/preferences persist. Stop GPS/audio on completion. Test large text, light/dark mode, map-source attribution, landmark source links, and existing scanner overlays/voice settings.
+
+### Destination and finding a landmark
+
+- Search for a destination, select it, generate a walk and verify the final flag
+  and final path leg reach it. Repeat with a dropped destination pin. Choose an
+  endpoint too far for the selected duration and confirm an explanation appears.
+- Tap each discovery pin and route-list row: a short clue should appear, with no
+  full title until found. Dismiss and tap the same pin again.
+- Approach an on-route landmark outdoors: expect one nearby voice/notification
+  prompt with Find it / Keep walking. Ignore it and verify directions continue.
+  Confirm the same stop does not repeatedly notify as GPS drifts.
+- Find it from the clue sheet and from the nearby card should each open the same
+  scanner. Check a clearly wrong object, an ambiguous object, then a readable
+  identifying plaque; only a successful visual check should increment Found.
+- Cancel/close or lock the phone mid-check; ensure no late find is awarded. Keep
+  the camera moving during a slow check and confirm old highlight coordinates do
+  not get painted onto an unrelated frame.
+- Demo settings and indoor simulation must not award real finds or make visual
+  verification provider calls. Real verification requires accurate current GPS.
+- Finish a walk, relaunch, and check history keeps camera finds separate from
+  nearby stops. Recalculate mid-walk and verify the destination and found count
+  remain intact. Native tests include destination budget/endpoint cases, but must
+  still be run in Xcode; Linux validation does not compile SwiftUI/MapKit.

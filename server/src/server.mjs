@@ -9,11 +9,14 @@ import { ANALYSIS_TIMEOUT_MS } from './timeouts.mjs';
 import { redactDiagnostic } from './diagnostics.mjs';
 import { LandmarkService } from './landmarks.mjs';
 import { DetourStories } from './detour-story.mjs';
+import { DetourVerifier } from './detour-verify.mjs';
 
 // Developer diagnostics stay in logs; these short messages are safe to read aloud.
 function userErrorMessage(error) {
   if (error.userMessage) return error.userMessage;
   const messages = {
+    landmark_not_nearby: 'Get closer to the landmark and wait for an accurate location before checking.',
+    unknown_landmark: 'Refresh the walk to load this landmark again.',
     unauthorized: "I couldn't connect. Please check the app's connection settings.",
     provider_unavailable: 'The AI service is taking too long to respond. Please try again.',
     request_timeout: 'That took too long. Please try again.',
@@ -101,6 +104,7 @@ export function createApp(config, {
   analyze = analyzeWithGemini, agent = runAgent,
   sessions = new TaskSessions(),
   landmarks = new LandmarkService(), stories = new DetourStories({ catalog: landmarks.catalog }),
+  verifier = new DetourVerifier({ landmarks }),
 } = {}) {
   const server = createServer(async (request, response) => {
     const started = Date.now();
@@ -109,7 +113,7 @@ export function createApp(config, {
     const deadline = setTimeout(() => controller.abort(), ANALYSIS_TIMEOUT_MS);
     response.on('finish', () => clearTimeout(deadline));
     const pathname = new URL(request.url, 'http://localhost').pathname;
-    const route = ['/analyze', '/health', '/detour/landmarks', '/detour/story'].includes(pathname) ? pathname : '/other';
+    const route = ['/analyze', '/health', '/detour/landmarks', '/detour/story', '/detour/verify'].includes(pathname) ? pathname : '/other';
     console.log(`[${new Date().toISOString()}] Request received: ${route} [${trace.requestId}]`);
     response.on('close', () => {
       clearTimeout(deadline);
@@ -141,6 +145,12 @@ export function createApp(config, {
         if (!request.headers['content-type']?.startsWith('application/json')) throw new APIError(415, 'invalid_content_type', 'Use application/json.');
         const input = await readJSON(request);
         const result = await stories.story(input, { ...config, signal: controller.signal, trace });
+        return send(200, result);
+      }
+      if (request.method === 'POST' && pathname === '/detour/verify') {
+        if (!authorized(request, config.appToken)) throw new APIError(401, 'unauthorized', 'Check the connection token in Settings.');
+        if (!request.headers['content-type']?.startsWith('application/json')) throw new APIError(415, 'invalid_content_type', 'Use application/json.');
+        const result = await verifier.verify(await readJSON(request), { ...config, signal: controller.signal, trace });
         return send(200, result);
       }
       if (request.method !== 'POST' || request.url !== '/analyze') {

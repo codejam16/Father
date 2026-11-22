@@ -132,3 +132,108 @@ test('Wikipedia enrichment batches only supplied article references and retains 
   assert.equal(unchanged[0].description, poi.description);
   assert.equal((await enrichWikipedia(catalog.landmarks, () => { throw new Error('Should not fetch unlinked sites'); })).length, catalog.landmarks.length);
 });
+
+const verificationInput = (poi, now = Date.now()) => ({
+  landmarkId: poi.id, language: 'en',
+  frame: { frameId: 'verify-frame', capturedAt: new Date(now).toISOString(),
+    image: { mimeType: 'image/jpeg', width: 640, height: 480, base64: '/9j/2Q==' } },
+  location: { latitude: poi.latitude, longitude: poi.longitude, accuracy: 12, timestamp: new Date(now).toISOString() },
+});
+const visualResult = (overrides = {}) => ({ candidates: [{ content: { parts: [{ text: JSON.stringify({
+  match: true, confidence: 'high', evidence: 'visible_name', reason: 'The identifying plaque is clearly visible.',
+  needsClearerView: false, box: [100, 100, 800, 800], ...overrides,
+}) }] } }] });
+
+test('landmark verification requires visual evidence and uses only server-owned records', async () => {
+  const { DetourVerifier } = await import('../src/detour-verify.mjs');
+  const landmarks = new LandmarkService({ catalog }); const poi = catalog.landmarks[0];
+  let calls = 0;
+  const verifier = new DetourVerifier({ landmarks, generate: async (body, config) => {
+    calls++; assert.equal(config.operation, 'landmark_verification');
+    const record = JSON.parse(body.contents[0].parts[0].text);
+    assert.equal(record.name, poi.name); assert.deepEqual(record.verifiedFacts, poi.verified_facts);
+    assert.equal(body.contents[0].parts[1].inlineData.data, '/9j/2Q==');
+    assert.doesNotMatch(JSON.stringify(body), /made-up-proof/); assert.equal(body.tools, undefined);
+    return visualResult();
+  } });
+  const result = await verifier.verify({ ...verificationInput(poi), verifiedFacts: ['made-up-proof'], match: true }, { mode: 'gemini' });
+  assert.equal(result.found, true); assert.equal(result.frameId, 'verify-frame');
+  assert.equal(result.landmarkId, poi.id); assert.equal(result.target.label, poi.name); assert.equal(calls, 1);
+});
+
+test('proximity, model uncertainty, and unclear views never award a find', async () => {
+  const { DetourVerifier } = await import('../src/detour-verify.mjs');
+  const landmarks = new LandmarkService({ catalog }); const input = verificationInput(catalog.landmarks[0]);
+  for (const overrides of [{ confidence: 'medium' }, { evidence: 'insufficient' }, { needsClearerView: true }, { match: false }]) {
+    const verifier = new DetourVerifier({ landmarks, generate: async () => visualResult(overrides) });
+    const result = await verifier.verify(input, { mode: 'gemini' });
+    assert.equal(result.found, false); assert.equal(result.target, null);
+  }
+  let calls = 0;
+  const demo = new DetourVerifier({ landmarks, generate: () => { calls++; throw new Error('No paid calls'); } });
+  assert.equal((await demo.verify(input, { mode: 'mock' })).found, false); assert.equal(calls, 0);
+});
+
+test('verification rejects unknown targets, distant or stale GPS, old frames and invalid images before calling AI', async () => {
+  const { DetourVerifier } = await import('../src/detour-verify.mjs');
+  const now = Date.now(), poi = catalog.landmarks[0], input = verificationInput(poi, now);
+  let calls = 0;
+  const verifier = new DetourVerifier({ landmarks: new LandmarkService({ catalog }), now: () => now,
+    generate: () => { calls++; return visualResult(); } });
+  const badInputs = [
+    { ...input, landmarkId: 'client-invented' },
+    { ...input, language: 'bad' },
+    { ...input, location: { ...input.location, latitude: 0 } },
+    { ...input, location: { ...input.location, accuracy: 100 } },
+    { ...input, location: { ...input.location, timestamp: new Date(now - 60_000).toISOString() } },
+    { ...input, frame: { ...input.frame, capturedAt: new Date(now - 60_000).toISOString() } },
+    { ...input, frame: { ...input.frame, image: { ...input.frame.image, base64: 'invalid' } } },
+  ];
+  for (const bad of badInputs) await assert.rejects(verifier.verify(bad, { mode: 'gemini' }));
+  assert.equal(calls, 0);
+});
+
+test('verification rejects malformed output and does not retry provider failures', async () => {
+  const { DetourVerifier } = await import('../src/detour-verify.mjs');
+  const landmarks = new LandmarkService({ catalog }), input = verificationInput(catalog.landmarks[0]);
+  for (const overrides of [{ box: [900, 100, 200, 300] }, { confidence: 'certain' }, { reason: '' }]) {
+    const verifier = new DetourVerifier({ landmarks, generate: async () => visualResult(overrides) });
+    await assert.rejects(verifier.verify(input, { mode: 'gemini' }), (error) => error.code === 'invalid_model_output');
+  }
+  let calls = 0;
+  const failed = new DetourVerifier({ landmarks, generate: async () => { calls++; throw new Error('Provider busy'); } });
+  await assert.rejects(failed.verify(input, { mode: 'gemini' })); assert.equal(calls, 1);
+});
+
+test('live OSM targets remain verifiable from server cache without client-provided facts', async () => {
+  const { DetourVerifier } = await import('../src/detour-verify.mjs');
+  let fetches = 0;
+  const landmarks = new LandmarkService({ catalog, fetcher: async () => { fetches++; return new Response(JSON.stringify({ elements: [mapped] })); } });
+  await landmarks.nearby(45.505, -73.57, 1000);
+  const verifier = new DetourVerifier({ landmarks, generate: async () => visualResult() });
+  const result = await verifier.verify(verificationInput(normalizeOSM(mapped)), { mode: 'gemini' });
+  assert.equal(result.found, true); assert.equal(fetches, 1);
+});
+
+test('verification HTTP endpoint authenticates, validates input and keeps mock finds unconfirmed', async (t) => {
+  const server = createApp({ ...loadConfig({}), appToken: 'private-detour-token' });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  t.after(() => new Promise((resolve) => { server.close(resolve); server.closeAllConnections(); }));
+  const endpoint = `http://127.0.0.1:${server.address().port}/detour/verify`;
+  const input = verificationInput(catalog.landmarks[0]);
+  const headers = { authorization: 'Bearer private-detour-token', 'content-type': 'application/json' };
+  assert.equal((await fetch(endpoint, { method: 'POST', body: JSON.stringify(input) })).status, 401);
+  const response = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify(input) });
+  assert.equal(response.status, 200); assert.equal((await response.json()).found, false);
+  assert.equal((await fetch(endpoint, { method: 'POST', headers, body: '{}' })).status, 400);
+});
+
+test('a cancelled verification cannot return a late successful find', async () => {
+  const { DetourVerifier } = await import('../src/detour-verify.mjs');
+  const controller = new AbortController();
+  const verifier = new DetourVerifier({ landmarks: new LandmarkService({ catalog }), generate: async () => {
+    controller.abort(); return visualResult();
+  } });
+  await assert.rejects(verifier.verify(verificationInput(catalog.landmarks[0]), { mode: 'gemini', signal: controller.signal }),
+    (error) => error.name === 'AbortError');
+});

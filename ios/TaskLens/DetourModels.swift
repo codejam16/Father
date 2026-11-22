@@ -73,6 +73,12 @@ struct DetourPOI: Codable, Identifiable {
     let routable: Bool
     var point: DetourPoint { DetourPoint(latitude: latitude, longitude: longitude) }
     func summary(language: String) -> String { language == "fr" ? descriptionFr ?? description : description }
+    var clue: String {
+        let kind = categories.contains("streetArt") ? "a piece of public art" : categories.contains("nature") ? "a pocket of nature" : categories.contains("architecture") ? "an architectural detail" : "a local landmark"
+        let material = verifiedFacts.first(where: { $0.hasPrefix("Materials:") || $0.hasPrefix("Material:") })
+        let hint = material.map { " Hint: " + $0 } ?? " Look for identifying details or a nearby plaque."
+        return "Somewhere around this pin, look for \(kind)." + hint
+    }
     var scannerContext: String {
         "Discovery context: the user may be near \(name). This is a candidate, not a confirmed visual identification. Ask for a better angle if the camera does not match. Source-grounded record: \(description) \(verifiedFacts.joined(separator: " ")). References: \(sourceUrls.joined(separator: " ")). Never invent historical details."
     }
@@ -85,6 +91,26 @@ struct DetourLandmarkResponse: Decodable {
     let warning: String?
 }
 struct DetourStory: Decodable { let story: String; let generated: Bool; let sourceUrls: [String] }
+struct DetourVerificationRequest: Encodable {
+    struct Location: Encodable {
+        let latitude: Double
+        let longitude: Double
+        let accuracy: Double
+        let timestamp: String
+    }
+    let landmarkId: String
+    let language: String
+    let frame: AnalysisRequest
+    let location: Location
+}
+struct DetourVerification: Decodable {
+    let frameId: String
+    let landmarkId: String
+    let found: Bool
+    let reason: String
+    let needsClearerView: Bool
+    let target: Target?
+}
 struct DetourStep: Identifiable {
     let id = UUID()
     let instruction: String
@@ -109,6 +135,8 @@ struct DetourPlan: Identifiable {
     let estimatedSeconds: Double
     let simulated: Bool
     let notes: [String]
+    var destination: DetourPoint? = nil
+    var destinationName: String? = nil
     var distance: Double { legs.reduce(0) { $0 + $1.distance } }
     var points: [DetourPoint] { legs.enumerated().flatMap { $0.offset == 0 ? $0.element.points : Array($0.element.points.dropFirst()) } }
 }
@@ -121,6 +149,8 @@ struct DetourWalkSummary: Codable, Identifiable {
     let discoveryIds: [String]
     let simulated: Bool
     let completed: Bool
+    var foundNames: [String]? = nil
+    var foundIds: [String]? = nil
 }
 
 // Geometry is used to measure progress along a provider-supplied path, never to

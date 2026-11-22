@@ -24,6 +24,7 @@ final class DetourNavigation: NSObject, ObservableObject, CLLocationManagerDeleg
     var onSkipStory: (() -> Void)?
     var onStory: ((DetourPOI) -> Void)?
     var onScan: (() -> Void)?
+    var onFind: ((DetourPOI) -> Void)?
     private let manager = CLLocationManager()
     private var plan: DetourPlan?
     private var preferences = DetourPreferences()
@@ -55,9 +56,8 @@ final class DetourNavigation: NSObject, ObservableObject, CLLocationManagerDeleg
         speech.onUtterance = { [weak self] text in self?.command(text) }
         speech.onFailure = { [weak self] message in self?.locationIssue = message; self?.voiceCommands = false }
         let category = UNNotificationCategory(identifier: "DETOUR_LANDMARK", actions: [
-            UNNotificationAction(identifier: "DETOUR_LISTEN", title: "Listen", options: []),
-            UNNotificationAction(identifier: "DETOUR_SKIP", title: "Skip", options: []),
-            UNNotificationAction(identifier: "DETOUR_SCAN", title: "Scan", options: [.foreground]),
+            UNNotificationAction(identifier: "DETOUR_FIND", title: "Find it", options: [.foreground]),
+            UNNotificationAction(identifier: "DETOUR_SKIP", title: "Keep walking", options: []),
         ], intentIdentifiers: [], options: [])
         UNUserNotificationCenter.current().setNotificationCategories([category])
     }
@@ -145,7 +145,10 @@ final class DetourNavigation: NSObject, ObservableObject, CLLocationManagerDeleg
         guard active, !paused, !scannerOpen, !text.isEmpty else { return }
         speech.speak(text, voiceIdentifier: voiceIdentifier, language: preferences.language == "fr" ? "fr-CA" : "en-US", background: true)
     }
-    func skipStory() { arrival = nil; speech.stopSpeaking(); updateListening() }
+    func skipStory() {
+        arrival = nil; speech.stopSpeaking(); updateListening()
+        UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ["detour-landmark"])
+    }
     func repeatInstruction() { say(instruction) }
     func narrate(_ text: String, for landmarkId: String) async {
         // Let a currently spoken turn/arrival prompt finish. New directions can
@@ -163,6 +166,7 @@ final class DetourNavigation: NSObject, ObservableObject, CLLocationManagerDeleg
         if ["skip", "continue", "passer", "suivant"].contains(where: value.contains) { if let onSkipStory { onSkipStory() } else { skipStory() } }
         else if ["story", "tell me", "histoire", "raconte"].contains(where: value.contains), let arrival { onStory?(arrival) }
         else if ["repeat", "répète"].contains(where: value.contains) { repeatInstruction() }
+        else if ["find", "trouve", "scan"].contains(where: value.contains), let arrival { onFind?(arrival) }
         else if value.contains("scan") { onScan?() }
         else if ["pause", "resume", "reprendre"].contains(where: value.contains) { togglePause() }
         else { say(localized("Say story, skip, repeat, scan, or pause.", "Dites histoire, passer, répète, scan ou pause.")) }
@@ -228,16 +232,17 @@ final class DetourNavigation: NSObject, ObservableObject, CLLocationManagerDeleg
             if let landmark = leg.landmark, !processed.contains(landmark.id), abs(progress - endDistance) < 90,
                point.distance(to: landmark.point) <= 45 { arrive(landmark, announce: !spokeTurn) }
         }
-        if fraction > 0.94, let end = plan.points.last, point.distance(to: end) < 30 { onFinish?() }
+        if !scannerOpen, arrival == nil, fraction > 0.94, let end = plan.points.last, point.distance(to: end) < 30 { onFinish?() }
     }
     private func arrive(_ landmark: DetourPOI, announce: Bool = true) {
         guard !processed.contains(landmark.id) else { return }
         processed.insert(landmark.id); visited.append(landmark); arrival = landmark
-        if announce { say(localized("Nearby: \(landmark.name). Listen to its story, scan it, or keep walking.", "À proximité : \(landmark.name). Écoutez son histoire, scannez ou continuez votre balade.")) }
-        if preferences.automaticStories { onStory?(landmark) }
+        let prompt = localized("There’s a discovery nearby. Find it with the camera, or keep walking.", "Une découverte se cache à proximité. Cherchez-la avec la caméra ou continuez votre balade.")
+        if announce { say(prompt) }
+        else { Task { [weak self] in await self?.narrate(prompt, for: landmark.id) } }
         if !isSimulated {
             let content = UNMutableNotificationContent()
-            content.title = landmark.name; content.body = localized("Listen, scan, or keep exploring.", "Écoutez, scannez ou continuez à explorer.")
+            content.title = localized("A discovery nearby", "Une découverte à proximité"); content.body = localized("Find it with the camera, or keep walking. It’s up to you.", "Cherchez-la avec la caméra ou continuez votre balade.")
             content.categoryIdentifier = "DETOUR_LANDMARK"; content.userInfo = ["landmarkId": landmark.id]
             let request = UNNotificationRequest(identifier: "detour-landmark", content: content, trigger: nil)
             UNUserNotificationCenter.current().add(request) { _ in }
@@ -268,7 +273,7 @@ final class DetourNavigation: NSObject, ObservableObject, CLLocationManagerDeleg
             switch action {
             case "DETOUR_LISTEN": self.onStory?(landmark)
             case "DETOUR_SKIP": if let onSkipStory = self.onSkipStory { onSkipStory() } else { self.skipStory() }
-            case "DETOUR_SCAN": self.onScan?()
+            case "DETOUR_FIND": self.onFind?(landmark)
             default: break
             }
         }

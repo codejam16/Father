@@ -47,6 +47,31 @@ struct AnalysisClient {
         return result
     }
 
+    func verify(_ input: DetourVerificationRequest, endpoint: String, token: String) async throws -> DetourVerification {
+        guard let base = URL(string: endpoint), ["http", "https"].contains(base.scheme ?? ""), base.host != nil,
+              base.user == nil, base.password == nil else { throw TaskLensError.message("Check the backend URL in Settings.") }
+        var request = URLRequest(url: base.appendingPathComponent("detour/verify"))
+        request.httpMethod = "POST"; request.timeoutInterval = 55
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.httpBody = try JSONEncoder().encode(input)
+        let data: Data, response: URLResponse
+        do { (data, response) = try await URLSession.shared.data(for: request) }
+        catch let error as URLError {
+            if error.code == .cancelled { throw CancellationError() }
+            throw TaskLensError.message(error.code == .timedOut ? "The landmark check took too long. Try again when ready." : "Could not reach the server. Check your connection.")
+        }
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            struct Envelope: Decodable { struct Detail: Decodable { let userMessage: String? }; let error: Detail }
+            let friendly = try? JSONDecoder().decode(Envelope.self, from: data).error.userMessage
+            throw TaskLensError.message(friendly ?? "Could not check this landmark. Please try again.")
+        }
+        let result = try JSONDecoder().decode(DetourVerification.self, from: data)
+        guard result.frameId == input.frame.frameId, result.landmarkId == input.landmarkId,
+              !(result.found && result.needsClearerView) else { throw TaskLensError.message("The check did not match this camera view.") }
+        return result
+    }
+
     func demo(_ input: AnalysisRequest) async throws -> AnalysisResponse {
         try await Task.sleep(for: .milliseconds(450))
         return AnalysisResponse(

@@ -5,12 +5,17 @@ import MapKit
 @MainActor
 final class DetourStore: ObservableObject {
     enum Screen: Equatable { case home, preferences, preview, walk, summary }
-    struct ScannerPresentation: Identifiable { let id = UUID(); let context: String? }
+    struct ScannerPresentation: Identifiable { let id = UUID(); let context: String?; var landmark: DetourPOI? = nil }
     @Published var screen = Screen.home
     @Published var preferences: DetourPreferences { didSet { save(preferences, key: "detour.preferences") } }
     @Published var useCurrentLocation = true
     @Published var start = DetourPoint.montreal
     @Published var startName = "Square Phillips, Montréal"
+    @Published var destination: DetourPoint?
+    @Published var destinationName = ""
+    @Published var selectedClue: DetourPOI?
+    @Published private(set) var found: [DetourPOI] = []
+    @Published private(set) var verificationMessage: String?
     @Published private(set) var landmarks: [DetourPOI] = []
     @Published private(set) var plan: DetourPlan?
     @Published private(set) var isGenerating = false
@@ -24,6 +29,8 @@ final class DetourStore: ObservableObject {
     let navigation = DetourNavigation()
     var connection: ConnectionSettings { scanner.settings }
     private let planner = DetourRoutePlanner()
+    private var pendingFoundStory: DetourPOI?
+    private var pendingFind: DetourPOI?
     private var generation: Task<Void, Never>?
     private var storyTask: Task<Void, Never>?
     private var generationId = UUID()
@@ -41,15 +48,20 @@ final class DetourStore: ObservableObject {
         navigation.onSkipStory = { [weak self] in self?.skipStory() }
         navigation.onStory = { [weak self] poi in self?.readStory(poi) }
         navigation.onScan = { [weak self] in self?.openScanner() }
+        navigation.onFind = { [weak self] poi in self?.findLandmark(poi) }
         if bundled.isEmpty { message = "The bundled landmark file is missing. Check the Xcode resource build phase." }
     }
     private func save<T: Encodable>(_ value: T, key: String) {
         if let data = try? JSONEncoder().encode(value) { UserDefaults.standard.set(data, forKey: key) }
     }
     func chooseStart(_ point: DetourPoint, name: String) { start = point; startName = name; useCurrentLocation = false }
+    func chooseDestination(_ point: DetourPoint, name: String) {
+        destination = point; destinationName = name; preferences.returnToStart = false
+    }
     func generate() {
         cancelGeneration(); message = nil
         let prefs = preferences
+        let ending = destination, endingName = destinationName
         let starting: DetourPoint
         if prefs.simulation { starting = .montreal }
         else if useCurrentLocation {
@@ -78,9 +90,9 @@ final class DetourStore: ObservableObject {
                 }
                 if !prefs.simulation { pool = pool.filter { starting.distance(to: $0.point) <= radius } }
                 try Task.checkCancellation()
-                let visited = Set(history.filter { !$0.simulated }.flatMap(\.discoveryIds))
+                let visited = Set(history.filter { !$0.simulated }.flatMap { $0.foundIds ?? [] })
                 let result = try await planner.generate(start: starting, landmarks: pool, preferences: prefs,
-                                                        visited: visited, status: { [weak self] in self?.status = $0 })
+                                                        visited: visited, destination: ending, destinationName: endingName, status: { [weak self] in self?.status = $0 })
                 guard generationId == id else { return }
                 landmarks = pool; plan = result; message = warning; screen = .preview
                 save(prefs, key: "detour.preferences")
@@ -91,7 +103,7 @@ final class DetourStore: ObservableObject {
     func cancelGeneration() { generationId = UUID(); generation?.cancel(); generation = nil; isGenerating = false }
     func startWalk() {
         guard let plan else { return }
-        do { navigation.voiceIdentifier = connection.voiceIdentifier; try navigation.start(plan, preferences: preferences); message = nil; screen = .walk }
+        do { navigation.voiceIdentifier = connection.voiceIdentifier; try navigation.start(plan, preferences: preferences); found = []; selectedClue = nil; message = nil; screen = .walk }
         catch { message = error.localizedDescription }
     }
     func finish(completed: Bool) {
@@ -100,7 +112,8 @@ final class DetourStore: ObservableObject {
         storyId = UUID(); storyTask?.cancel(); loadingStory = false
         let summary = DetourWalkSummary(id: UUID(), date: Date(), seconds: navigation.elapsed,
             metres: navigation.metresWalked, discoveries: navigation.visited.map(\.name), discoveryIds: navigation.visited.map(\.id),
-            simulated: plan.simulated, completed: completed)
+            simulated: plan.simulated, completed: completed, foundNames: found.map(\.name), foundIds: found.map(\.id))
+        pendingFoundStory = nil; pendingFind = nil; scannerPresentation = nil; scanner.pause(); selectedClue = nil
         navigation.stop(); history.insert(summary, at: 0); history = Array(history.prefix(30))
         save(history, key: "detour.history"); lastSummary = summary; screen = .summary
     }
@@ -110,7 +123,43 @@ final class DetourStore: ObservableObject {
         scannerPresentation = ScannerPresentation(context: navigation.active ? navigation.arrival?.scannerContext
             ?? plan?.stops.first(where: { poi in !navigation.visited.contains(where: { $0.id == poi.id }) })?.scannerContext : nil)
     }
-    func closeScanner() { scanner.pause(); navigation.setScannerOpen(false) }
+    func findLandmark(_ poi: DetourPOI) {
+        guard navigation.active, !navigation.paused else { message = "Start or resume your walk to find this landmark."; return }
+        guard !found.contains(where: { $0.id == poi.id }) else { return }
+        if selectedClue != nil { pendingFind = poi; selectedClue = nil; return }
+        verificationMessage = nil
+        storyId = UUID(); storyTask?.cancel(); loadingStory = false
+        navigation.setScannerOpen(true)
+        scannerPresentation = ScannerPresentation(context: poi.scannerContext, landmark: poi)
+    }
+    func completeClueDismissal() {
+        guard let poi = pendingFind else { return }
+        pendingFind = nil; findLandmark(poi)
+    }
+    func verifyLandmark(_ poi: DetourPOI) {
+        guard navigation.active, !navigation.paused, scannerPresentation?.landmark?.id == poi.id else { return }
+        guard !navigation.isSimulated, !connection.demoMode else {
+            verificationMessage = "Finding real landmarks needs a live walk and AI connection. Simulation never awards real finds."; return
+        }
+        guard let fix = navigation.location, fix.horizontalAccuracy >= 0, fix.horizontalAccuracy <= 65,
+              abs(fix.timestamp.timeIntervalSinceNow) < 30, fix.distance(from: poi.point.location) <= 100 else {
+            verificationMessage = "Get within 100 m of the pin and wait for an accurate GPS fix before checking."; return
+        }
+        verificationMessage = nil
+        scanner.verifyLandmark(poi.id, language: preferences.language, location: fix) { [weak self] result in
+            guard let self, self.navigation.active, self.scannerPresentation?.landmark?.id == poi.id else { return }
+            self.verificationMessage = result.reason
+            if result.found, !self.found.contains(where: { $0.id == poi.id }) {
+                self.found.append(poi)
+                if self.preferences.automaticStories { self.pendingFoundStory = poi }
+            }
+        }
+    }
+    func closeScanner() {
+        scanner.pause(); verificationMessage = nil; navigation.setScannerOpen(false)
+        if let poi = pendingFoundStory, navigation.arrival?.id == poi.id { readStory(poi) }
+        pendingFoundStory = nil
+    }
     func setForeground(_ foreground: Bool) {
         navigation.setForeground(foreground)
         if foreground { navigation.speech.refreshVoices() }
@@ -152,12 +201,14 @@ final class DetourStore: ObservableObject {
                     let leg = try await planner.leg(from: previous, to: poi.point, landmark: poi)
                     legs.append(leg); previous = poi.point
                 }
-                if preferences.returnToStart { legs.append(try await planner.leg(from: previous, to: old.start, landmark: nil)) }
+                let endpoint = old.destination ?? (preferences.returnToStart ? old.start : nil)
+                if let endpoint, previous.distance(to: endpoint) >= 20 { legs.append(try await planner.leg(from: previous, to: endpoint, landmark: nil)) }
                 guard !legs.isEmpty else { finish(completed: true); return }
                 guard generationId == id, navigation.active else { return }
                 let update = DetourPlan(start: DetourPoint(fix.coordinate), stops: remaining, legs: legs,
                     estimatedSeconds: legs.reduce(0) { $0 + $1.seconds } * preferences.pace.multiplier,
-                    simulated: false, notes: ["Route recalculated from your current position; the new estimate can exceed the original time budget."])
+                    simulated: false, notes: ["Route recalculated from your current position; the new estimate can exceed the original time budget."],
+                    destination: old.destination, destinationName: old.destinationName)
                 plan = update; navigation.replaceRoute(update)
             } catch is CancellationError { }
             catch { message = "Could not recalculate. The previous route is still visible; no replacement path was invented." }

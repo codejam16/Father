@@ -96,6 +96,17 @@ export class LandmarkService {
   constructor({ catalog = loadCatalog(), fetcher = fetch, now = Date.now } = {}) {
     this.catalog = catalog; this.fetcher = fetcher; this.now = now; this.cache = new Map();
   }
+  async find(id) {
+    const local = this.catalog.landmarks.find((poi) => poi.id === id);
+    if (local) return local;
+    // Only previously discovered, server-owned records; no URLs or client facts.
+    for (const entry of this.cache.values()) {
+      const records = await (entry.enriched ?? entry.promise);
+      const poi = records?.find((record) => record.id === id);
+      if (poi) return poi;
+    }
+    return null;
+  }
   async nearby(lat, lon, radius, discover = true, signal, enrich = false) {
     signal?.throwIfAborted();
     if (!coordinate(lat, lon) || !Number.isFinite(radius) || radius < 200 || radius > 3000) throw new APIError(400, 'invalid_request', 'Use valid coordinates and a radius from 200 to 3000 metres.');
