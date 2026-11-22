@@ -133,6 +133,7 @@ private struct AssistantVoicePicker: View {
             Button {
                 if speech.isSpeaking { speech.stopSpeaking() }
                 else {
+                    speech.noteUserAction()
                     speech.speak("Hi, I'm TaskLens. Show me what you're working on, and we'll figure it out together.",
                                  voiceIdentifier: settings.voiceIdentifier)
                 }

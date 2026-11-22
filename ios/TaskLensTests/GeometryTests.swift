@@ -421,3 +421,108 @@ final class ForegroundPixelFormatTests: XCTestCase {
         }
     }
 }
+
+private final class RecordingSpeechSession: SpeechSessionControlling {
+    enum Failure: Error { case activation }
+    private let lock = NSLock()
+    private var calls: [String] = []
+    private var mainCalls = 0
+    private var failActivation: Bool
+    let cancelOnActivation: SpeechAudioOperation?
+    init(failActivation: Bool = false, cancelOnActivation: SpeechAudioOperation? = nil) {
+        self.failActivation = failActivation; self.cancelOnActivation = cancelOnActivation
+    }
+    private func record(_ value: String) {
+        lock.lock(); defer { lock.unlock() }
+        calls.append(value)
+        if Thread.isMainThread { mainCalls += 1 }
+    }
+    func configure() throws { record("configure") }
+    func setActive(_ active: Bool) throws {
+        record(active ? "activate" : "deactivate")
+        if active {
+            cancelOnActivation?.cancel()
+            lock.lock(); let fail = failActivation; failActivation = false; lock.unlock()
+            if fail { throw Failure.activation }
+        }
+    }
+    var events: [String] { lock.lock(); defer { lock.unlock() }; return calls }
+    var mainThreadCalls: Int { lock.lock(); defer { lock.unlock() }; return mainCalls }
+}
+
+final class SpeechAudioWorkerTests: XCTestCase {
+    @MainActor func testAudioSetupRunsOffMainAndReusesSessionAcrossReplies() async throws {
+        let session = RecordingSpeechSession()
+        let audio = SpeechAudioWorker(session: session)
+        try await audio.preparePlayback()
+        try await audio.preparePlayback()
+        XCTAssertEqual(session.events, ["configure", "activate"])
+        XCTAssertEqual(session.mainThreadCalls, 0)
+        audio.suspend()
+    }
+    @MainActor func testSuspendIsOrderedBeforeResumeAndDoesNotRepeatCategorySetup() async throws {
+        let session = RecordingSpeechSession()
+        let audio = SpeechAudioWorker(session: session)
+        try await audio.preparePlayback()
+        audio.suspend()
+        try await audio.preparePlayback()
+        XCTAssertEqual(session.events, ["configure", "activate", "deactivate", "activate"])
+        XCTAssertEqual(session.mainThreadCalls, 0)
+        audio.suspend()
+    }
+    func testCancelledPlaybackDoesNotActivateAudio() async {
+        let session = RecordingSpeechSession(), operation = SpeechAudioOperation()
+        let audio = SpeechAudioWorker(session: session)
+        operation.cancel()
+        do { try await audio.preparePlayback(operation: operation); XCTFail("Cancelled preparation must not succeed") }
+        catch is CancellationError { }
+        catch { XCTFail("Unexpected error: \(error)") }
+        XCTAssertTrue(session.events.isEmpty)
+    }
+    func testCancelledRecordingDoesNotStartAudioOrRecognition() async {
+        let session = RecordingSpeechSession(), operation = SpeechAudioOperation()
+        let audio = SpeechAudioWorker(session: session)
+        operation.cancel()
+        do { try await audio.startRecording(operation: operation) { _, _, _ in }; XCTFail("Cancelled recording must not start") }
+        catch is CancellationError { }
+        catch { XCTFail("Unexpected error: \(error)") }
+        XCTAssertTrue(session.events.isEmpty)
+    }
+    func testCancellationDuringActivationIsCheckedBeforeRecordingStarts() async {
+        let operation = SpeechAudioOperation()
+        let session = RecordingSpeechSession(cancelOnActivation: operation)
+        let audio = SpeechAudioWorker(session: session)
+        do { try await audio.startRecording(operation: operation) { _, _, _ in }; XCTFail("Cancelled activation must not open the mic") }
+        catch is CancellationError { }
+        catch { XCTFail("Unexpected error: \(error)") }
+        XCTAssertEqual(session.events, ["configure", "activate"])
+        audio.suspend()
+    }
+    func testActivationFailureDoesNotMarkSessionActiveOrAutomaticallyRetry() async throws {
+        let session = RecordingSpeechSession(failActivation: true)
+        let audio = SpeechAudioWorker(session: session)
+        do { try await audio.preparePlayback(); XCTFail("First activation should fail") }
+        catch RecordingSpeechSession.Failure.activation { }
+        XCTAssertEqual(session.events, ["configure", "activate"])
+        try await audio.preparePlayback() // A separate explicit attempt.
+        XCTAssertEqual(session.events, ["configure", "activate", "activate"])
+        audio.suspend()
+    }
+    func testMediaResetReconfiguresOnTheNextExplicitOperation() async throws {
+        let session = RecordingSpeechSession()
+        let audio = SpeechAudioWorker(session: session)
+        try await audio.preparePlayback()
+        audio.mediaServicesReset()
+        try await audio.preparePlayback()
+        XCTAssertEqual(session.events, ["configure", "activate", "configure", "activate"])
+        audio.suspend()
+    }
+    func testEmptyAndInvalidBuffersAreRejected() {
+        XCTAssertTrue(SpeechBufferPolicy.canAppend(frames: 256, sampleRate: 48000, channels: 1, bytes: 1024, hasData: true))
+        XCTAssertFalse(SpeechBufferPolicy.canAppend(frames: 0, sampleRate: 48000, channels: 1, bytes: 1024, hasData: true))
+        XCTAssertFalse(SpeechBufferPolicy.canAppend(frames: 256, sampleRate: 48000, channels: 1, bytes: 0, hasData: true))
+        XCTAssertFalse(SpeechBufferPolicy.canAppend(frames: 256, sampleRate: 0, channels: 1, bytes: 1024, hasData: true))
+        XCTAssertFalse(SpeechBufferPolicy.canAppend(frames: 256, sampleRate: 48000, channels: 0, bytes: 1024, hasData: true))
+        XCTAssertFalse(SpeechBufferPolicy.canAppend(frames: 256, sampleRate: 48000, channels: 1, bytes: 1024, hasData: false))
+    }
+}

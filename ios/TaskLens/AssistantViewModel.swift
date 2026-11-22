@@ -115,6 +115,7 @@ final class AssistantViewModel: ObservableObject {
         let text = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !isBusy, !text.isEmpty else { return }
         guard text.count <= 1500 else { errorMessage = "Please shorten your question to 1,500 characters."; return }
+        speech.noteUserAction()
         if sessionTask != settings.task {
             clearTaskContext()
             sessionTask = settings.task
@@ -236,6 +237,7 @@ final class AssistantViewModel: ObservableObject {
     func pause() {
         isActive = false
         cancel()
+        speech.suspend()
         clearSelection()
         camera.stop()
     }

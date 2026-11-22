@@ -153,3 +153,29 @@ These replace the rectangle/appearance-recovery checks on this branch. Rebuild a
   part fills and labels on rear/front cameras, including letterboxing. Small
   controls must not expand into their enclosing object. Background/close during
   analysis must still cancel without leaving old highlights.
+
+## Audio lifecycle and main-thread warnings
+
+- Rebuild the app and run 10–20 spoken question/reply turns with the camera open.
+  Check for UI freezes, clipped replies, silence gaps, repeated main-thread
+  AVAudioSession/SessionCore warnings and empty-buffer logs. Record any remaining
+  warning alongside the exact action; internal iOS messages may still occur.
+- Mute/unmute rapidly during microphone startup, then background/lock while it
+  starts. The mic must stay stopped after cancellation. Reopen and verify it
+  resumes only according to the saved mute/permission state.
+- Start a reply and immediately stop it or leave the screen. A late prepared
+  utterance must not play, and the microphone must not start while speech is
+  pending or playing. Check the short listening delay after speech finishes.
+- Deny microphone/speech permissions and use typed questions. Error messages
+  should remain friendly and the UI responsive. Test the voice preview in
+  Settings without enabling background microphone recording.
+- Trigger a phone-call/Siri interruption, reconnect wired/Bluetooth audio, and
+  verify route changes do not leave duplicate taps or a silent recognition loop.
+  After an interruption, follow the Unmute recovery message.
+- If available, use iPhone Developer Settings → Reset Media Services. The app
+  should show the recovery message, discard old audio objects and stay silent
+  until the user reconnects with Unmute; a pending AI response must not restart
+  old playback automatically.
+- Run the SpeechAudioWorkerTests suite in Xcode. These injected-session tests
+  cover ordering/cancellation without opening the microphone; they do not
+  replace the physical-device checks above. See AUDIO.md for the implementation.
