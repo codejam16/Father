@@ -346,3 +346,48 @@ final class ForegroundAssociationTests: XCTestCase {
         ]))
     }
 }
+
+final class HighlightIntentTests: XCTestCase {
+    private func target(_ id: String, parent: String? = nil, emphasis: TargetEmphasis? = nil) throws -> Target {
+        Target(label: id, box: try XCTUnwrap(NormalizedBox([200, 200, 300, 300])), id: id,
+               parentId: parent, kind: parent == nil ? .object : .part, emphasis: emphasis)
+    }
+    func testOpeningKeepsBottleInContextAndOnlyLightsButton() throws {
+        let bottle = try target("bottle", emphasis: .context)
+        let button = try target("button", parent: "bottle", emphasis: .primary)
+        XCTAssertEqual(HighlightPresentation.primary([bottle, button]).compactMap(\.id), ["button"])
+        XCTAssertEqual(button.resolvedKind, .part)
+    }
+    func testAllSixObjectsRemainPrimaryWithoutAnArbitraryPronounFocus() throws {
+        let objects = try (0..<6).map { try target("bottle\($0)", emphasis: .primary) }
+        let primary = HighlightPresentation.primary(objects)
+        XCTAssertEqual(primary.count, 6)
+        XCTAssertNil(HighlightPresentation.focusedID(Set(primary.compactMap(\.id))))
+        XCTAssertEqual(HighlightPresentation.focusedID(["one"]), "one")
+    }
+    func testLegacyParentChildAnswersPreferTheSpecificPart() throws {
+        let parent = try target("bottle"), child = try target("latch", parent: "bottle")
+        XCTAssertEqual(HighlightPresentation.primary([parent, child]).compactMap(\.id), ["latch"])
+    }
+    func testExplicitEmptyArrayClearsTheLegacyTarget() throws {
+        let json = #"{"frameId":"test","mode":"gemini","answer":"Which one?","target":{"label":"Old bottle","box":[100,100,900,900]},"needsClearerView":false,"targets":[]}"#
+        let response = try JSONDecoder().decode(AnalysisResponse.self, from: Data(json.utf8))
+        XCTAssertTrue(response.highlightTargets.isEmpty)
+    }
+    func testUnclearViewsNeverDisplayEvenALegacyTarget() throws {
+        let json = #"{"frameId":"test","mode":"gemini","answer":"Move closer.","target":{"label":"Bottle","box":[100,100,900,900]},"needsClearerView":true}"#
+        let response = try JSONDecoder().decode(AnalysisResponse.self, from: Data(json.utf8))
+        XCTAssertTrue(response.highlightTargets.isEmpty)
+    }
+    func testLegacySingleTargetStillWorks() throws {
+        let json = #"{"frameId":"test","mode":"gemini","answer":"There.","target":{"label":"Bottle","box":[100,100,900,900]},"needsClearerView":false}"#
+        let response = try JSONDecoder().decode(AnalysisResponse.self, from: Data(json.utf8))
+        XCTAssertEqual(response.highlightTargets.first?.label, "Bottle")
+    }
+    func testPartMaskCannotGrowIntoALargerEnclosingComponent() {
+        let button = CGRect(x: 0.3, y: 0.3, width: 0.1, height: 0.1)
+        let lid = CGRect(x: 0.29, y: 0.29, width: 0.12, height: 0.12)
+        XCTAssertNil(ForegroundAssociation.match(target: button, candidates: [lid], isPart: true))
+        XCTAssertEqual(ForegroundAssociation.match(target: button, candidates: [button], isPart: true), 0)
+    }
+}

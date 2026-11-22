@@ -124,7 +124,32 @@ These replace the rectangle/appearance-recovery checks on this branch. Rebuild a
 
 - Ask to identify a distinct foreground object. Confirm the tint follows its silhouette, including gaps around it, rather than tinting a full rectangular region or the entire camera.
 - Move around the object and rotate the phone slightly. The silhouette must update to the current viewpoint. Try the front camera too: the tint must mirror with the preview.
-- Cover the object briefly, then uncover it near its last location. A stale tint must disappear within 0.8 seconds, with fresh segmentation attempting recovery approximately once per second for one minute. Major movement while hidden may require a new selection.
+- Cover the object briefly, then uncover it. A stale tint must disappear within 0.8 seconds; once the positional tracker is lost, ask a new camera question to re-localize it. A different nearby object must not acquire the lost identity from mask geometry alone.
 - Identify two separate objects. Confirm each gets its own tint. Ask about a small lid/button: if Apple only returns the whole object, there should be no misleading whole-object highlight for that part.
 - Clear/forget selections, switch cameras and background the app during segmentation. Old results must never appear afterward.
 - Speak while objects are lost. Check camera smoothness, response latency, device warmth and mask refresh rate. Actual Vision inference speed depends on the phone; a worker result older than 0.8 seconds is discarded.
+
+## Question-aware highlighting (Apple masks branch)
+
+- Ask where one visible bottle is; verify a silhouette or corner marker points
+  to that bottle. Ask how to open it: the visible opening control should be the
+  target, with a small ring/dot when segmentation cannot isolate that part.
+- Test a screw cap and a push-release lid. The assistant should inspect the
+  actual mechanism; hide it and verify it requests a better view instead of
+  pointing at an invented button. Repeat with a zipper, keyboard key or switch.
+- Ask for all visible bottles with 2–6 distinct bottles in view. Check separate
+  labeled targets and no giant group box. Try a seventh: expect the six-at-a-time
+  limit to be stated. Ask an ambiguous singular follow-up and expect clarification.
+- Ask about an unrelated object: previous targets should stop glowing but remain
+  in Remembered objects. General conversation/unclear answers should clear the
+  old highlights. Start a new question, then simulate a network/provider error:
+  the preceding answer’s highlights must stay hidden. Revisit an existing ID after moving it and check new coordinates
+  replace the old tracked position.
+- Move a target out of frame and bring a similar object in. It must not revive
+  the old identity based on mask geometry alone. Ask a new camera question to
+  re-localize it. Test a slow response after the source frame leaves the ring;
+  expect a visible view-changed message and no stale pointer.
+- Move and rotate the phone during segmentation; check silhouettes, localized
+  part markers and labels on rear/front cameras, including letterboxing. Small
+  controls must not expand into their enclosing object. Background/close during
+  analysis must still cancel without leaving old highlights.

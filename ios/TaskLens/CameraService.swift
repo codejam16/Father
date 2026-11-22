@@ -40,6 +40,7 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
     private struct SegmentationInput {
         let id: UUID
         let box: NormalizedBox
+        let isPart: Bool
     }
     private struct SegmentedTarget {
         let id: UUID
@@ -57,6 +58,7 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
         var label: String
         var parentID: String?
         var source: Highlight.Source
+        var kind: TargetKind?
         var pose: RotatedBox
         var tracker: VNTrackObjectRequest?
         var sequence: VNSequenceRequestHandler?
@@ -66,6 +68,7 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
         var activeAppearance: ObjectAppearance?
         var lastBox: NormalizedBox
         var lastVisionBox: NormalizedBox
+        var lastFrameID: String?
         var stability = TrackingStability()
         var lastRotationCheck = -Double.infinity
         var lastAppearanceUpdate = -Double.infinity
@@ -83,6 +86,7 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
         }
     }
     private var targets: [TrackedTarget] = []
+    private var activeHighlightIDs = Set<String>()
     private var focusedID: String?
     private var manualSelectionCount = 0
 
@@ -254,8 +258,71 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
                id: String? = nil, parentID: String? = nil) {
         queue.async { [weak self] in
             guard let self else { return }
-            _ = self.seedTarget(at: box, frameID: frameID, label: label, source: source, id: id, parentID: parentID)
+            if let id = self.seedTarget(at: box, frameID: frameID, label: label, source: source, id: id, parentID: parentID) {
+                self.activeHighlightIDs.insert(id)
+            }
             self.publishTargets(at: self.frames.last?.time ?? 0)
+        }
+    }
+
+    /// Clear the previous answer's paint while preserving identity/focus for "it".
+    func hideAnswerHighlights() {
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.activeHighlightIDs.removeAll()
+            self.publishTargets(at: self.frames.last?.time ?? 0)
+        }
+    }
+
+    /// Apply an answer atomically: retain identity memory, replace the visible scope,
+    /// and seed every coordinate from the exact image the model actually saw.
+    func showAnswerTargets(_ incoming: [Target], frameID: String) async -> Bool {
+        await withCheckedContinuation { continuation in
+            queue.async { [weak self] in
+                guard let self else { continuation.resume(returning: false); return }
+                self.activeHighlightIDs.removeAll()
+                self.focusedID = nil
+                guard !incoming.isEmpty else {
+                    self.publishTargets(at: self.frames.last?.time ?? 0)
+                    continuation.resume(returning: true); return
+                }
+                guard incoming.count <= 6, self.session.isRunning,
+                      self.frames.contains(where: { $0.id == frameID }) else {
+                    self.publishTargets(at: self.frames.last?.time ?? 0)
+                    self.publishStatus("The view changed. Hold the camera steady and ask again.")
+                    continuation.resume(returning: false); return
+                }
+                let primary = HighlightPresentation.primary(incoming)
+                var protected = Set(incoming.compactMap(\.id))
+                // A known parent stays in memory even when only its button is lit.
+                for item in incoming {
+                    var parent = item.parentId
+                    var seen = Set<String>()
+                    while let id = parent, seen.insert(id).inserted {
+                        protected.insert(id)
+                        parent = self.targets.first(where: { $0.id == id })?.parentID
+                    }
+                }
+                let newCount = incoming.filter { item in !self.targets.contains(where: { $0.id == item.id }) }.count
+                while self.targets.count + newCount > 6,
+                      let index = self.targets.firstIndex(where: { !protected.contains($0.id) }) {
+                    let removed = self.targets.remove(at: index).id
+                    for child in self.targets where child.parentID == removed { child.parentID = nil }
+                }
+                var shown = Set<String>()
+                for item in incoming {
+                    if let id = self.seedTarget(at: item.box, frameID: frameID, label: item.label,
+                        source: .assistant, id: item.id, parentID: item.parentId, kind: item.resolvedKind),
+                       primary.contains(where: { $0.id == item.id && $0.label == item.label }),
+                       self.targets.contains(where: { $0.id == id && $0.tracker != nil && $0.recoveryFramesRemaining == 0 }) {
+                        shown.insert(id)
+                    }
+                }
+                self.activeHighlightIDs = shown
+                self.focusedID = HighlightPresentation.focusedID(shown)
+                self.publishTargets(at: self.frames.last?.time ?? 0)
+                continuation.resume(returning: shown.count == primary.count)
+            }
         }
     }
 
@@ -268,6 +335,7 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
                 let id = self.seedTarget(at: box, frameID: frameID,
                                          label: existing?.label ?? "Selection \(self.manualSelectionCount)",
                                          source: existing?.source ?? .user, id: existing?.id, parentID: existing?.parentID)
+                if let id { self.activeHighlightIDs.insert(id) }
                 self.publishTargets(at: self.frames.last?.time ?? 0)
                 continuation.resume(returning: id)
             }
@@ -275,7 +343,7 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
     }
 
     private func seedTarget(at box: NormalizedBox, frameID: String, label: String, source: Highlight.Source,
-                            id: String?, parentID: String?) -> String? {
+                            id: String?, parentID: String?, kind: TargetKind? = nil) -> String? {
         guard let index = frames.firstIndex(where: { $0.id == frameID }), session.isRunning else {
             publishStatus("The view changed. Ask again to locate the item.")
             return nil
@@ -285,13 +353,12 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
             $0.label.caseInsensitiveCompare(label) == .orderedSame || ($0.tracker != nil && overlap($0.lastBox, box) > 0.7)
         })?.id : nil
         let targetID = id ?? legacy ?? UUID().uuidString.lowercased()
-        if let existing = targets.first(where: { $0.id == targetID }), existing.tracker != nil,
-           existing.recoveryFramesRemaining == 0 {
-            existing.label = label; existing.parentID = parentID
-            focusedID = existing.id
-            return existing.id
-        }
-        let target = TrackedTarget(id: targetID, label: label, parentID: parentID, source: source, box: box)
+        // A new visual answer is stronger evidence than the old tracker. Never
+        // ignore corrected coordinates merely because an ID already exists.
+        let previous = targets.first(where: { $0.id == targetID })
+        let target = TrackedTarget(id: targetID, label: label, parentID: parentID, source: previous?.source ?? source, box: box)
+        target.kind = kind ?? previous?.kind
+        if let previous, previous.kind == target.kind { target.history = previous.history }
         if let existingIndex = targets.firstIndex(where: { $0.id == targetID }) { targets.remove(at: existingIndex) }
         if targets.count >= 6 {
             let parents = Set(targets.compactMap(\.parentID) + [parentID].compactMap { $0 })
@@ -334,6 +401,19 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
                     loseTracking(target, at: frame.time)
                 }
                 return
+            }
+            if target.kind == .part {
+                // Small controls must not drift onto their enclosing object.
+                guard confidence >= 0.65 else { loseTracking(target, at: frame.time); return }
+                if let parentID = target.parentID,
+                   let parent = targets.first(where: { $0.id == parentID && $0.tracker != nil && $0.lastFrameID == frame.id }) {
+                    let region = parent.lastBox.unitRect.insetBy(dx: -0.03, dy: -0.03)
+                    let part = box.unitRect
+                    guard region.contains(CGPoint(x: part.midX, y: part.midY)),
+                          part.width * part.height < parent.lastBox.unitRect.width * parent.lastBox.unitRect.height * 0.85 else {
+                        loseTracking(target, at: frame.time); return
+                    }
+                }
             }
             _ = target.stability.recordVision(confidence)
             let oldArea = target.lastVisionBox.unitRect.width * target.lastVisionBox.unitRect.height
@@ -391,6 +471,7 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
                 target.activeAppearance = target.history.snapshots.last?.appearance
             }
             target.lastVisionBox = box
+            target.lastFrameID = frame.id
             target.lastBox = target.pose.boundingBox(aspect: CGFloat(CVPixelBufferGetWidth(frame.pixels)) / CGFloat(CVPixelBufferGetHeight(frame.pixels))) ?? box
             // Preserve Vision's own observation. Rotated overlay estimates must not
             // repeatedly overwrite its internal positional tracking region.
@@ -462,10 +543,12 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
     private func segmentForeground(on frame: BufferedFrame) {
         guard !segmentationBusy, frame.time - lastSegmentationTime >= 0.4 else { return }
         let inputs = targets.filter {
-            $0.tracker != nil || ($0.lostAt.map { frame.time - $0 < 60 } == true && frame.time >= $0.nextRecoveryTime)
+            // Geometry alone cannot prove that a lost bottle is the same bottle.
+            // Re-identify it on the next camera question instead of mask-only recovery.
+            activeHighlightIDs.contains($0.id) && $0.tracker != nil && $0.recoveryFramesRemaining == 0
         }.sorted {
             $0.lastBox.unitRect.width * $0.lastBox.unitRect.height < $1.lastBox.unitRect.width * $1.lastBox.unitRect.height
-        }.map { SegmentationInput(id: $0.instanceID, box: $0.lastBox) }
+        }.map { SegmentationInput(id: $0.instanceID, box: $0.lastBox, isPart: $0.kind == .part) }
         guard !inputs.isEmpty else { return }
         let inputIDs = Set(inputs.map(\.id))
         for target in targets where target.tracker == nil && inputIDs.contains(target.instanceID) {
@@ -495,21 +578,12 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
                     self.lastSegmentationError = nil
                     // Never display masks inferred from a camera view that is already stale.
                     guard newest.time - frame.time < 0.8,
-                          let sourceIndex = self.frames.firstIndex(where: { $0.id == frame.id }) else { return }
+                          self.frames.contains(where: { $0.id == frame.id }) else { return }
                     for match in masks {
                         guard let target = self.targets.first(where: { $0.instanceID == match.id }) else { continue }
-                        target.pose = RotatedBox(box: match.box)
-                        target.lastBox = match.box
-                        target.lastVisionBox = match.box
-                        target.stability = TrackingStability()
-                        target.lostAt = nil
-                        target.recoveryFramesRemaining = 0
-                        self.seedVision(target, box: match.box)
-                        // Seed in the segmentation's source coordinates, then catch up to live.
-                        for replay in self.frames[sourceIndex...] {
-                            guard target.tracker != nil else { break }
-                            self.advanceTracker(target, on: replay, allowAppearanceCheck: false)
-                        }
+                        // Segmentation decorates the AI/Vision target; it must not
+                        // move or resize a button's tracker onto its whole bottle.
+                        guard target.tracker != nil else { continue }
                         target.foregroundMaskBox = match.box
                         target.foregroundMask = match.mask
                         target.foregroundMaskTime = frame.time
@@ -536,13 +610,13 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
         for input in inputs {
             let available = instances.filter { !claimed.contains($0.index) }
             guard let selected = ForegroundAssociation.match(target: input.box.unitRect,
-                                                             candidates: available.map { $0.box.unitRect }) else { continue }
+                                                             candidates: available.map { $0.box.unitRect }, isPart: input.isPart) else { continue }
             let instance = available[selected]
             let mask = try observation.generateScaledMaskForImage(forInstances: IndexSet(integer: instance.index), from: handler)
             let image = CIImage(cvPixelBuffer: mask)
             guard let cgImage = segmentationContext.createCGImage(image, from: image.extent,
                 format: .L8, colorSpace: CGColorSpaceCreateDeviceGray()) else { continue }
-            results.append(SegmentedTarget(id: input.id, box: instance.box, mask: cgImage))
+            results.append(SegmentedTarget(id: input.id, box: input.box, mask: cgImage))
             claimed.insert(instance.index)
         }
         return results
@@ -582,16 +656,18 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
             let recovering = target.lostAt.map { TrackingRecoveryPolicy.interval(after: time - $0) != nil } ?? false
             return TrackedObjectContext(id: target.id, label: target.label, parentId: target.parentID,
                 source: target.source.rawValue, state: visible ? "visible" : recovering ? "searching" : "dormant",
-                box: visible ? target.lastBox : nil, isFocused: target.id == focusedID)
+                box: visible ? target.lastBox : nil, isFocused: target.id == focusedID, kind: target.kind)
         }
     }
 
     private func publishTargets(at time: Double) {
         let visible = targets.filter {
-            $0.tracker != nil && $0.recoveryFramesRemaining == 0 && time - $0.foregroundMaskTime < 0.8
+            activeHighlightIDs.contains($0.id) && $0.tracker != nil && $0.recoveryFramesRemaining == 0
         }.map {
             Highlight(id: $0.id, label: $0.label, source: $0.source, pose: $0.pose,
-                      isFocused: $0.id == focusedID, mask: $0.foregroundMask, maskBox: $0.foregroundMaskBox)
+                      isFocused: $0.id == focusedID, kind: $0.kind ?? .object,
+                      mask: time - $0.foregroundMaskTime < 0.8 ? $0.foregroundMask : nil,
+                      maskBox: time - $0.foregroundMaskTime < 0.8 ? $0.foregroundMaskBox : nil)
         }
         let objects = objectContext(at: time)
         DispatchQueue.main.async { self.highlights = visible; self.trackedObjects = objects }
@@ -601,6 +677,7 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
         queue.async { [weak self] in
             guard let self else { return }
             self.targets.removeAll { $0.id == id }
+            self.activeHighlightIDs.remove(id)
             for child in self.targets where child.parentID == id { child.parentID = nil }
             if self.focusedID == id { self.focusedID = self.targets.last?.id }
             self.publishTargets(at: self.frames.last?.time ?? 0)
@@ -635,7 +712,7 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
     private func resetTracking() {
         segmentationGeneration = UUID()
         lastSegmentationTime = -Double.infinity
-        targets.removeAll(); focusedID = nil
+        targets.removeAll(); activeHighlightIDs.removeAll(); focusedID = nil
         DispatchQueue.main.async { self.highlights = []; self.trackedObjects = [] }
     }
 

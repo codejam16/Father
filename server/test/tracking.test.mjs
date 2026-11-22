@@ -39,7 +39,7 @@ test('duplicate IDs, unknown parents, cycles, excess targets and invalid boxes a
   for (const targets of [
     [button, button], [button],
     [{ ...button, parentId: 'other' }, { ...button, id: 'other', parentId: 'button' }],
-    Array.from({ length: 5 }, (_, i) => ({ ...button, id: `id${i}`, parentId: null })),
+    Array.from({ length: 7 }, (_, i) => ({ ...button, id: `id${i}`, parentId: null })),
     [{ ...button, parentId: null, box: [500, 0, 100, 100] }],
   ]) assert.throws(() => validateAnswer(answer(targets)));
 });
@@ -63,4 +63,66 @@ test('uncertain views suppress every returned target, with legacy answers still 
   assert.deepEqual(validateAnswer(answer([button], { needsClearerView: true }), [bottle]).targets, []);
   const legacy = validateAnswer({ answer: 'A bottle.', box: bottle.box, targetLabel: 'Bottle', needsClearerView: false });
   assert.equal(legacy.target.label, 'Bottle');
+});
+
+test('all-object answers support six separate primary detections with no group box', () => {
+  const bottles = Array.from({ length: 6 }, (_, i) => ({ id: `bottle${i}`, parentId: null,
+    label: `Bottle ${i + 1}`, box: [100, i * 150 + 10, 600, i * 150 + 110], kind: 'object', emphasis: 'primary' }));
+  const result = validateAnswer(answer(bottles), []);
+  assert.equal(result.targets.length, 6);
+  assert.ok(result.targets.every((target) => target.emphasis === 'primary'));
+  assert.equal(buildGeminiBody(validateRequest(input()), 2048).generationConfig.responseJsonSchema.properties.targets.maxItems, 6);
+});
+
+test('opening a bottle targets its button while its parent remains contextual', () => {
+  const parent = { id: 'bottle', parentId: null, label: 'Bottle', box: bottle.box, kind: 'object', emphasis: 'context' };
+  const child = { ...button, kind: 'part', emphasis: 'primary' };
+  const result = validateAnswer(answer([child, parent], { targetLabel: 'Bottle', box: bottle.box }));
+  assert.deepEqual(result.target.box, button.box);
+  assert.equal(result.targets.find((target) => target.id === 'bottle').emphasis, 'context');
+  assert.equal(result.targets.find((target) => target.id === 'button').kind, 'part');
+});
+
+test('an explicit empty target array clears a stale legacy pointer', () => {
+  const result = validateAnswer(answer([], { targetLabel: 'Old bottle', box: bottle.box }));
+  assert.equal(result.target, null); assert.deepEqual(result.targets, []);
+});
+
+test('parts cannot reuse a classified bottle identity or simply copy its whole region', () => {
+  const known = { ...bottle, kind: 'object' };
+  for (const target of [
+    { ...button, id: 'bottle', parentId: null, kind: 'part' },
+    { ...button, box: bottle.box, kind: 'part' },
+    { ...button, box: [950, 950, 990, 990], kind: 'part' },
+  ]) assert.throws(() => validateAnswer(answer([target]), [known]));
+});
+
+test('an unclassified manual selection can be resolved as a specific component', () => {
+  const selected = { ...bottle, source: 'user', label: 'Selection 1' };
+  const request = validateRequest(input({ knownTargets: [selected] }));
+  const result = validateAnswer(answer([{ id: 'bottle', label: 'Release button', parentId: null,
+    box: button.box, kind: 'part', emphasis: 'primary' }]), request.knownTargets);
+  assert.equal(result.targets[0].kind, 'part');
+});
+
+test('duplicate aliases and target sets that exceed capacity through hidden ancestors are rejected', () => {
+  const one = { id: 'one', label: 'Bottle left', box: bottle.box, parentId: null, kind: 'object', emphasis: 'primary' };
+  assert.throws(() => validateAnswer(answer([one, { ...one, id: 'two', label: 'Bottle right' }])));
+  const children = Array.from({ length: 6 }, (_, i) => ({ ...button, id: `button${i}`,
+    box: [200, 150 + i * 100, 250, 180 + i * 100], kind: 'part' }));
+  assert.throws(() => validateAnswer(answer(children), [bottle]));
+});
+
+test('selection coordinates must belong to the same fresh-frame inventory and IDs stay unique', () => {
+  assert.throws(() => validateRequest(input({ selections: [bottle, bottle] })));
+  assert.throws(() => validateRequest(input({ selections: [{ ...bottle, box: button.box }] })));
+  assert.throws(() => validateRequest(input({ knownTargets: [{ ...bottle, kind: 'imaginary' }] })));
+});
+
+test('highlight instructions cover plural intent, actual opening mechanisms and hidden components', () => {
+  const text = buildGeminiBody(validateRequest(input()), 2048).systemInstruction.parts[0].text;
+  assert.match(text, /Not every bottle has a push button/);
+  assert.match(text, /separate primary target for every clearly visible bottle/);
+  assert.match(text, /Do not let an old focus restrict an explicit plural/);
+  assert.match(text, /emphasis="context"/);
 });

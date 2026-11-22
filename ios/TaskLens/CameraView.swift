@@ -58,10 +58,16 @@ struct CameraStage: View {
                     .foregroundStyle(.white.opacity(0.8)).padding(28)
                 }
                 ForEach(camera.highlights) { highlight in
+                    let color: Color = highlight.source == .user ? .yellow : .mint
                     if let mask = highlight.mask, let box = highlight.maskBox {
-                        foreground(mask, from: box, to: highlight.pose, color: highlight.source == .user ? .yellow : .mint,
+                        foreground(mask, from: box, to: highlight.pose, color: color,
                                    focused: highlight.isFocused, in: geometry.size)
+                    } else {
+                        // A localized marker is explicit targeting, not a claimed
+                        // silhouette. Native masks often cannot isolate a tiny button.
+                        targetMarker(highlight, color: color, in: geometry.size)
                     }
+                    targetLabel(highlight, color: color, in: geometry.size)
                 }
                 if let dragStart, let dragEnd,
                    let box = FrameGeometry.selection(start: dragStart, end: dragEnd,
@@ -109,6 +115,37 @@ struct CameraStage: View {
         .clipShape(RoundedRectangle(cornerRadius: showsChrome ? 24 : 0))
         .overlay(RoundedRectangle(cornerRadius: showsChrome ? 24 : 0).stroke(.white.opacity(showsChrome ? 0.12 : 0), lineWidth: 1))
         .accessibilityLabel(enabled ? "Live camera. Tap or drag to select a region for your next question." : "Live camera. Region selection is off.")
+    }
+
+    private func targetMarker(_ highlight: Highlight, color: Color, in size: CGSize) -> some View {
+        let image = FrameGeometry.fittedRect(in: size, aspect: camera.aspectRatio)
+        let pose = highlight.pose
+        let x = image.minX + (mirrored ? 1 - pose.center.x : pose.center.x) * image.width
+        let y = image.minY + pose.center.y * image.height
+        return Group {
+            if highlight.kind == .part {
+                ZStack {
+                    Circle().stroke(color.opacity(0.95), lineWidth: 2).frame(width: 24, height: 24)
+                    Circle().fill(color).frame(width: 4, height: 4)
+                }.position(x: x, y: y)
+            } else {
+                TargetCorners().stroke(color.opacity(0.9), style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                    .frame(width: max(8, pose.size.width * image.width), height: max(8, pose.size.height * image.height))
+                    .rotationEffect(.radians(mirrored ? -pose.angle : pose.angle)).position(x: x, y: y)
+            }
+        }.allowsHitTesting(false).accessibilityLabel(highlight.label)
+    }
+
+    private func targetLabel(_ highlight: Highlight, color: Color, in size: CGSize) -> some View {
+        let image = FrameGeometry.fittedRect(in: size, aspect: camera.aspectRatio)
+        let pose = highlight.pose
+        let x = image.minX + (mirrored ? 1 - pose.center.x : pose.center.x) * image.width
+        let y = image.minY + max(0, pose.center.y - pose.size.height / 2) * image.height
+        return Text(highlight.label).font(.system(size: 10, weight: .semibold)).lineLimit(1)
+            .foregroundStyle(color).padding(.horizontal, 7).padding(.vertical, 4)
+            .background(.black.opacity(0.6), in: Capsule()).frame(maxWidth: 140)
+            .position(x: min(max(x, image.minX + 70), image.maxX - 70), y: max(image.minY + 14, y - 12))
+            .allowsHitTesting(false)
     }
 
     private func foreground(_ mask: CGImage, from box: NormalizedBox, to pose: RotatedBox, color: Color, focused: Bool, in size: CGSize) -> some View {
@@ -160,5 +197,22 @@ struct CameraStage: View {
             .opacity(focused ? 1 : 0.55)
             .position(x: image.minX + midX * image.width, y: image.minY + pose.center.y * image.height)
             .allowsHitTesting(false)
+    }
+}
+
+private struct TargetCorners: Shape {
+    func path(in rect: CGRect) -> Path {
+        let length = min(14, min(rect.width, rect.height) * 0.25)
+        var path = Path()
+        let corners: [(CGFloat, CGFloat, CGFloat, CGFloat)] = [
+            (rect.minX, rect.minY, 1, 1), (rect.maxX, rect.minY, -1, 1),
+            (rect.minX, rect.maxY, 1, -1), (rect.maxX, rect.maxY, -1, -1)
+        ]
+        for (x, y, sx, sy) in corners {
+            path.move(to: CGPoint(x: x + sx * length, y: y))
+            path.addLine(to: CGPoint(x: x, y: y))
+            path.addLine(to: CGPoint(x: x, y: y + sy * length))
+        }
+        return path
     }
 }

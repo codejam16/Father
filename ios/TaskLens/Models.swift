@@ -181,11 +181,17 @@ struct AnalysisRequest: Encodable {
     }
 }
 
+enum TargetKind: String, Codable { case object, part }
+enum TargetEmphasis: String, Codable { case primary, context }
+
 struct Target: Codable {
     let label: String
     let box: NormalizedBox
     var id: String? = nil
     var parentId: String? = nil
+    var kind: TargetKind? = nil
+    var emphasis: TargetEmphasis? = nil
+    var resolvedKind: TargetKind { kind ?? (parentId == nil ? .object : .part) }
 }
 
 struct TrackedObjectContext: Codable, Identifiable {
@@ -196,6 +202,7 @@ struct TrackedObjectContext: Codable, Identifiable {
     let state: String
     let box: NormalizedBox?
     let isFocused: Bool
+    var kind: TargetKind? = nil
 }
 
 struct AnalysisResponse: Decodable {
@@ -212,6 +219,23 @@ struct AnalysisResponse: Decodable {
     var sourceIds: [String]? = nil
     var webInfo: WebInfo? = nil
     var targets: [Target]? = nil
+    var highlightTargets: [Target] {
+        // Explicit [] is an intentional clear, not a request for the legacy box.
+        needsClearerView ? [] : (targets ?? target.map { [$0] } ?? [])
+    }
+}
+
+enum HighlightPresentation {
+    static func primary(_ targets: [Target]) -> [Target] {
+        targets.filter { target in
+            if let emphasis = target.emphasis { return emphasis == .primary }
+            // Older servers do not have emphasis: prefer a child over its parent.
+            return !targets.contains(where: { $0.parentId != nil && $0.parentId == target.id })
+        }
+    }
+    static func focusedID(_ activeIDs: Set<String>) -> String? {
+        activeIDs.count == 1 ? activeIDs.first : nil
+    }
 }
 
 struct WebSource: Decodable, Identifiable {
@@ -233,6 +257,7 @@ struct Highlight: Identifiable {
     let source: Source
     let pose: RotatedBox
     let isFocused: Bool
+    var kind: TargetKind = .object
     var mask: CGImage? = nil
     var maskBox: NormalizedBox? = nil
 }
@@ -521,18 +546,23 @@ struct ObjectSnapshotHistory {
 /// Geometry gates for associating freshly segmented instances with remembered targets.
 /// Instance numbers are local to a single Vision request, never persistent identities.
 enum ForegroundAssociation {
-    static func match(target: CGRect, candidates: [CGRect]) -> Int? {
+    static func match(target: CGRect, candidates: [CGRect], isPart: Bool = false) -> Int? {
         let area = target.width * target.height
         guard area > 0 else { return nil }
         let ranked = candidates.enumerated().compactMap { index, candidate -> (Int, CGFloat)? in
             let candidateArea = candidate.width * candidate.height
             let ratio = candidateArea / area
             // In particular, don't paint a whole bottle when the target is its lid.
-            guard ratio >= 0.3, ratio <= 3 else { return nil }
+            guard ratio >= (isPart ? 0.5 : 0.3), ratio <= (isPart ? 1.25 : 3) else { return nil }
+            if isPart {
+                let allowed = target.insetBy(dx: -target.width * 0.1, dy: -target.height * 0.1)
+                let inside = allowed.intersection(candidate)
+                guard !inside.isNull, inside.width * inside.height / candidateArea >= 0.9 else { return nil }
+            }
             let intersection = target.intersection(candidate)
             let shared = intersection.isNull ? 0 : intersection.width * intersection.height
             let score = shared / max(0.00001, area + candidateArea - shared)
-            return score >= 0.35 ? (index, score) : nil
+            return score >= (isPart ? 0.55 : 0.35) ? (index, score) : nil
         }.sorted { $0.1 > $1.1 }
         guard let best = ranked.first else { return nil }
         if ranked.count > 1, best.1 - ranked[1].1 < 0.12 { return nil }

@@ -120,6 +120,7 @@ final class AssistantViewModel: ObservableObject {
             sessionTask = settings.task
         }
         isBusy = true
+        camera.hideAnswerHighlights()
         pendingQuestion = text
         webInfo = nil
         updateListening()
@@ -203,13 +204,9 @@ final class AssistantViewModel: ObservableObject {
                 selectedFrame = nil
                 lastReplyWasDemo = response.mode == "mock"
                 showAnswered()
-                if !response.needsClearerView {
-                    let targets = response.targets.flatMap { $0.isEmpty ? nil : $0 } ?? response.target.map { [$0] } ?? []
-                    for target in targets {
-                        camera.point(at: target.box, frameID: frame.id, label: target.label, source: .assistant,
-                                     id: target.id, parentID: target.parentId)
-                    }
-                }
+                let displayed = await camera.showAnswerTargets(response.highlightTargets, frameID: frame.id)
+                guard workID == id else { return }
+                if !displayed { errorMessage = "The camera view changed before I could point reliably. Hold it steady and ask again." }
                 if settings.spokenReplies { speech.speak(response.answer, voiceIdentifier: settings.voiceIdentifier) }
                 if !demoMode && (usedResearch || !citedSourceIds.isEmpty) { researchReviewID = UUID() }
             } catch is CancellationError {
