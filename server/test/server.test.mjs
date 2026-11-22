@@ -513,3 +513,21 @@ test('spots pointed at while asking go to the model in order', () => {
   assert.throws(() => validateRequest(input({ pointedAt: [[1200, 5]] })));
   assert.throws(() => validateRequest(input({ pointedAt: [[1, 2], [3, 4], [5, 6], [7, 8], [9, 10]] })));
 });
+
+test('if the everyday model is busy, the explanation model answers instead', async () => {
+  const models = [];
+  const settings = { ...loadConfig({ GEMINI_MODEL: 'gemini-3.5-flash-lite' }), diagnosticLogPath: null, diagnosticLogger: () => {}, retryDelayMs: 0 };
+  const routed = modelFor({ question: 'What is this?' }, settings);
+  assert.equal(routed.model, 'gemini-3.5-flash-lite');
+  assert.equal(routed.fallbackModel, 'gemini-3.8-flash');
+  const body = buildGeminiBody({ task: '', question: 'What is this?', capturedAt: new Date().toISOString(), frameId: 'f',
+    selection: null, history: [], includeWebInfo: false, image: { mimeType: 'image/jpeg', base64: '/9j/2Q==' } }, 512);
+  const busy = { ok: false, status: 503, json: async () => ({ error: { code: 503, message: 'high demand' } }) };
+  const ok = { ok: true, json: async () => ({ candidates: [{ finishReason: 'STOP', content: { parts: [
+    { text: JSON.stringify({ answer: 'A mug.', box: null, targetLabel: null, needsClearerView: false }) }] } }] }) };
+  await generateWithSchemaFallback(body, routed, async (url) => {
+    models.push(url.match(/models\/([^:]+):/)[1]);
+    return url.includes('gemini-3.5-flash-lite') ? busy : ok;
+  });
+  assert.deepEqual(models, ['gemini-3.5-flash-lite', 'gemini-3.5-flash-lite', 'gemini-3.8-flash']);
+});

@@ -175,9 +175,13 @@ export function looksLikeExplanation(question) {
   return typeof question === 'string' && explainPattern.test(question);
 }
 export function modelFor(request, config) {
-  return config.explainModel && config.explainModel !== config.model && looksLikeExplanation(request?.question)
-    // One quick retry only: if it's still busy, the regular model answers instead of waiting longer.
-    ? { ...config, model: config.explainModel, fallbackModel: config.model, busyRetries: 1 } : config;
+  const second = config.explainModel && config.explainModel !== config.model ? config.explainModel : null;
+  if (!second) return config;
+  // Each model backs up the other: one quick retry, then the other model answers instead of
+  // "AI service is busy" (Google's high-demand errors usually hit one model at a time).
+  return looksLikeExplanation(request?.question)
+    ? { ...config, model: second, fallbackModel: config.model, busyRetries: 1 }
+    : { ...config, fallbackModel: second, busyRetries: 1 };
 }
 
 /// If Google rejects the answer format as too complex, retry once without the optional extras
