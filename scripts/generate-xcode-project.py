@@ -57,25 +57,29 @@ def configs(name, extra):
         values = dict(extra)
         if name == "project":
             values.update({"SWIFT_OPTIMIZATION_LEVEL": "-Onone" if configuration == "Debug" else "-O", "ENABLE_TESTABILITY": "YES" if configuration == "Debug" else "NO"})
-        refs.append(add(f"config:{name}:{configuration}", "XCBuildConfiguration", buildSettings=values, name=configuration))
+        refs.append(add(f"config:{name}:{configuration}", "XCBuildConfiguration", buildSettings=values, name=configuration,
+                        **({"baseConfigurationReference": ident("ref:Config/Signing.xcconfig")} if name == "project" else {})))
     return add(f"configs:{name}", "XCConfigurationList", buildConfigurations=refs, defaultConfigurationIsVisible=0, defaultConfigurationName="Release")
 
 
 def main():
     project, app, tests = ident("project"), ident("target:app"), ident("target:tests")
+    signing_refs = [add(f"ref:Config/{name}", "PBXFileReference", lastKnownFileType="text.xcconfig", path=name, sourceTree="<group>")
+                    for name in ("Signing.xcconfig", "Signing.example.xcconfig")]
+    config_group = add("group:Config", "PBXGroup", children=signing_refs, path="Config", sourceTree="<group>")
     app_group, app_sources = files("TaskLens", "app")
     test_group, test_sources = files("TaskLensTests", "tests")
     app_product = add("product:app", "PBXFileReference", explicitFileType="wrapper.application", includeInIndex=0, path="TaskLens.app", sourceTree="BUILT_PRODUCTS_DIR")
     test_product = add("product:tests", "PBXFileReference", explicitFileType="wrapper.cfbundle", includeInIndex=0, path="TaskLensTests.xctest", sourceTree="BUILT_PRODUCTS_DIR")
     products = add("group:products", "PBXGroup", children=[app_product, test_product], name="Products", sourceTree="<group>")
-    root = add("group:root", "PBXGroup", children=[app_group, test_group, products], sourceTree="<group>")
+    root = add("group:root", "PBXGroup", children=[config_group, app_group, test_group, products], sourceTree="<group>")
     phases = {}
     for target in ("app", "tests"):
         phases[target] = [add(f"{kind}:{target}", isa, buildActionMask=2147483647, files=[], runOnlyForDeploymentPostprocessing=0) for kind, isa in (("frameworks", "PBXFrameworksBuildPhase"), ("resources", "PBXResourcesBuildPhase"))]
     shared = {"SDKROOT": "iphoneos", "IPHONEOS_DEPLOYMENT_TARGET": "17.0", "SWIFT_VERSION": "5.0", "CLANG_ENABLE_MODULES": "YES", "CLANG_ENABLE_OBJC_ARC": "YES", "GCC_C_LANGUAGE_STANDARD": "gnu17", "SWIFT_STRICT_CONCURRENCY": "minimal", "ENABLE_USER_SCRIPT_SANDBOXING": "YES"}
-    target_shared = {"CODE_SIGN_STYLE": "Automatic", "DEVELOPMENT_TEAM": "", "TARGETED_DEVICE_FAMILY": "1", "SUPPORTED_PLATFORMS": "iphoneos iphonesimulator", "SWIFT_EMIT_LOC_STRINGS": "YES"}
-    app_configs = configs("app", {**target_shared, "PRODUCT_NAME": "$(TARGET_NAME)", "PRODUCT_BUNDLE_IDENTIFIER": "dev.codejam16.tasklens", "INFOPLIST_FILE": "TaskLens/Info.plist", "GENERATE_INFOPLIST_FILE": "NO", "MARKETING_VERSION": "1.0", "CURRENT_PROJECT_VERSION": "1", "LD_RUNPATH_SEARCH_PATHS": ["$(inherited)", "@executable_path/Frameworks"]})
-    test_configs = configs("tests", {**target_shared, "PRODUCT_NAME": "$(TARGET_NAME)", "PRODUCT_BUNDLE_IDENTIFIER": "dev.codejam16.tasklens.tests", "GENERATE_INFOPLIST_FILE": "YES", "TEST_HOST": "$(BUILT_PRODUCTS_DIR)/TaskLens.app/TaskLens", "BUNDLE_LOADER": "$(TEST_HOST)", "LD_RUNPATH_SEARCH_PATHS": ["$(inherited)", "@executable_path/Frameworks", "@loader_path/Frameworks"]})
+    target_shared = {"CODE_SIGN_STYLE": "Automatic", "DEVELOPMENT_TEAM": "$(TASKLENS_DEVELOPMENT_TEAM)", "TARGETED_DEVICE_FAMILY": "1", "SUPPORTED_PLATFORMS": "iphoneos iphonesimulator", "SWIFT_EMIT_LOC_STRINGS": "YES"}
+    app_configs = configs("app", {**target_shared, "PRODUCT_NAME": "$(TARGET_NAME)", "PRODUCT_BUNDLE_IDENTIFIER": "$(TASKLENS_BUNDLE_IDENTIFIER)", "INFOPLIST_FILE": "TaskLens/Info.plist", "GENERATE_INFOPLIST_FILE": "NO", "MARKETING_VERSION": "1.0", "CURRENT_PROJECT_VERSION": "1", "LD_RUNPATH_SEARCH_PATHS": ["$(inherited)", "@executable_path/Frameworks"]})
+    test_configs = configs("tests", {**target_shared, "PRODUCT_NAME": "$(TARGET_NAME)", "PRODUCT_BUNDLE_IDENTIFIER": "$(TASKLENS_BUNDLE_IDENTIFIER).tests", "GENERATE_INFOPLIST_FILE": "YES", "TEST_HOST": "$(BUILT_PRODUCTS_DIR)/TaskLens.app/TaskLens", "BUNDLE_LOADER": "$(TEST_HOST)", "LD_RUNPATH_SEARCH_PATHS": ["$(inherited)", "@executable_path/Frameworks", "@loader_path/Frameworks"]})
     proxy = add("proxy:app", "PBXContainerItemProxy", containerPortal=project, proxyType=1, remoteGlobalIDString=app, remoteInfo="TaskLens")
     dependency = add("dependency:app", "PBXTargetDependency", target=app, targetProxy=proxy)
     add("target:app", "PBXNativeTarget", buildConfigurationList=app_configs, buildPhases=[app_sources, *phases["app"]], buildRules=[], dependencies=[], name="TaskLens", productName="TaskLens", productReference=app_product, productType="com.apple.product-type.application")
