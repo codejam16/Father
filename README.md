@@ -1,3 +1,5 @@
+> **Apple foreground-mask experiment** (`experiment/apple-foreground-masks`): selected objects use fresh on-device Vision silhouettes instead of rectangular highlights. This branch supersedes the appearance-recovery behavior described below. See the experimental device checks at the end of `docs/DEVICE_CHECKS.md`.
+
 # TaskLens
 
 A starter for a moving-camera task assistant on iPhone. Keep the camera open, ask a question, hear the reply, and optionally point something out in either direction.
@@ -200,3 +202,12 @@ Regeneration rebuilds the project definition and resets target signing/custom pr
 Complete `docs/DEVICE_CHECKS.md` before promising live tracking. Tune coordinate alignment and replay performance on the actual phone, then improve continuous conversation if time remains. Avoid expanding into manual ingestion, additional platforms, or 3D anchors before the camera/pointing interaction is reliable.
 
 References: [Apple Vision tracking](https://developer.apple.com/documentation/vision/tracking-multiple-objects-or-rectangles-in-video), [Apple Speech](https://developer.apple.com/documentation/speech/sfspeechrecognizer), [Gemini image understanding](https://ai.google.dev/gemini-api/docs/image-understanding), [Gemini pricing](https://ai.google.dev/gemini-api/docs/pricing).
+
+
+### Apple foreground-mask experiment
+
+Uses iOS 17's `VNGenerateForegroundInstanceMaskRequest`, without Gemini calls or model downloads. A single background worker processes the latest available camera view at most every 0.4 seconds; slow work is never queued. Box tracking bridges requests internally. Displayed masks expire after 0.8 seconds and are regenerated from fresh frames rather than stretching the initial Gemini region forever. Front-camera masks use the same preview mirroring.
+
+Each frame's foreground instances are associated with remembered target regions using overlap, size and ambiguity gates; instance numbers are never reused as identities. Lost targets are checked approximately once per second for up to one minute, near their last tracked region. This experiment disables the previous template/rotation-search worker. It does not provide global identity recovery: substantial movement while hidden can require another question/selection. If Apple merges a lid into its bottle, the app rejects the oversized mask rather than claiming to segment the lid. Transparent objects, merged objects and weak foreground separation can yield no highlight. No rectangle is substituted for a missing mask; manual drag previews remain rectangular.
+
+Baseline checkpoint: `296de7e` on `starter/visual-assistant`. Switch back with `git switch starter/visual-assistant` after saving any subsequent experimental edits. Nothing is pushed automatically.

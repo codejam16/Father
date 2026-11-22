@@ -58,9 +58,10 @@ struct CameraStage: View {
                     .foregroundStyle(.white.opacity(0.8)).padding(28)
                 }
                 ForEach(camera.highlights) { highlight in
-                    pointer(highlight.pose, label: highlight.label,
-                            color: highlight.source == .user ? .yellow : .mint,
-                            focused: highlight.isFocused, in: geometry.size)
+                    if let mask = highlight.mask, let box = highlight.maskBox {
+                        foreground(mask, from: box, to: highlight.pose, color: highlight.source == .user ? .yellow : .mint,
+                                   focused: highlight.isFocused, in: geometry.size)
+                    }
                 }
                 if let dragStart, let dragEnd,
                    let box = FrameGeometry.selection(start: dragStart, end: dragEnd,
@@ -108,6 +109,31 @@ struct CameraStage: View {
         .clipShape(RoundedRectangle(cornerRadius: showsChrome ? 24 : 0))
         .overlay(RoundedRectangle(cornerRadius: showsChrome ? 24 : 0).stroke(.white.opacity(showsChrome ? 0.12 : 0), lineWidth: 1))
         .accessibilityLabel(enabled ? "Live camera. Tap or drag to select a region for your next question." : "Live camera. Region selection is off.")
+    }
+
+    private func foreground(_ mask: CGImage, from box: NormalizedBox, to pose: RotatedBox, color: Color, focused: Bool, in size: CGSize) -> some View {
+        let image = FrameGeometry.fittedRect(in: size, aspect: camera.aspectRatio)
+        let source = box.unitRect
+        let sx = pose.size.width / max(0.00001, source.width)
+        let sy = pose.size.height / max(0.00001, source.height)
+        let dx = (pose.center.x - source.midX * sx) * image.width
+        let dy = (pose.center.y - source.midY * sy) * image.height
+        // Track translation/scale between mask refreshes; fresh segmentation supplies
+        // the changing silhouette, rather than permanently warping an initial cutout.
+        // Vision returns a grayscale image, not an alpha mask. Convert luminance to
+        // alpha explicitly, otherwise the black background would tint the whole frame.
+        return color.opacity(focused ? 0.32 : 0.18)
+            .frame(width: image.width, height: image.height)
+            .mask(alignment: .topLeading) {
+                Image(decorative: mask, scale: 1).resizable()
+                    .frame(width: image.width, height: image.height)
+                    .luminanceToAlpha()
+                    .scaleEffect(x: sx, y: sy, anchor: .topLeading)
+                    .offset(x: dx, y: dy)
+            }
+            .scaleEffect(x: mirrored ? -1 : 1, y: 1)
+            .position(x: image.midX, y: image.midY)
+            .allowsHitTesting(false)
     }
 
     private func pointer(_ box: NormalizedBox, label: String, color: Color, in size: CGSize) -> some View {

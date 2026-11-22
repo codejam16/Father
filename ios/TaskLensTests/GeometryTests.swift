@@ -322,3 +322,27 @@ final class SnapshotHistoryTests: XCTestCase {
         XCTAssertLessThan(recent, 0)
     }
 }
+
+final class ForegroundAssociationTests: XCTestCase {
+    func testSelectsOverlappingInstanceInsteadOfUnrelatedForeground() {
+        let target = CGRect(x: 0.2, y: 0.2, width: 0.3, height: 0.5)
+        XCTAssertEqual(ForegroundAssociation.match(target: target, candidates: [
+            CGRect(x: 0.7, y: 0.2, width: 0.2, height: 0.5),
+            CGRect(x: 0.21, y: 0.22, width: 0.28, height: 0.48)
+        ]), 1)
+    }
+
+    func testDoesNotSubstituteWholeBottleForLid() {
+        XCTAssertNil(ForegroundAssociation.match(
+            target: CGRect(x: 0.3, y: 0.2, width: 0.15, height: 0.06),
+            candidates: [CGRect(x: 0.25, y: 0.18, width: 0.25, height: 0.65)]))
+    }
+
+    func testAmbiguousInstancesAreNotSelected() {
+        let target = CGRect(x: 0.2, y: 0.2, width: 0.4, height: 0.5)
+        XCTAssertNil(ForegroundAssociation.match(target: target, candidates: [
+            CGRect(x: 0.18, y: 0.2, width: 0.4, height: 0.5),
+            CGRect(x: 0.22, y: 0.2, width: 0.4, height: 0.5)
+        ]))
+    }
+}

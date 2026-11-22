@@ -30,6 +30,22 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
     private let snapshotContext = CIContext()
     private let recoveryQueue = DispatchQueue(label: "tasklens.recovery", qos: .utility)
     private var recoveryWorkID: UUID?
+    private let segmentationQueue = DispatchQueue(label: "tasklens.segmentation", qos: .utility)
+    private let segmentationContext = CIContext()
+    private var segmentationBusy = false
+    private var segmentationGeneration = UUID()
+    private var lastSegmentationTime = -Double.infinity
+    private var lastSegmentationError: String?
+
+    private struct SegmentationInput {
+        let id: UUID
+        let box: NormalizedBox
+    }
+    private struct SegmentedTarget {
+        let id: UUID
+        let box: NormalizedBox
+        let mask: CGImage
+    }
     private var configured = false
     private var input: AVCaptureDeviceInput?
     private var output: AVCaptureVideoDataOutput?
@@ -57,6 +73,9 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
         var nextRecoveryTime = -Double.infinity
         var recoveryFramesRemaining = 0
         var recoveryAppearanceIndex = 0
+        var foregroundMaskBox: NormalizedBox?
+        var foregroundMask: CGImage?
+        var foregroundMaskTime = -Double.infinity
 
         init(id: String, label: String, parentID: String?, source: Highlight.Source, box: NormalizedBox) {
             self.id = id; self.label = label; self.parentID = parentID; self.source = source
@@ -186,12 +205,12 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
         let frame = BufferedFrame(id: UUID().uuidString, date: Date(), time: time, pixels: pixels)
         frames.append(frame)
         if frames.count > 36 { frames.removeFirst(frames.count - 36) }
-        for target in targets where target.tracker != nil { advanceTracker(target, on: frame) }
-        // One background search at a time; earliest deadlines keep multiple lost objects fair.
-        if let target = targets.filter({ target in
-            guard target.tracker == nil, let lostAt = target.lostAt else { return false }
-            return frame.time >= target.nextRecoveryTime && TrackingRecoveryPolicy.interval(after: frame.time - lostAt) != nil
-        }).min(by: { $0.nextRecoveryTime < $1.nextRecoveryTime }) { attemptRecovery(target, on: frame) }
+        // Vision's lightweight box tracker interpolates motion between fresh segmentations.
+        // The experimental path does not run template/rotation scans alongside segmentation.
+        for target in targets where target.tracker != nil {
+            advanceTracker(target, on: frame, allowAppearanceCheck: false)
+        }
+        segmentForeground(on: frame)
         publishTargets(at: frame.time)
 
     }
@@ -439,6 +458,117 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
         }
     }
 
+    /// Bounded worker: no queued frames, no network calls, no work on the capture queue.
+    private func segmentForeground(on frame: BufferedFrame) {
+        guard !segmentationBusy, frame.time - lastSegmentationTime >= 0.4 else { return }
+        let inputs = targets.filter {
+            $0.tracker != nil || ($0.lostAt.map { frame.time - $0 < 60 } == true && frame.time >= $0.nextRecoveryTime)
+        }.sorted {
+            $0.lastBox.unitRect.width * $0.lastBox.unitRect.height < $1.lastBox.unitRect.width * $1.lastBox.unitRect.height
+        }.map { SegmentationInput(id: $0.instanceID, box: $0.lastBox) }
+        guard !inputs.isEmpty else { return }
+        let inputIDs = Set(inputs.map(\.id))
+        for target in targets where target.tracker == nil && inputIDs.contains(target.instanceID) {
+            target.nextRecoveryTime = frame.time + 1
+        }
+        segmentationBusy = true
+        lastSegmentationTime = frame.time
+        let generation = segmentationGeneration
+        segmentationQueue.async { [weak self] in
+            guard let self else { return }
+            let result: Result<[SegmentedTarget], Error> = Result {
+                try autoreleasepool { try self.foregroundMasks(on: frame, inputs: inputs) }
+            }
+            self.queue.async {
+                self.segmentationBusy = false
+                guard self.segmentationGeneration == generation,
+                      let newest = self.frames.last, self.session.isRunning else { return }
+                switch result {
+                case .failure(let error):
+                    // Developers retain the diagnostic; speech never receives Vision internals.
+                    let message = error.localizedDescription
+                    if self.lastSegmentationError != message {
+                        NSLog("TaskLens foreground segmentation failed: %@", message)
+                        self.lastSegmentationError = message
+                    }
+                case .success(let masks):
+                    self.lastSegmentationError = nil
+                    // Never display masks inferred from a camera view that is already stale.
+                    guard newest.time - frame.time < 0.8,
+                          let sourceIndex = self.frames.firstIndex(where: { $0.id == frame.id }) else { return }
+                    for match in masks {
+                        guard let target = self.targets.first(where: { $0.instanceID == match.id }) else { continue }
+                        target.pose = RotatedBox(box: match.box)
+                        target.lastBox = match.box
+                        target.lastVisionBox = match.box
+                        target.stability = TrackingStability()
+                        target.lostAt = nil
+                        target.recoveryFramesRemaining = 0
+                        self.seedVision(target, box: match.box)
+                        // Seed in the segmentation's source coordinates, then catch up to live.
+                        for replay in self.frames[sourceIndex...] {
+                            guard target.tracker != nil else { break }
+                            self.advanceTracker(target, on: replay, allowAppearanceCheck: false)
+                        }
+                        target.foregroundMaskBox = match.box
+                        target.foregroundMask = match.mask
+                        target.foregroundMaskTime = frame.time
+                    }
+                    self.publishTargets(at: newest.time)
+                }
+            }
+        }
+    }
+
+    private func foregroundMasks(on frame: BufferedFrame, inputs: [SegmentationInput]) throws -> [SegmentedTarget] {
+        let request = VNGenerateForegroundInstanceMaskRequest()
+        let handler = VNImageRequestHandler(cvPixelBuffer: frame.pixels, orientation: .up)
+        try handler.perform([request])
+        guard let observation = request.results?.first else { return [] }
+        var instances: [(index: Int, box: NormalizedBox)] = []
+        // Use Vision's float masks, rather than assuming a pixel format for instance labels.
+        for index in observation.allInstances {
+            let mask = try observation.generateMask(forInstances: IndexSet(integer: index))
+            if let box = Self.foregroundBounds(mask) { instances.append((index, box)) }
+        }
+        var claimed = Set<Int>()
+        var results: [SegmentedTarget] = []
+        for input in inputs {
+            let available = instances.filter { !claimed.contains($0.index) }
+            guard let selected = ForegroundAssociation.match(target: input.box.unitRect,
+                                                             candidates: available.map { $0.box.unitRect }) else { continue }
+            let instance = available[selected]
+            let mask = try observation.generateScaledMaskForImage(forInstances: IndexSet(integer: instance.index), from: handler)
+            let image = CIImage(cvPixelBuffer: mask)
+            guard let cgImage = segmentationContext.createCGImage(image, from: image.extent,
+                format: .L8, colorSpace: CGColorSpaceCreateDeviceGray()) else { continue }
+            results.append(SegmentedTarget(id: input.id, box: instance.box, mask: cgImage))
+            claimed.insert(instance.index)
+        }
+        return results
+    }
+
+    /// Mask rows, like our upright camera buffers and API coordinates, start at the top.
+    private static func foregroundBounds(_ mask: CVPixelBuffer) -> NormalizedBox? {
+        guard CVPixelBufferGetPixelFormatType(mask) == kCVPixelFormatType_OneComponent32Float,
+              CVPixelBufferLockBaseAddress(mask, .readOnly) == kCVReturnSuccess else { return nil }
+        defer { CVPixelBufferUnlockBaseAddress(mask, .readOnly) }
+        guard let base = CVPixelBufferGetBaseAddress(mask) else { return nil }
+        let width = CVPixelBufferGetWidth(mask), height = CVPixelBufferGetHeight(mask)
+        let stride = CVPixelBufferGetBytesPerRow(mask)
+        var minX = width, minY = height, maxX = -1, maxY = -1
+        for y in 0..<height {
+            let row = base.advanced(by: y * stride).assumingMemoryBound(to: Float.self)
+            for x in 0..<width where row[x] >= 0.5 {
+                minX = min(minX, x); maxX = max(maxX, x)
+                minY = min(minY, y); maxY = max(maxY, y)
+            }
+        }
+        guard maxX >= minX, maxY >= minY else { return nil }
+        return NormalizedBox([Double(minY) / Double(height) * 1000, Double(minX) / Double(width) * 1000,
+            Double(maxY + 1) / Double(height) * 1000, Double(maxX + 1) / Double(width) * 1000])
+    }
+
     private func overlap(_ a: NormalizedBox, _ b: NormalizedBox) -> CGFloat {
         let intersection = a.unitRect.intersection(b.unitRect)
         let area = intersection.isNull ? 0 : intersection.width * intersection.height
@@ -457,8 +587,11 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
     }
 
     private func publishTargets(at time: Double) {
-        let visible = targets.filter { $0.tracker != nil && $0.recoveryFramesRemaining == 0 }.map {
-            Highlight(id: $0.id, label: $0.label, source: $0.source, pose: $0.pose, isFocused: $0.id == focusedID)
+        let visible = targets.filter {
+            $0.tracker != nil && $0.recoveryFramesRemaining == 0 && time - $0.foregroundMaskTime < 0.8
+        }.map {
+            Highlight(id: $0.id, label: $0.label, source: $0.source, pose: $0.pose,
+                      isFocused: $0.id == focusedID, mask: $0.foregroundMask, maskBox: $0.foregroundMaskBox)
         }
         let objects = objectContext(at: time)
         DispatchQueue.main.async { self.highlights = visible; self.trackedObjects = objects }
@@ -500,6 +633,8 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
     func clearHighlight() { queue.async { [weak self] in self?.resetTracking() } }
 
     private func resetTracking() {
+        segmentationGeneration = UUID()
+        lastSegmentationTime = -Double.infinity
         targets.removeAll(); focusedID = nil
         DispatchQueue.main.async { self.highlights = []; self.trackedObjects = [] }
     }

@@ -116,3 +116,15 @@ Use one clear, low-risk task and distinctive objects. Confirm that identifying a
 - While a background search is running, clear/forget the object, switch cameras, start a new task, or background the app. A result from the old target instance or loss revision must never reappear. A recovery result is replayed from its own source frame before drawing, not applied directly to the latest image.
 - Check CPU/thermal behavior on the actual phone with several missing objects: only one full-image background scan can be in flight, and pending target deadlines are served fairly. Once a lost target reaches one minute, it must stop scheduling work until a new question restarts recovery.
 - Verify uniform views are not used as identity templates; appearance changes and lookalikes remain best-effort cases. No history/recovery operation should generate extra provider calls or write camera images to disk.
+
+
+## Apple foreground-mask experimental branch
+
+These replace the rectangle/appearance-recovery checks on this branch. Rebuild and run on a physical iPhone:
+
+- Ask to identify a distinct foreground object. Confirm the tint follows its silhouette, including gaps around it, rather than tinting a full rectangular region or the entire camera.
+- Move around the object and rotate the phone slightly. The silhouette must update to the current viewpoint. Try the front camera too: the tint must mirror with the preview.
+- Cover the object briefly, then uncover it near its last location. A stale tint must disappear within 0.8 seconds, with fresh segmentation attempting recovery approximately once per second for one minute. Major movement while hidden may require a new selection.
+- Identify two separate objects. Confirm each gets its own tint. Ask about a small lid/button: if Apple only returns the whole object, there should be no misleading whole-object highlight for that part.
+- Clear/forget selections, switch cameras and background the app during segmentation. Old results must never appear afterward.
+- Speak while objects are lost. Check camera smoothness, response latency, device warmth and mask refresh rate. Actual Vision inference speed depends on the phone; a worker result older than 0.8 seconds is discarded.

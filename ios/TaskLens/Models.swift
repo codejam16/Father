@@ -233,6 +233,8 @@ struct Highlight: Identifiable {
     let source: Source
     let pose: RotatedBox
     let isFocused: Bool
+    var mask: CGImage? = nil
+    var maskBox: NormalizedBox? = nil
 }
 
 /// Sizes are normalized to the upright image; rotation is applied in pixel space,
@@ -512,5 +514,28 @@ struct ObjectSnapshotHistory {
         }
         snapshots = snapshots.enumerated().filter { keep.contains($0.offset) }.map(\.element)
         return true
+    }
+}
+
+
+/// Geometry gates for associating freshly segmented instances with remembered targets.
+/// Instance numbers are local to a single Vision request, never persistent identities.
+enum ForegroundAssociation {
+    static func match(target: CGRect, candidates: [CGRect]) -> Int? {
+        let area = target.width * target.height
+        guard area > 0 else { return nil }
+        let ranked = candidates.enumerated().compactMap { index, candidate -> (Int, CGFloat)? in
+            let candidateArea = candidate.width * candidate.height
+            let ratio = candidateArea / area
+            // In particular, don't paint a whole bottle when the target is its lid.
+            guard ratio >= 0.3, ratio <= 3 else { return nil }
+            let intersection = target.intersection(candidate)
+            let shared = intersection.isNull ? 0 : intersection.width * intersection.height
+            let score = shared / max(0.00001, area + candidateArea - shared)
+            return score >= 0.35 ? (index, score) : nil
+        }.sorted { $0.1 > $1.1 }
+        guard let best = ranked.first else { return nil }
+        if ranked.count > 1, best.1 - ranked[1].1 < 0.12 { return nil }
+        return best.0
     }
 }
