@@ -11,6 +11,7 @@ import re
 ROOT = Path(__file__).resolve().parents[1]
 IOS = ROOT / "ios"
 OBJECTS = {}
+EXISTING = (IOS / "TaskLens.xcodeproj/project.pbxproj").read_text() if (IOS / "TaskLens.xcodeproj/project.pbxproj").exists() else ""
 
 
 def ident(name):
@@ -38,23 +39,35 @@ def serialize(value, level=0):
 
 
 def files(folder, target):
-    refs, sources = [], []
+    refs, sources, resources = [], [], []
     for file in sorted((IOS / folder).glob("*")):
-        if file.suffix not in (".swift", ".plist"):
+        if file.suffix not in (".swift", ".plist", ".json"):
             continue
-        ref = add(f"ref:{folder}/{file.name}", "PBXFileReference", lastKnownFileType="sourcecode.swift" if file.suffix == ".swift" else "text.plist.xml", path=file.name, sourceTree="<group>")
+        ref = add(f"ref:{folder}/{file.name}", "PBXFileReference", lastKnownFileType={".swift": "sourcecode.swift", ".plist": "text.plist.xml", ".json": "text.json"}[file.suffix], path=file.name, sourceTree="<group>")
         refs.append(ref)
         if file.suffix == ".swift":
             sources.append(add(f"build:{folder}/{file.name}", "PBXBuildFile", fileRef=ref))
+        elif file.suffix == ".json":
+            resources.append(add(f"resource:{folder}/{file.name}", "PBXBuildFile", fileRef=ref))
     group = add(f"group:{folder}", "PBXGroup", children=refs, path=folder, sourceTree="<group>")
     phase = add(f"sources:{target}", "PBXSourcesBuildPhase", buildActionMask=2147483647, files=sources, runOnlyForDeploymentPostprocessing=0)
-    return group, phase
+    return group, phase, resources
 
 
 def configs(name, extra):
     refs = []
     for configuration in ("Debug", "Release"):
         values = dict(extra)
+        # Keep local signing settings when adding sources/resources. Debug and
+        # Release can intentionally use different teams or bundle identifiers.
+        config_id = ident(f"config:{name}:{configuration}")
+        match = re.search(r"(?m)^\s*" + config_id + r"(?: /\*.*?\*/)?\s*=\s*\{.*?buildSettings\s*=\s*\{(.*?)\};", EXISTING, re.S)
+        if match:
+            for key in ("DEVELOPMENT_TEAM", "PRODUCT_BUNDLE_IDENTIFIER", "CODE_SIGN_STYLE", "CODE_SIGN_IDENTITY", "PROVISIONING_PROFILE_SPECIFIER"):
+                setting = re.search(r"\b" + key + r"\s*=\s*(.*?);", match.group(1))
+                if setting:
+                    raw = setting.group(1).strip()
+                    values[key] = json.loads(raw) if raw.startswith('"') else raw
         if name == "project":
             values.update({"SWIFT_OPTIMIZATION_LEVEL": "-Onone" if configuration == "Debug" else "-O", "ENABLE_TESTABILITY": "YES" if configuration == "Debug" else "NO"})
         refs.append(add(f"config:{name}:{configuration}", "XCBuildConfiguration", buildSettings=values, name=configuration))
@@ -63,15 +76,16 @@ def configs(name, extra):
 
 def main():
     project, app, tests = ident("project"), ident("target:app"), ident("target:tests")
-    app_group, app_sources = files("TaskLens", "app")
-    test_group, test_sources = files("TaskLensTests", "tests")
+    app_group, app_sources, app_resources = files("TaskLens", "app")
+    test_group, test_sources, test_resources = files("TaskLensTests", "tests")
     app_product = add("product:app", "PBXFileReference", explicitFileType="wrapper.application", includeInIndex=0, path="TaskLens.app", sourceTree="BUILT_PRODUCTS_DIR")
     test_product = add("product:tests", "PBXFileReference", explicitFileType="wrapper.cfbundle", includeInIndex=0, path="TaskLensTests.xctest", sourceTree="BUILT_PRODUCTS_DIR")
     products = add("group:products", "PBXGroup", children=[app_product, test_product], name="Products", sourceTree="<group>")
     root = add("group:root", "PBXGroup", children=[app_group, test_group, products], sourceTree="<group>")
     phases = {}
     for target in ("app", "tests"):
-        phases[target] = [add(f"{kind}:{target}", isa, buildActionMask=2147483647, files=[], runOnlyForDeploymentPostprocessing=0) for kind, isa in (("frameworks", "PBXFrameworksBuildPhase"), ("resources", "PBXResourcesBuildPhase"))]
+        resources = app_resources if target == "app" else test_resources
+        phases[target] = [add(f"{kind}:{target}", isa, buildActionMask=2147483647, files=resources if kind == "resources" else [], runOnlyForDeploymentPostprocessing=0) for kind, isa in (("frameworks", "PBXFrameworksBuildPhase"), ("resources", "PBXResourcesBuildPhase"))]
     shared = {"SDKROOT": "iphoneos", "IPHONEOS_DEPLOYMENT_TARGET": "17.0", "SWIFT_VERSION": "5.0", "CLANG_ENABLE_MODULES": "YES", "CLANG_ENABLE_OBJC_ARC": "YES", "GCC_C_LANGUAGE_STANDARD": "gnu17", "SWIFT_STRICT_CONCURRENCY": "minimal", "ENABLE_USER_SCRIPT_SANDBOXING": "YES"}
     target_shared = {"CODE_SIGN_STYLE": "Automatic", "DEVELOPMENT_TEAM": "", "TARGETED_DEVICE_FAMILY": "1", "SUPPORTED_PLATFORMS": "iphoneos iphonesimulator", "SWIFT_EMIT_LOC_STRINGS": "YES"}
     app_configs = configs("app", {**target_shared, "PRODUCT_NAME": "$(TARGET_NAME)", "PRODUCT_BUNDLE_IDENTIFIER": "dev.codejam16.tasklens", "INFOPLIST_FILE": "TaskLens/Info.plist", "GENERATE_INFOPLIST_FILE": "NO", "MARKETING_VERSION": "1.0", "CURRENT_PROJECT_VERSION": "1", "LD_RUNPATH_SEARCH_PATHS": ["$(inherited)", "@executable_path/Frameworks"]})

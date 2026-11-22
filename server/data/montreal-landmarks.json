@@ -1,0 +1,892 @@
+{
+  "version": 1,
+  "attribution": "Ville de Montréal · CC BY 4.0 · names, locations and factual metadata normalized for Detour",
+  "source_url": "https://donnees.montreal.ca/dataset/2980db3a-9eb4-4c0e-b7c6-a6584cb769c9/resource/18705524-c8a6-49a0-bca7-92f493e6d329/download/oeuvresdonneesouvertes.json",
+  "coordinate_system": "WGS84 latitude/longitude in decimal degrees",
+  "snapshot_note": "Municipal snapshot mirrored at 5nguy/opendata, commit ec8c7325d9e0df7f00bbba09471cc0a999e96705. Not a live inventory; inspect access and entrances on site.",
+  "landmarks": [
+    {
+      "id": "montreal_art_1660",
+      "name": "Monument à Édouard VII",
+      "latitude": 45.503724,
+      "longitude": -73.568507,
+      "categories": [
+        "streetArt",
+        "history",
+        "nature"
+      ],
+      "description": "Monument à Édouard VII is a work in Montréal's municipal public art collection. Artist: Louis-Philippe Hébert. Production date recorded: 1914. Materials: Bronze; granite. Location: Square Phillips.",
+      "description_fr": "Monument à Édouard VII fait partie de la collection municipale d’art public de Montréal. Artiste : Louis-Philippe Hébert. Date de production au registre : 1914. Matériaux : Bronze; granit. Emplacement : Square Phillips.",
+      "verified_facts": [
+        "Artist: Louis-Philippe Hébert.",
+        "Production date recorded: 1914.",
+        "Materials: Bronze; granite.",
+        "Location: Square Phillips."
+      ],
+      "source_urls": [
+        "https://donnees.montreal.ca/dataset/2980db3a-9eb4-4c0e-b7c6-a6584cb769c9/resource/18705524-c8a6-49a0-bca7-92f493e6d329/download/oeuvresdonneesouvertes.json"
+      ],
+      "source_name": "Ville de Montréal · Collection municipale d’art public",
+      "license": "CC BY 4.0",
+      "coordinate_kind": "mapped outdoor artwork point",
+      "routable": true
+    },
+    {
+      "id": "montreal_art_1476",
+      "name": "Monument au frère André",
+      "latitude": 45.503309,
+      "longitude": -73.5666,
+      "categories": [
+        "streetArt",
+        "history",
+        "nature"
+      ],
+      "description": "Monument au frère André is a work in Montréal's municipal public art collection. Artist: Émile Brunet. Production date recorded: 1986. Materials: Bronze; granite. Location: Place du frère André.",
+      "description_fr": "Monument au frère André fait partie de la collection municipale d’art public de Montréal. Artiste : Émile Brunet. Date de production au registre : 1986. Matériaux : Bronze; granit. Emplacement : Place du frère André.",
+      "verified_facts": [
+        "Artist: Émile Brunet.",
+        "Production date recorded: 1986.",
+        "Materials: Bronze; granite.",
+        "Location: Place du frère André."
+      ],
+      "source_urls": [
+        "https://donnees.montreal.ca/dataset/2980db3a-9eb4-4c0e-b7c6-a6584cb769c9/resource/18705524-c8a6-49a0-bca7-92f493e6d329/download/oeuvresdonneesouvertes.json"
+      ],
+      "source_name": "Ville de Montréal · Collection municipale d’art public",
+      "license": "CC BY 4.0",
+      "coordinate_kind": "mapped outdoor artwork point",
+      "routable": true
+    },
+    {
+      "id": "montreal_art_1698",
+      "name": "Monument à John F. Kennedy",
+      "latitude": 45.503367,
+      "longitude": -73.573689,
+      "categories": [
+        "streetArt",
+        "history",
+        "nature"
+      ],
+      "description": "Monument à John F. Kennedy is a work in Montréal's municipal public art collection. Artist: Paul Lancz. Production date recorded: 1986. Materials: Bronze; granite. Location: Intersection des avenues du Président-Kennedy et McGill-College.",
+      "description_fr": "Monument à John F. Kennedy fait partie de la collection municipale d’art public de Montréal. Artiste : Paul Lancz. Date de production au registre : 1986. Matériaux : Bronze; granit. Emplacement : Intersection des avenues du Président-Kennedy et McGill-College.",
+      "verified_facts": [
+        "Artist: Paul Lancz.",
+        "Production date recorded: 1986.",
+        "Materials: Bronze; granite.",
+        "Location: Intersection des avenues du Président-Kennedy et McGill-College."
+      ],
+      "source_urls": [
+        "https://donnees.montreal.ca/dataset/2980db3a-9eb4-4c0e-b7c6-a6584cb769c9/resource/18705524-c8a6-49a0-bca7-92f493e6d329/download/oeuvresdonneesouvertes.json"
+      ],
+      "source_name": "Ville de Montréal · Collection municipale d’art public",
+      "license": "CC BY 4.0",
+      "coordinate_kind": "mapped outdoor artwork point",
+      "routable": true
+    },
+    {
+      "id": "montreal_art_1664",
+      "name": "Le lion de Belfort",
+      "latitude": 45.499704,
+      "longitude": -73.570273,
+      "categories": [
+        "streetArt",
+        "nature"
+      ],
+      "description": "Le lion de Belfort is a work in Montréal's municipal public art collection. Artist: George William Hill. Production date recorded: 1897. Materials: Bronze; granite. Location: Square Dorchester.",
+      "description_fr": "Le lion de Belfort fait partie de la collection municipale d’art public de Montréal. Artiste : George William Hill. Date de production au registre : 1897. Matériaux : Bronze; granit. Emplacement : Square Dorchester.",
+      "verified_facts": [
+        "Artist: George William Hill.",
+        "Production date recorded: 1897.",
+        "Materials: Bronze; granite.",
+        "Location: Square Dorchester."
+      ],
+      "source_urls": [
+        "https://donnees.montreal.ca/dataset/2980db3a-9eb4-4c0e-b7c6-a6584cb769c9/resource/18705524-c8a6-49a0-bca7-92f493e6d329/download/oeuvresdonneesouvertes.json"
+      ],
+      "source_name": "Ville de Montréal · Collection municipale d’art public",
+      "license": "CC BY 4.0",
+      "coordinate_kind": "mapped outdoor artwork point",
+      "routable": true
+    },
+    {
+      "id": "montreal_art_1773",
+      "name": "After Babel, a Civic Square",
+      "latitude": 45.509963,
+      "longitude": -73.567202,
+      "categories": [
+        "streetArt",
+        "nature"
+      ],
+      "description": "After Babel, a Civic Square is a work in Montréal's municipal public art collection. Artist: Marlene Hilton-Moore, John McEwen. Production date recorded: 1993. Materials: Corten steel; bronze; brass. Location: Promenade des artistes.",
+      "description_fr": "After Babel, a Civic Square fait partie de la collection municipale d’art public de Montréal. Artiste : Marlene Hilton-Moore, John McEwen. Date de production au registre : 1993. Matériaux : Acier corten; bronze; laiton. Emplacement : Promenade des artistes.",
+      "verified_facts": [
+        "Artist: Marlene Hilton-Moore, John McEwen.",
+        "Production date recorded: 1993.",
+        "Materials: Corten steel; bronze; brass.",
+        "Location: Promenade des artistes."
+      ],
+      "source_urls": [
+        "https://donnees.montreal.ca/dataset/2980db3a-9eb4-4c0e-b7c6-a6584cb769c9/resource/18705524-c8a6-49a0-bca7-92f493e6d329/download/oeuvresdonneesouvertes.json"
+      ],
+      "source_name": "Ville de Montréal · Collection municipale d’art public",
+      "license": "CC BY 4.0",
+      "coordinate_kind": "mapped outdoor artwork point",
+      "routable": true
+    },
+    {
+      "id": "montreal_art_1666",
+      "name": "Monument aux héros de la guerre des Boers",
+      "latitude": 45.49961,
+      "longitude": -73.570967,
+      "categories": [
+        "streetArt",
+        "history",
+        "nature"
+      ],
+      "description": "Monument aux héros de la guerre des Boers is a work in Montréal's municipal public art collection. Artist: George William Hill. Production date recorded: 1907. Materials: Bronze; granite. Location: Square Dorchester.",
+      "description_fr": "Monument aux héros de la guerre des Boers fait partie de la collection municipale d’art public de Montréal. Artiste : George William Hill. Date de production au registre : 1907. Matériaux : Bronze; granit. Emplacement : Square Dorchester.",
+      "verified_facts": [
+        "Artist: George William Hill.",
+        "Production date recorded: 1907.",
+        "Materials: Bronze; granite.",
+        "Location: Square Dorchester."
+      ],
+      "source_urls": [
+        "https://donnees.montreal.ca/dataset/2980db3a-9eb4-4c0e-b7c6-a6584cb769c9/resource/18705524-c8a6-49a0-bca7-92f493e6d329/download/oeuvresdonneesouvertes.json"
+      ],
+      "source_name": "Ville de Montréal · Collection municipale d’art public",
+      "license": "CC BY 4.0",
+      "coordinate_kind": "mapped outdoor artwork point",
+      "routable": true
+    },
+    {
+      "id": "montreal_art_1474",
+      "name": "Monument à sir Wilfrid Laurier",
+      "latitude": 45.4994744,
+      "longitude": -73.571061,
+      "categories": [
+        "streetArt",
+        "history",
+        "nature"
+      ],
+      "description": "Monument à sir Wilfrid Laurier is a work in Montréal's municipal public art collection. Artist: Émile Brunet. Production date recorded: 1953. Materials: Bronze; granite. Location: Square Dorchester.",
+      "description_fr": "Monument à sir Wilfrid Laurier fait partie de la collection municipale d’art public de Montréal. Artiste : Émile Brunet. Date de production au registre : 1953. Matériaux : Bronze; granit. Emplacement : Square Dorchester.",
+      "verified_facts": [
+        "Artist: Émile Brunet.",
+        "Production date recorded: 1953.",
+        "Materials: Bronze; granite.",
+        "Location: Square Dorchester."
+      ],
+      "source_urls": [
+        "https://donnees.montreal.ca/dataset/2980db3a-9eb4-4c0e-b7c6-a6584cb769c9/resource/18705524-c8a6-49a0-bca7-92f493e6d329/download/oeuvresdonneesouvertes.json"
+      ],
+      "source_name": "Ville de Montréal · Collection municipale d’art public",
+      "license": "CC BY 4.0",
+      "coordinate_kind": "mapped outdoor artwork point",
+      "routable": true
+    },
+    {
+      "id": "montreal_art_1724",
+      "name": "Monument à Robert Burns",
+      "latitude": 45.499462,
+      "longitude": -73.571571,
+      "categories": [
+        "streetArt",
+        "history",
+        "nature"
+      ],
+      "description": "Monument à Robert Burns is a work in Montréal's municipal public art collection. Artist: Georges Anderson Lawson. Production date recorded: 1930. Materials: Bronze; granite. Location: Square Dorchester.",
+      "description_fr": "Monument à Robert Burns fait partie de la collection municipale d’art public de Montréal. Artiste : Georges Anderson Lawson. Date de production au registre : 1930. Matériaux : Bronze; granit. Emplacement : Square Dorchester.",
+      "verified_facts": [
+        "Artist: Georges Anderson Lawson.",
+        "Production date recorded: 1930.",
+        "Materials: Bronze; granite.",
+        "Location: Square Dorchester."
+      ],
+      "source_urls": [
+        "https://donnees.montreal.ca/dataset/2980db3a-9eb4-4c0e-b7c6-a6584cb769c9/resource/18705524-c8a6-49a0-bca7-92f493e6d329/download/oeuvresdonneesouvertes.json"
+      ],
+      "source_name": "Ville de Montréal · Collection municipale d’art public",
+      "license": "CC BY 4.0",
+      "coordinate_kind": "mapped outdoor artwork point",
+      "routable": true
+    },
+    {
+      "id": "montreal_art_1966",
+      "name": "Monument à sir John A. Macdonald",
+      "latitude": 45.498786,
+      "longitude": -73.569638,
+      "categories": [
+        "streetArt",
+        "history",
+        "nature"
+      ],
+      "description": "Monument à sir John A. Macdonald is a work in Montréal's municipal public art collection. Artist: George Edward Wade. Production date recorded: 1895. Materials: Bronze; granite. Location: Place du Canada.",
+      "description_fr": "Monument à sir John A. Macdonald fait partie de la collection municipale d’art public de Montréal. Artiste : George Edward Wade. Date de production au registre : 1895. Matériaux : Bronze; granit. Emplacement : Place du Canada.",
+      "verified_facts": [
+        "Artist: George Edward Wade.",
+        "Production date recorded: 1895.",
+        "Materials: Bronze; granite.",
+        "Location: Place du Canada."
+      ],
+      "source_urls": [
+        "https://donnees.montreal.ca/dataset/2980db3a-9eb4-4c0e-b7c6-a6584cb769c9/resource/18705524-c8a6-49a0-bca7-92f493e6d329/download/oeuvresdonneesouvertes.json"
+      ],
+      "source_name": "Ville de Montréal · Collection municipale d’art public",
+      "license": "CC BY 4.0",
+      "coordinate_kind": "mapped outdoor artwork point",
+      "routable": true
+    },
+    {
+      "id": "montreal_art_1764",
+      "name": "Les sons de la musique",
+      "latitude": 45.507074,
+      "longitude": -73.560927,
+      "categories": [
+        "streetArt",
+        "nature"
+      ],
+      "description": "Les sons de la musique is a work in Montréal's municipal public art collection. Artist: Andrew Lui. Production date recorded: 1984. Materials: Concrete. Location: De la Gauchetière.",
+      "description_fr": "Les sons de la musique fait partie de la collection municipale d’art public de Montréal. Artiste : Andrew Lui. Date de production au registre : 1984. Matériaux : Béton. Emplacement : De la Gauchetière.",
+      "verified_facts": [
+        "Artist: Andrew Lui.",
+        "Production date recorded: 1984.",
+        "Materials: Concrete.",
+        "Location: De la Gauchetière."
+      ],
+      "source_urls": [
+        "https://donnees.montreal.ca/dataset/2980db3a-9eb4-4c0e-b7c6-a6584cb769c9/resource/18705524-c8a6-49a0-bca7-92f493e6d329/download/oeuvresdonneesouvertes.json"
+      ],
+      "source_name": "Ville de Montréal · Collection municipale d’art public",
+      "license": "CC BY 4.0",
+      "coordinate_kind": "mapped outdoor artwork point",
+      "routable": true
+    },
+    {
+      "id": "montreal_art_1640",
+      "name": "Le grand Jean-Paul",
+      "latitude": 45.503104,
+      "longitude": -73.560661,
+      "categories": [
+        "streetArt",
+        "nature"
+      ],
+      "description": "Le grand Jean-Paul is a work in Montréal's municipal public art collection. Artist: Roseline Granet. Production date recorded: 2003. Materials: Bronze. Location: Place Jean-Paul-Riopelle.",
+      "description_fr": "Le grand Jean-Paul fait partie de la collection municipale d’art public de Montréal. Artiste : Roseline Granet. Date de production au registre : 2003. Matériaux : Bronze. Emplacement : Place Jean-Paul-Riopelle.",
+      "verified_facts": [
+        "Artist: Roseline Granet.",
+        "Production date recorded: 2003.",
+        "Materials: Bronze.",
+        "Location: Place Jean-Paul-Riopelle."
+      ],
+      "source_urls": [
+        "https://donnees.montreal.ca/dataset/2980db3a-9eb4-4c0e-b7c6-a6584cb769c9/resource/18705524-c8a6-49a0-bca7-92f493e6d329/download/oeuvresdonneesouvertes.json"
+      ],
+      "source_name": "Ville de Montréal · Collection municipale d’art public",
+      "license": "CC BY 4.0",
+      "coordinate_kind": "mapped outdoor artwork point",
+      "routable": true
+    },
+    {
+      "id": "montreal_art_1835",
+      "name": "Le roi Singe",
+      "latitude": 45.506907,
+      "longitude": -73.56059,
+      "categories": [
+        "streetArt",
+        "nature"
+      ],
+      "description": "Le roi Singe is a work in Montréal's municipal public art collection. Artist: Tin Neon Pang. Production date recorded: 1984. Materials: Concrete. Location: De la Gauchetière.",
+      "description_fr": "Le roi Singe fait partie de la collection municipale d’art public de Montréal. Artiste : Tin Neon Pang. Date de production au registre : 1984. Matériaux : Béton. Emplacement : De la Gauchetière.",
+      "verified_facts": [
+        "Artist: Tin Neon Pang.",
+        "Production date recorded: 1984.",
+        "Materials: Concrete.",
+        "Location: De la Gauchetière."
+      ],
+      "source_urls": [
+        "https://donnees.montreal.ca/dataset/2980db3a-9eb4-4c0e-b7c6-a6584cb769c9/resource/18705524-c8a6-49a0-bca7-92f493e6d329/download/oeuvresdonneesouvertes.json"
+      ],
+      "source_name": "Ville de Montréal · Collection municipale d’art public",
+      "license": "CC BY 4.0",
+      "coordinate_kind": "mapped outdoor artwork point",
+      "routable": true
+    },
+    {
+      "id": "montreal_art_1976",
+      "name": "Monument à la reine Victoria",
+      "latitude": 45.501421,
+      "longitude": -73.561586,
+      "categories": [
+        "streetArt",
+        "history",
+        "nature"
+      ],
+      "description": "Monument à la reine Victoria is a work in Montréal's municipal public art collection. Artist: Marshall Wood. Production date recorded: 1869. Materials: Bronze; granite. Location: Square Victoria.",
+      "description_fr": "Monument à la reine Victoria fait partie de la collection municipale d’art public de Montréal. Artiste : Marshall Wood. Date de production au registre : 1869. Matériaux : Bronze; granit. Emplacement : Square Victoria.",
+      "verified_facts": [
+        "Artist: Marshall Wood.",
+        "Production date recorded: 1869.",
+        "Materials: Bronze; granite.",
+        "Location: Square Victoria."
+      ],
+      "source_urls": [
+        "https://donnees.montreal.ca/dataset/2980db3a-9eb4-4c0e-b7c6-a6584cb769c9/resource/18705524-c8a6-49a0-bca7-92f493e6d329/download/oeuvresdonneesouvertes.json"
+      ],
+      "source_name": "Ville de Montréal · Collection municipale d’art public",
+      "license": "CC BY 4.0",
+      "coordinate_kind": "mapped outdoor artwork point",
+      "routable": true
+    },
+    {
+      "id": "montreal_art_1719",
+      "name": "Joseph-Xavier Perrault",
+      "latitude": 45.501193,
+      "longitude": -73.561572,
+      "categories": [
+        "streetArt",
+        "nature"
+      ],
+      "description": "Joseph-Xavier Perrault is a work in Montréal's municipal public art collection. Artist: Jules Lasalle. Production date recorded: 1987. Materials: Aluminum, granite, concrete. Location: Place du Commerce.",
+      "description_fr": "Joseph-Xavier Perrault fait partie de la collection municipale d’art public de Montréal. Artiste : Jules Lasalle. Date de production au registre : 1987. Matériaux : Aluminium, granit, béton. Emplacement : Place du Commerce.",
+      "verified_facts": [
+        "Artist: Jules Lasalle.",
+        "Production date recorded: 1987.",
+        "Materials: Aluminum, granite, concrete.",
+        "Location: Place du Commerce."
+      ],
+      "source_urls": [
+        "https://donnees.montreal.ca/dataset/2980db3a-9eb4-4c0e-b7c6-a6584cb769c9/resource/18705524-c8a6-49a0-bca7-92f493e6d329/download/oeuvresdonneesouvertes.json"
+      ],
+      "source_name": "Ville de Montréal · Collection municipale d’art public",
+      "license": "CC BY 4.0",
+      "coordinate_kind": "mapped outdoor artwork point",
+      "routable": true
+    },
+    {
+      "id": "montreal_art_1701",
+      "name": "Buste du cardinal Paul-Émile Léger",
+      "latitude": 45.509549,
+      "longitude": -73.561333,
+      "categories": [
+        "streetArt",
+        "nature"
+      ],
+      "description": "Buste du cardinal Paul-Émile Léger is a work in Montréal's municipal public art collection. Artist: Paul Lancz. Production date recorded: 2007. Materials: Bronze. Location: Place du Cardinal-Paul-Émile-Léger.",
+      "description_fr": "Buste du cardinal Paul-Émile Léger fait partie de la collection municipale d’art public de Montréal. Artiste : Paul Lancz. Date de production au registre : 2007. Matériaux : Bronze. Emplacement : Place du Cardinal-Paul-Émile-Léger.",
+      "verified_facts": [
+        "Artist: Paul Lancz.",
+        "Production date recorded: 2007.",
+        "Materials: Bronze.",
+        "Location: Place du Cardinal-Paul-Émile-Léger."
+      ],
+      "source_urls": [
+        "https://donnees.montreal.ca/dataset/2980db3a-9eb4-4c0e-b7c6-a6584cb769c9/resource/18705524-c8a6-49a0-bca7-92f493e6d329/download/oeuvresdonneesouvertes.json"
+      ],
+      "source_name": "Ville de Montréal · Collection municipale d’art public",
+      "license": "CC BY 4.0",
+      "coordinate_kind": "mapped outdoor artwork point",
+      "routable": true
+    },
+    {
+      "id": "montreal_art_1534",
+      "name": "Hommage à Claude Jutra",
+      "latitude": 45.51324,
+      "longitude": -73.572945,
+      "categories": [
+        "streetArt",
+        "history",
+        "nature"
+      ],
+      "description": "Hommage à Claude Jutra is a work in Montréal's municipal public art collection. Artist: Charles Daudelin. Production date recorded: 1997. Materials: Granite; brass; enamel. Location: Parc Claude-Jutra.",
+      "description_fr": "Hommage à Claude Jutra fait partie de la collection municipale d’art public de Montréal. Artiste : Charles Daudelin. Date de production au registre : 1997. Matériaux : Granit; laiton; émail. Emplacement : Parc Claude-Jutra.",
+      "verified_facts": [
+        "Artist: Charles Daudelin.",
+        "Production date recorded: 1997.",
+        "Materials: Granite; brass; enamel.",
+        "Location: Parc Claude-Jutra."
+      ],
+      "source_urls": [
+        "https://donnees.montreal.ca/dataset/2980db3a-9eb4-4c0e-b7c6-a6584cb769c9/resource/18705524-c8a6-49a0-bca7-92f493e6d329/download/oeuvresdonneesouvertes.json"
+      ],
+      "source_name": "Ville de Montréal · Collection municipale d’art public",
+      "license": "CC BY 4.0",
+      "coordinate_kind": "mapped outdoor artwork point",
+      "routable": true
+    },
+    {
+      "id": "montreal_art_2994",
+      "name": "L'étreinte",
+      "latitude": 45.512386,
+      "longitude": -73.563593,
+      "categories": [
+        "streetArt",
+        "nature"
+      ],
+      "description": "L'étreinte is a work in Montréal's municipal public art collection. Artist: Luce Pelletier. Production date recorded: 2013. Materials: Aluminum; granite. Location: Parc Paul-Dozois.",
+      "description_fr": "L'étreinte fait partie de la collection municipale d’art public de Montréal. Artiste : Luce Pelletier. Date de production au registre : 2013. Matériaux : Aluminium; granit. Emplacement : Parc Paul-Dozois.",
+      "verified_facts": [
+        "Artist: Luce Pelletier.",
+        "Production date recorded: 2013.",
+        "Materials: Aluminum; granite.",
+        "Location: Parc Paul-Dozois."
+      ],
+      "source_urls": [
+        "https://donnees.montreal.ca/dataset/2980db3a-9eb4-4c0e-b7c6-a6584cb769c9/resource/18705524-c8a6-49a0-bca7-92f493e6d329/download/oeuvresdonneesouvertes.json"
+      ],
+      "source_name": "Ville de Montréal · Collection municipale d’art public",
+      "license": "CC BY 4.0",
+      "coordinate_kind": "mapped outdoor artwork point",
+      "routable": true
+    },
+    {
+      "id": "montreal_art_1654",
+      "name": "Monument à Paul de Chomedey, sieur de Maisonneuve",
+      "latitude": 45.5048,
+      "longitude": -73.55726,
+      "categories": [
+        "streetArt",
+        "history",
+        "nature"
+      ],
+      "description": "Monument à Paul de Chomedey, sieur de Maisonneuve is a work in Montréal's municipal public art collection. Artist: Louis-Philippe Hébert. Production date recorded: 1893. Materials: Bronze; granite. Location: Place d'Armes.",
+      "description_fr": "Monument à Paul de Chomedey, sieur de Maisonneuve fait partie de la collection municipale d’art public de Montréal. Artiste : Louis-Philippe Hébert. Date de production au registre : 1893. Matériaux : Bronze; granit. Emplacement : Place d'Armes.",
+      "verified_facts": [
+        "Artist: Louis-Philippe Hébert.",
+        "Production date recorded: 1893.",
+        "Materials: Bronze; granite.",
+        "Location: Place d'Armes."
+      ],
+      "source_urls": [
+        "https://donnees.montreal.ca/dataset/2980db3a-9eb4-4c0e-b7c6-a6584cb769c9/resource/18705524-c8a6-49a0-bca7-92f493e6d329/download/oeuvresdonneesouvertes.json"
+      ],
+      "source_name": "Ville de Montréal · Collection municipale d’art public",
+      "license": "CC BY 4.0",
+      "coordinate_kind": "mapped outdoor artwork point",
+      "routable": true
+    },
+    {
+      "id": "montreal_art_1914",
+      "name": "Polaris en lumière",
+      "latitude": 45.504636,
+      "longitude": -73.557128,
+      "categories": [
+        "streetArt",
+        "nature"
+      ],
+      "description": "Polaris en lumière is a work in Montréal's municipal public art collection. Artist: Alison Tett. Production date recorded: 2012. Materials: Light. Location: Place d'Armes.",
+      "description_fr": "Polaris en lumière fait partie de la collection municipale d’art public de Montréal. Artiste : Alison Tett. Date de production au registre : 2012. Matériaux : Lumière. Emplacement : Place d'Armes.",
+      "verified_facts": [
+        "Artist: Alison Tett.",
+        "Production date recorded: 2012.",
+        "Materials: Light.",
+        "Location: Place d'Armes."
+      ],
+      "source_urls": [
+        "https://donnees.montreal.ca/dataset/2980db3a-9eb4-4c0e-b7c6-a6584cb769c9/resource/18705524-c8a6-49a0-bca7-92f493e6d329/download/oeuvresdonneesouvertes.json"
+      ],
+      "source_name": "Ville de Montréal · Collection municipale d’art public",
+      "license": "CC BY 4.0",
+      "coordinate_kind": "mapped outdoor artwork point",
+      "routable": true
+    },
+    {
+      "id": "montreal_art_1522",
+      "name": "Give Peace a Chance",
+      "latitude": 45.505007,
+      "longitude": -73.58382,
+      "categories": [
+        "streetArt",
+        "nature"
+      ],
+      "description": "Give Peace a Chance is a work in Montréal's municipal public art collection. Artist: Linda Covit, Marie-Claude Séguin, Cardinal Hardy et associés. Production date recorded: 2009. Materials: Limestone; indigenous plants. Location: Parc du Mont-Royal.",
+      "description_fr": "Give Peace a Chance fait partie de la collection municipale d’art public de Montréal. Artiste : Linda Covit, Marie-Claude Séguin, Cardinal Hardy et associés. Date de production au registre : 2009. Matériaux : Calcaire; plantes indigènes. Emplacement : Parc du Mont-Royal.",
+      "verified_facts": [
+        "Artist: Linda Covit, Marie-Claude Séguin, Cardinal Hardy et associés.",
+        "Production date recorded: 2009.",
+        "Materials: Limestone; indigenous plants.",
+        "Location: Parc du Mont-Royal."
+      ],
+      "source_urls": [
+        "https://donnees.montreal.ca/dataset/2980db3a-9eb4-4c0e-b7c6-a6584cb769c9/resource/18705524-c8a6-49a0-bca7-92f493e6d329/download/oeuvresdonneesouvertes.json"
+      ],
+      "source_name": "Ville de Montréal · Collection municipale d’art public",
+      "license": "CC BY 4.0",
+      "coordinate_kind": "mapped outdoor artwork point",
+      "routable": true
+    },
+    {
+      "id": "montreal_art_1721",
+      "name": "Hommage à Marguerite Bourgeoys",
+      "latitude": 45.507373,
+      "longitude": -73.555063,
+      "categories": [
+        "streetArt",
+        "history",
+        "nature"
+      ],
+      "description": "Hommage à Marguerite Bourgeoys is a work in Montréal's municipal public art collection. Artist: Jules Lasalle. Production date recorded: 1988. Materials: Bronze; granite; concrete. Location: Place Marguerite-Bourgeoys.",
+      "description_fr": "Hommage à Marguerite Bourgeoys fait partie de la collection municipale d’art public de Montréal. Artiste : Jules Lasalle. Date de production au registre : 1988. Matériaux : Bronze; granit; béton. Emplacement : Place Marguerite-Bourgeoys.",
+      "verified_facts": [
+        "Artist: Jules Lasalle.",
+        "Production date recorded: 1988.",
+        "Materials: Bronze; granite; concrete.",
+        "Location: Place Marguerite-Bourgeoys."
+      ],
+      "source_urls": [
+        "https://donnees.montreal.ca/dataset/2980db3a-9eb4-4c0e-b7c6-a6584cb769c9/resource/18705524-c8a6-49a0-bca7-92f493e6d329/download/oeuvresdonneesouvertes.json"
+      ],
+      "source_name": "Ville de Montréal · Collection municipale d’art public",
+      "license": "CC BY 4.0",
+      "coordinate_kind": "mapped outdoor artwork point",
+      "routable": true
+    },
+    {
+      "id": "montreal_art_1618",
+      "name": "Hommage à Mihai Eminescu, poète roumain",
+      "latitude": 45.514796,
+      "longitude": -73.576459,
+      "categories": [
+        "streetArt",
+        "history",
+        "nature"
+      ],
+      "description": "Hommage à Mihai Eminescu, poète roumain is a work in Montréal's municipal public art collection. Artist: Vasile Gorduz. Production date recorded: 2005. Materials: Bronze. Location: Parc Devonshire/Place de la Roumanie.",
+      "description_fr": "Hommage à Mihai Eminescu, poète roumain fait partie de la collection municipale d’art public de Montréal. Artiste : Vasile Gorduz. Date de production au registre : 2005. Matériaux : Bronze. Emplacement : Parc Devonshire/Place de la Roumanie.",
+      "verified_facts": [
+        "Artist: Vasile Gorduz.",
+        "Production date recorded: 2005.",
+        "Materials: Bronze.",
+        "Location: Parc Devonshire/Place de la Roumanie."
+      ],
+      "source_urls": [
+        "https://donnees.montreal.ca/dataset/2980db3a-9eb4-4c0e-b7c6-a6584cb769c9/resource/18705524-c8a6-49a0-bca7-92f493e6d329/download/oeuvresdonneesouvertes.json"
+      ],
+      "source_name": "Ville de Montréal · Collection municipale d’art public",
+      "license": "CC BY 4.0",
+      "coordinate_kind": "mapped outdoor artwork point",
+      "routable": true
+    },
+    {
+      "id": "montreal_art_1834",
+      "name": "Ce qui reste 1997-2001",
+      "latitude": 45.501079,
+      "longitude": -73.555515,
+      "categories": [
+        "streetArt",
+        "architecture"
+      ],
+      "description": "Ce qui reste 1997-2001 is a work in Montréal's municipal public art collection. Artist: Alain Paiement. Production date recorded: 2001. Materials: Paper; wood; acrylic.",
+      "description_fr": "Ce qui reste 1997-2001 fait partie de la collection municipale d’art public de Montréal. Artiste : Alain Paiement. Date de production au registre : 2001. Matériaux : Papier; bois; acrylique.",
+      "verified_facts": [
+        "Artist: Alain Paiement.",
+        "Production date recorded: 2001.",
+        "Materials: Paper; wood; acrylic."
+      ],
+      "source_urls": [
+        "https://donnees.montreal.ca/dataset/2980db3a-9eb4-4c0e-b7c6-a6584cb769c9/resource/18705524-c8a6-49a0-bca7-92f493e6d329/download/oeuvresdonneesouvertes.json"
+      ],
+      "source_name": "Ville de Montréal · Collection municipale d’art public",
+      "license": "CC BY 4.0",
+      "coordinate_kind": "artwork at a building; entrance/access unverified",
+      "routable": false
+    },
+    {
+      "id": "montreal_art_1779",
+      "name": "La peur",
+      "latitude": 45.501361,
+      "longitude": -73.555219,
+      "categories": [
+        "streetArt",
+        "nature"
+      ],
+      "description": "La peur is a work in Montréal's municipal public art collection. Artist: Gilles Mihalcean. Production date recorded: 1993. Materials: Granite; aluminum; galvanized steel; sandstone; limestone; marble; natural granite; epoxy paint. Location: Place D’Youville.",
+      "description_fr": "La peur fait partie de la collection municipale d’art public de Montréal. Artiste : Gilles Mihalcean. Date de production au registre : 1993. Matériaux : Granit; aluminium; acier galvanisé; grès; calcaire; marbre; granit naturel; peinture époxy. Emplacement : Place D’Youville.",
+      "verified_facts": [
+        "Artist: Gilles Mihalcean.",
+        "Production date recorded: 1993.",
+        "Materials: Granite; aluminum; galvanized steel; sandstone; limestone; marble; natural granite; epoxy paint.",
+        "Location: Place D’Youville."
+      ],
+      "source_urls": [
+        "https://donnees.montreal.ca/dataset/2980db3a-9eb4-4c0e-b7c6-a6584cb769c9/resource/18705524-c8a6-49a0-bca7-92f493e6d329/download/oeuvresdonneesouvertes.json"
+      ],
+      "source_name": "Ville de Montréal · Collection municipale d’art public",
+      "license": "CC BY 4.0",
+      "coordinate_kind": "mapped outdoor artwork point",
+      "routable": true
+    },
+    {
+      "id": "montreal_art_1895",
+      "name": "Monument à Norman Bethune",
+      "latitude": 45.49597,
+      "longitude": -73.57946,
+      "categories": [
+        "streetArt",
+        "history",
+        "nature"
+      ],
+      "description": "Monument à Norman Bethune is a work in Montréal's municipal public art collection. Artist: Jie Si Tu. Production date recorded: 1977. Materials: Marble; granite. Location: Place Norman-Bethune.",
+      "description_fr": "Monument à Norman Bethune fait partie de la collection municipale d’art public de Montréal. Artiste : Jie Si Tu. Date de production au registre : 1977. Matériaux : Marbre; granit. Emplacement : Place Norman-Bethune.",
+      "verified_facts": [
+        "Artist: Jie Si Tu.",
+        "Production date recorded: 1977.",
+        "Materials: Marble; granite.",
+        "Location: Place Norman-Bethune."
+      ],
+      "source_urls": [
+        "https://donnees.montreal.ca/dataset/2980db3a-9eb4-4c0e-b7c6-a6584cb769c9/resource/18705524-c8a6-49a0-bca7-92f493e6d329/download/oeuvresdonneesouvertes.json"
+      ],
+      "source_name": "Ville de Montréal · Collection municipale d’art public",
+      "license": "CC BY 4.0",
+      "coordinate_kind": "mapped outdoor artwork point",
+      "routable": true
+    },
+    {
+      "id": "montreal_art_1641",
+      "name": "Monument à Émile Nelligan",
+      "latitude": 45.516215,
+      "longitude": -73.570284,
+      "categories": [
+        "streetArt",
+        "history",
+        "nature"
+      ],
+      "description": "Monument à Émile Nelligan is a work in Montréal's municipal public art collection. Artist: Roseline Granet. Production date recorded: 2005. Materials: Bronze; limestone; granite. Location: Square Saint-Louis.",
+      "description_fr": "Monument à Émile Nelligan fait partie de la collection municipale d’art public de Montréal. Artiste : Roseline Granet. Date de production au registre : 2005. Matériaux : Bronze; calcaire; granit. Emplacement : Square Saint-Louis.",
+      "verified_facts": [
+        "Artist: Roseline Granet.",
+        "Production date recorded: 2005.",
+        "Materials: Bronze; limestone; granite.",
+        "Location: Square Saint-Louis."
+      ],
+      "source_urls": [
+        "https://donnees.montreal.ca/dataset/2980db3a-9eb4-4c0e-b7c6-a6584cb769c9/resource/18705524-c8a6-49a0-bca7-92f493e6d329/download/oeuvresdonneesouvertes.json"
+      ],
+      "source_name": "Ville de Montréal · Collection municipale d’art public",
+      "license": "CC BY 4.0",
+      "coordinate_kind": "mapped outdoor artwork point",
+      "routable": true
+    },
+    {
+      "id": "montreal_art_1426",
+      "name": "Monument à Jean Vauquelin",
+      "latitude": 45.508588,
+      "longitude": -73.554655,
+      "categories": [
+        "streetArt",
+        "history",
+        "nature"
+      ],
+      "description": "Monument à Jean Vauquelin is a work in Montréal's municipal public art collection. Artist: Eugène-Paul Benet. Production date recorded: 1927. Materials: Bronze; granite. Location: Place Vauquelin.",
+      "description_fr": "Monument à Jean Vauquelin fait partie de la collection municipale d’art public de Montréal. Artiste : Eugène-Paul Benet. Date de production au registre : 1927. Matériaux : Bronze; granit. Emplacement : Place Vauquelin.",
+      "verified_facts": [
+        "Artist: Eugène-Paul Benet.",
+        "Production date recorded: 1927.",
+        "Materials: Bronze; granite.",
+        "Location: Place Vauquelin."
+      ],
+      "source_urls": [
+        "https://donnees.montreal.ca/dataset/2980db3a-9eb4-4c0e-b7c6-a6584cb769c9/resource/18705524-c8a6-49a0-bca7-92f493e6d329/download/oeuvresdonneesouvertes.json"
+      ],
+      "source_name": "Ville de Montréal · Collection municipale d’art public",
+      "license": "CC BY 4.0",
+      "coordinate_kind": "mapped outdoor artwork point",
+      "routable": true
+    },
+    {
+      "id": "montreal_art_1792",
+      "name": "Monument à Nelson",
+      "latitude": 45.508186,
+      "longitude": -73.553845,
+      "categories": [
+        "streetArt",
+        "history",
+        "nature"
+      ],
+      "description": "Monument à Nelson is a work in Montréal's municipal public art collection. Artist: Robert Mitchell. Production date recorded: 1809. Materials: Limestone; concrete; sandstone. Location: Place Jacques-Cartier.",
+      "description_fr": "Monument à Nelson fait partie de la collection municipale d’art public de Montréal. Artiste : Robert Mitchell. Date de production au registre : 1809. Matériaux : Calcaire; béton; grès. Emplacement : Place Jacques-Cartier.",
+      "verified_facts": [
+        "Artist: Robert Mitchell.",
+        "Production date recorded: 1809.",
+        "Materials: Limestone; concrete; sandstone.",
+        "Location: Place Jacques-Cartier."
+      ],
+      "source_urls": [
+        "https://donnees.montreal.ca/dataset/2980db3a-9eb4-4c0e-b7c6-a6584cb769c9/resource/18705524-c8a6-49a0-bca7-92f493e6d329/download/oeuvresdonneesouvertes.json"
+      ],
+      "source_name": "Ville de Montréal · Collection municipale d’art public",
+      "license": "CC BY 4.0",
+      "coordinate_kind": "mapped outdoor artwork point",
+      "routable": true
+    },
+    {
+      "id": "montreal_art_1400",
+      "name": "Non titré (Vitraux)",
+      "latitude": 45.508816,
+      "longitude": -73.554069,
+      "categories": [
+        "streetArt",
+        "hiddenGems"
+      ],
+      "description": "Non titré (Vitraux) is a work in Montréal's municipal public art collection. Artist: Auteur Inconnu. Production date recorded: 1878.",
+      "description_fr": "Non titré (Vitraux) fait partie de la collection municipale d’art public de Montréal. Artiste : Auteur Inconnu. Date de production au registre : 1878.",
+      "verified_facts": [
+        "Artist: Auteur Inconnu.",
+        "Production date recorded: 1878."
+      ],
+      "source_urls": [
+        "https://donnees.montreal.ca/dataset/2980db3a-9eb4-4c0e-b7c6-a6584cb769c9/resource/18705524-c8a6-49a0-bca7-92f493e6d329/download/oeuvresdonneesouvertes.json"
+      ],
+      "source_name": "Ville de Montréal · Collection municipale d’art public",
+      "license": "CC BY 4.0",
+      "coordinate_kind": "artwork at a building; entrance/access unverified",
+      "routable": false
+    },
+    {
+      "id": "montreal_art_1827",
+      "name": "Vitraux",
+      "latitude": 45.508816,
+      "longitude": -73.554069,
+      "categories": [
+        "streetArt",
+        "hiddenGems"
+      ],
+      "description": "Vitraux is a work in Montréal's municipal public art collection. Artist: John Patrick O'Shea. Production date recorded: 1926.",
+      "description_fr": "Vitraux fait partie de la collection municipale d’art public de Montréal. Artiste : John Patrick O'Shea. Date de production au registre : 1926.",
+      "verified_facts": [
+        "Artist: John Patrick O'Shea.",
+        "Production date recorded: 1926."
+      ],
+      "source_urls": [
+        "https://donnees.montreal.ca/dataset/2980db3a-9eb4-4c0e-b7c6-a6584cb769c9/resource/18705524-c8a6-49a0-bca7-92f493e6d329/download/oeuvresdonneesouvertes.json"
+      ],
+      "source_name": "Ville de Montréal · Collection municipale d’art public",
+      "license": "CC BY 4.0",
+      "coordinate_kind": "artwork at a building; entrance/access unverified",
+      "routable": false
+    },
+    {
+      "id": "montreal_art_1127",
+      "name": "Le malheureux magnifique",
+      "latitude": 45.516907,
+      "longitude": -73.567846,
+      "categories": [
+        "streetArt",
+        "nature"
+      ],
+      "description": "Le malheureux magnifique is a work in Montréal's municipal public art collection. Artist: Pierre Yves Angers. Production date recorded: 1972. Materials: Cement; iron; paint. Location: Intersection des rues Sherbrooke et Saint-Denis.",
+      "description_fr": "Le malheureux magnifique fait partie de la collection municipale d’art public de Montréal. Artiste : Pierre Yves Angers. Date de production au registre : 1972. Matériaux : Ciment; fer; peinture. Emplacement : Intersection des rues Sherbrooke et Saint-Denis.",
+      "verified_facts": [
+        "Artist: Pierre Yves Angers.",
+        "Production date recorded: 1972.",
+        "Materials: Cement; iron; paint.",
+        "Location: Intersection des rues Sherbrooke et Saint-Denis."
+      ],
+      "source_urls": [
+        "https://donnees.montreal.ca/dataset/2980db3a-9eb4-4c0e-b7c6-a6584cb769c9/resource/18705524-c8a6-49a0-bca7-92f493e6d329/download/oeuvresdonneesouvertes.json"
+      ],
+      "source_name": "Ville de Montréal · Collection municipale d’art public",
+      "license": "CC BY 4.0",
+      "coordinate_kind": "mapped outdoor artwork point",
+      "routable": true
+    },
+    {
+      "id": "montreal_art_1810",
+      "name": "Fontaine du square Saint-Louis",
+      "latitude": 45.517041,
+      "longitude": -73.569964,
+      "categories": [
+        "streetArt",
+        "nature"
+      ],
+      "description": "Fontaine du square Saint-Louis is a work in Montréal's municipal public art collection. Artist: J.L. Mott. Production date recorded: 1849. Materials: Cast iron. Location: Square Saint-Louis.",
+      "description_fr": "Fontaine du square Saint-Louis fait partie de la collection municipale d’art public de Montréal. Artiste : J.L. Mott. Date de production au registre : 1849. Matériaux : Fonte. Emplacement : Square Saint-Louis.",
+      "verified_facts": [
+        "Artist: J.L. Mott.",
+        "Production date recorded: 1849.",
+        "Materials: Cast iron.",
+        "Location: Square Saint-Louis."
+      ],
+      "source_urls": [
+        "https://donnees.montreal.ca/dataset/2980db3a-9eb4-4c0e-b7c6-a6584cb769c9/resource/18705524-c8a6-49a0-bca7-92f493e6d329/download/oeuvresdonneesouvertes.json"
+      ],
+      "source_name": "Ville de Montréal · Collection municipale d’art public",
+      "license": "CC BY 4.0",
+      "coordinate_kind": "mapped outdoor artwork point",
+      "routable": true
+    },
+    {
+      "id": "montreal_art_1913",
+      "name": "La fondation de Montréal est décidée à Paris",
+      "latitude": 45.50402,
+      "longitude": -73.587238,
+      "categories": [
+        "streetArt",
+        "nature"
+      ],
+      "description": "La fondation de Montréal est décidée à Paris is a work in Montréal's municipal public art collection. Artist: William Hughes Taylor. Location: Parc du Mont-Royal.",
+      "description_fr": "La fondation de Montréal est décidée à Paris fait partie de la collection municipale d’art public de Montréal. Artiste : William Hughes Taylor. Emplacement : Parc du Mont-Royal.",
+      "verified_facts": [
+        "Artist: William Hughes Taylor.",
+        "Location: Parc du Mont-Royal."
+      ],
+      "source_urls": [
+        "https://donnees.montreal.ca/dataset/2980db3a-9eb4-4c0e-b7c6-a6584cb769c9/resource/18705524-c8a6-49a0-bca7-92f493e6d329/download/oeuvresdonneesouvertes.json"
+      ],
+      "source_name": "Ville de Montréal · Collection municipale d’art public",
+      "license": "CC BY 4.0",
+      "coordinate_kind": "artwork at a building; entrance/access unverified",
+      "routable": false
+    },
+    {
+      "id": "montreal_art_1923",
+      "name": "Dollard des Ormeaux meurt à Long-Sault pour sauver la colonie",
+      "latitude": 45.504105,
+      "longitude": -73.587259,
+      "categories": [
+        "streetArt",
+        "nature"
+      ],
+      "description": "Dollard des Ormeaux meurt à Long-Sault pour sauver la colonie is a work in Montréal's municipal public art collection. Artist: William Thurston Topham. Location: Parc du Mont-Royal.",
+      "description_fr": "Dollard des Ormeaux meurt à Long-Sault pour sauver la colonie fait partie de la collection municipale d’art public de Montréal. Artiste : William Thurston Topham. Emplacement : Parc du Mont-Royal.",
+      "verified_facts": [
+        "Artist: William Thurston Topham.",
+        "Location: Parc du Mont-Royal."
+      ],
+      "source_urls": [
+        "https://donnees.montreal.ca/dataset/2980db3a-9eb4-4c0e-b7c6-a6584cb769c9/resource/18705524-c8a6-49a0-bca7-92f493e6d329/download/oeuvresdonneesouvertes.json"
+      ],
+      "source_name": "Ville de Montréal · Collection municipale d’art public",
+      "license": "CC BY 4.0",
+      "coordinate_kind": "artwork at a building; entrance/access unverified",
+      "routable": false
+    },
+    {
+      "id": "montreal_art_1465",
+      "name": "Monument à Jean Drapeau",
+      "latitude": 45.50853,
+      "longitude": -73.55342,
+      "categories": [
+        "streetArt",
+        "history",
+        "nature"
+      ],
+      "description": "Monument à Jean Drapeau is a work in Montréal's municipal public art collection. Artist: Annick Bourgeau. Production date recorded: 2001. Materials: Bronze; granite. Location: Place De La Dauversière.",
+      "description_fr": "Monument à Jean Drapeau fait partie de la collection municipale d’art public de Montréal. Artiste : Annick Bourgeau. Date de production au registre : 2001. Matériaux : Bronze; granit. Emplacement : Place De La Dauversière.",
+      "verified_facts": [
+        "Artist: Annick Bourgeau.",
+        "Production date recorded: 2001.",
+        "Materials: Bronze; granite.",
+        "Location: Place De La Dauversière."
+      ],
+      "source_urls": [
+        "https://donnees.montreal.ca/dataset/2980db3a-9eb4-4c0e-b7c6-a6584cb769c9/resource/18705524-c8a6-49a0-bca7-92f493e6d329/download/oeuvresdonneesouvertes.json"
+      ],
+      "source_name": "Ville de Montréal · Collection municipale d’art public",
+      "license": "CC BY 4.0",
+      "coordinate_kind": "mapped outdoor artwork point",
+      "routable": true
+    }
+  ]
+}

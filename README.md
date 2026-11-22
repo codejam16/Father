@@ -1,3 +1,37 @@
+# Detour
+
+**Look up. Listen in. Discover more.**
+
+A native iPhone walking-discovery app built around the existing TaskLens camera assistant. Choose a starting point, time and interests; preview a real pedestrian route; hear directions and discover sourced nearby landmarks. Open the AI scanner from home or during a walk.
+
+This branch is **`feature/detour-walking-discovery`**, based on `starter/visual-assistant`. There are no accounts or social features.
+
+## What is implemented
+
+- Adaptive SwiftUI home, GPS/search/map-pin starts, 15/30/45/60-minute preferences, interests, pace, discovery frequency, return-to-start, novelty and English/French narration.
+- MapKit walking legs with a bounded route-selection heuristic and real provider travel estimates. Routes are checked against the time budget; failed paths are never drawn as invented straight-line directions.
+- Active walking map, location progress, spoken directions, proximity discoveries, Listen/Skip/Scan actions, local notifications and local completion summaries.
+- Background location/audio configuration for foreground-started walks. The camera pauses when locked; navigation has a separate lifecycle. Background microphone conversation is not promised.
+- 35 sourced municipal public-art records bundled for central Montréal, optional cached Overpass discovery, explicit Wikipedia/Wikidata references and bounded Wikipedia article enrichment. Indoor/unknown-entrance objects are not silently routed as outdoor entrances.
+- Sourced local readings and optional Gemini-written stories grounded in server-owned records. Story playback respects navigation prompts and cancellation.
+- Clearly labelled indoor simulation with schematic dashed lines, explicit Advance Demo controls and separate demo summaries. It never represents simulated positions/timings as live GPS.
+- Existing Gemini camera, speech, object highlighting, captions, web research, connection settings and voice selection reused intact.
+
+**Validation:** backend checks run in the authoring environment; native compilation, native tests, GPS and locked-screen audio require Xcode and a physical iPhone and have not been executed here. This is a navigation prototype, not a validated all-city navigation product.
+
+## Try it
+
+1. Open `ios/TaskLens.xcodeproj` in Xcode. Keep the **TaskLens** scheme and select your iPhone/Personal Team. The installed app is named **Detour**.
+2. Start Exploring → Indoor simulation → Generate Demo Detour → Start Indoor Simulation → Advance Demo.
+3. For a live walk, switch simulation off, use GPS or choose a start manually, generate and preview real walking paths. Starting live guidance needs an accurate current location near the route start.
+4. Optional AI camera/stories use the existing backend connection: `cd server`, configure your existing `.env`, then `npm start`. No new provider account is needed beyond the existing Gemini/optional Serper setup. Source readings and simulation need no AI calls.
+
+See [Detour implementation and validation](docs/DETOUR.md) for setup, source provenance/licences, background behavior, known limits, tests and the exact data-import process. The project retains the TaskLens target/module name to preserve existing signing and scanner tests.
+
+---
+
+## Existing scanner documentation
+
 # TaskLens
 
 A starter for a moving-camera task assistant on iPhone. Keep the camera open, ask a question, hear the reply, and optionally point something out in either direction.

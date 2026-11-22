@@ -4,14 +4,16 @@ import WebKit
 
 @MainActor
 struct ContentView: View {
-    @StateObject private var model = AssistantViewModel()
+    @ObservedObject var model: AssistantViewModel
+    var discoveryContext: String? = nil
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         CameraExperience(model: model, speech: model.speech, settings: model.settings)
             .preferredColorScheme(.dark)
             .statusBarHidden()
-            .task { await model.resume() }
+            .task { model.setDiscoveryContext(discoveryContext); await model.resume() }
+            .onDisappear { model.pause() }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active { Task { await model.resume() } }
                 else { model.pause() }

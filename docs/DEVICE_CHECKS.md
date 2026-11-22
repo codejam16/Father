@@ -96,3 +96,15 @@ Use one clear, low-risk task and distinctive objects. Confirm that identifying a
 - Stop a preview, switch voices during playback, dismiss settings during a preview, interrupt audio, and mute/unmute. Speech playback must stop as appropriate and listening must resume only when the camera screen is active, unmuted and not busy. Confirm captions and the colored speaking/listening badge still follow playback. Preview and voice quality require a physical iPhone and were not executable in the Linux authoring environment.
 
 - While previewing a voice, scroll the voice rows and download instructions out of view: playback must continue. Closing Settings or changing the voice stops it. With only standard voices installed, Automatic should still prefer the phone’s English dialect where available.
+
+
+## Detour walks
+
+- Build the TaskLens scheme and confirm the installed app says Detour. Start with indoor simulation: no GPS permission or AI calls, explicit simulation banner, schematic dashed lines, manual advancement, simulated cursor and separate summary. Demo discoveries must not affect real-walk novelty.
+- Deny GPS: manual search/map-pin preview and simulation work; live Start Walk is blocked. Grant GPS, start outdoors near the selected start, lock/unlock the phone, test headphones/speaker, and confirm directions/arrival notifications continue while the camera and foreground voice recognition stop.
+- For 15/30/45/60 minutes, compare actual MapKit walking times, optional return legs and stop allowances. Choose different interests, pace, novelty and frequency and inspect the resulting stops. Unroutable/over-budget candidates must be skipped without straight-line fallback.
+- Walk the actual demo route. Check turns, loops, parallel streets, GPS noise, stale/inaccurate fixes, off-route detection, explicit recalculation, pause/resume and loss/revocation of permission. Do not present the tracker as production-grade navigation.
+- At a stop test Listen, Skip story, notification Listen/Skip/Scan, and Scan from the map. Skip while AI generation is pending; a late response must not speak. A new direction interrupts narration. Scanner dismissal returns to the same active walk, with no simultaneous camera/nav microphone or overlapping speech.
+- Test English/French records and narration; street direction text follows the device map language. Background voice conversation is not implemented. Force-quit recovery is not uninterrupted navigation.
+- Disconnect Overpass/Wikipedia/backend: bundled discoveries/source readings still work; real route calculation still needs MapKit connectivity. No fake historic facts, prices, entrances or successful provider results should appear.
+- Finish/end a live walk, reopen the app and confirm recent summaries/preferences persist. Stop GPS/audio on completion. Test large text, light/dark mode, map-source attribution, landmark source links, and existing scanner overlays/voice settings.

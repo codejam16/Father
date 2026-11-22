@@ -12,7 +12,7 @@ final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     var onUtterance: ((String) -> Void)?
     var onFailure: ((String) -> Void)?
 
-    private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
+    private var recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
     private let engine = AVAudioEngine()
     private let synthesizer = AVSpeechSynthesizer()
     private var request: SFSpeechAudioBufferRecognitionRequest?
@@ -236,18 +236,31 @@ final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelega
         return "\(name) · \(voice.language)"
     }
 
-    func speak(_ text: String, voiceIdentifier: String = "") {
+    func configureRecognition(language: String) {
+        setListening(false)
+        recognizer = SFSpeechRecognizer(locale: Locale(identifier: language))
+    }
+
+    func speak(_ text: String, voiceIdentifier: String = "", language: String? = nil, background: Bool = false) {
         stopSpeaking()
         finishSession()
         transcript = ""
         let session = AVAudioSession.sharedInstance()
         do {
-            try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
+            if background { try session.setCategory(.playback, mode: .spokenAudio, options: [.duckOthers]) }
+            else { try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker]) }
             try session.setActive(true)
         } catch { scheduleRestart(); return }
         let utterance = AVSpeechUtterance(string: text)
         refreshVoices()
-        utterance.voice = voice(for: voiceIdentifier)
+        if let language {
+            let prefix = String(language.prefix(2))
+            let preferred = voice(for: voiceIdentifier)
+            let best = AVSpeechSynthesisVoice.speechVoices()
+                .filter { $0.language.hasPrefix(prefix) && !$0.voiceTraits.contains(.isNoveltyVoice) }
+                .sorted { $0.quality.rawValue > $1.quality.rawValue }.first ?? AVSpeechSynthesisVoice(language: language)
+            utterance.voice = !voiceIdentifier.isEmpty && preferred?.language.hasPrefix(prefix) == true ? preferred : best
+        } else { utterance.voice = voice(for: voiceIdentifier) }
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate * 0.96
         activeUtterance = utterance
         isSpeaking = true

@@ -11,6 +11,7 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section { NavigationLink("Detour data & attribution") { DetourAttributionView() } }
                 if let error = model.errorMessage {
                     Section("Last issue") { Text(error).foregroundStyle(.orange) }
                 }
@@ -75,7 +76,7 @@ struct SettingsView: View {
                 } header: { Text("Camera overlays") }
                 footer: { Text("Every new question requests a web lookup when search is connected, even when web info is hidden. The info button shows a dot when hidden results are available. Drag the info handle upward to fill the screen, down to shrink it, or use its corner to adjust width. Captions have their own height handle. Turn on Select a region to tap or drag over the camera. Opening results does not search again.") }
             }
-            .navigationTitle("TaskLens settings")
+            .navigationTitle("Detour settings")
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } } }
         }
         .onAppear { model.speech.refreshVoices() }

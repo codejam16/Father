@@ -4,7 +4,7 @@ try {
   const config = loadConfig();
   const server = createApp(config);
   server.listen(config.port, config.host, () => {
-    console.log(`TaskLens backend: http://${config.host}:${config.port} (${config.mode})`);
+    console.log(`Detour backend: http://${config.host}:${config.port} (${config.mode})`);
     if (config.mode === 'gemini') {
       console.log(`Google model: ${config.model}`);
       console.log(`Google error log: ${config.diagnosticLogPath}`);

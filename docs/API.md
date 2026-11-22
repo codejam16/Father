@@ -119,3 +119,13 @@ Each task-aware HTTP request permits a decision and at most one research operati
 A missing Serper key leaves camera-only mode available. A Serper 401/403, 402/429, timeout, network failure, or empty/unusable results ends a research turn with an honest answer and no fabricated citations/target/continuation. No further model call is made for that failure; subsequent camera questions are still allowed. These fallback replies use HTTP 200 as a completed conversational turn. Google model 429s remain provider errors.
 
 Sessions are process-local, capped at 100, and expire after 30 minutes of inactivity. They contain bounded task notes, sources and research excerpts, not images or API keys. Use an unguessable, per-task UUID. One active operation per session prevents out-of-order state updates. Changing task notes resets state; new tasks should use new UUIDs. A backend restart loses memory and invalidates continuations. Expired or overlapping tasks return 409. No client-supplied research text is accepted as verified evidence.
+
+
+## Detour endpoints
+
+The existing `/analyze` contract is preserved. Detour endpoints use the same `Authorization: Bearer APP_TOKEN` authentication (credential-free mock mode remains available only when configured that way).
+
+- `GET /detour/landmarks?lat=45.505&lon=-73.57&radius=1500&discover=1&enrich=1`: numeric WGS84 coordinates; radius 200–3000 m. Returns `{landmarks, warning, attribution, source}`. Without discover, uses the bundled collection. Mock mode never calls Overpass or Wikipedia. Live Overpass results are cached 15 minutes by coarse area and radius, including in-flight queries and failures; no per-GPS requests or automatic retries. Optional enrichment batches at most four explicit English/French Wikipedia references, with source-outage fallback. POI objects use the snake_case keys in the bundled catalog. Polygon-centre pins have `routable:false`.
+- `POST /detour/story` with `{ "landmarkId": "montreal_art_<known-id>", "language": "en" }` (or `fr`): only known curated IDs are accepted; client facts, URLs and coordinates are not used. Returns `{story, generated, sourceUrls}`. Mock mode returns a sourced record without a provider call. Successful AI stories are cached by model/landmark/language; failed calls are not retried automatically. Story generation is opt-in on the phone and falls back to the source record on failure.
+
+Precise start coordinates are necessary for nearby discovery but are not included in request log labels. MapKit path computation remains on the iPhone. Gemini does not produce routes or time estimates. See DETOUR.md for attribution, data snapshot provenance and operational limits.

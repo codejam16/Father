@@ -64,8 +64,8 @@ export async function generateContent(body, config, fetcher = fetch) {
   const callId = randomUUID().slice(0, 8);
   const requestId = config.trace?.requestId ?? 'diagnostic';
   const callNumber = config.trace ? ++config.trace.calls : 1;
-  const operation = body.tools?.some((tool) => (tool.google_search || tool.googleSearch)) ? 'search_online'
-    : body.tools?.some((tool) => tool.url_context) ? 'read_source' : 'camera_decision';
+  const operation = config.operation ?? (body.tools?.some((tool) => (tool.google_search || tool.googleSearch)) ? 'search_online'
+    : body.tools?.some((tool) => tool.url_context) ? 'read_source' : 'camera_decision');
   const started = Date.now();
   console.log(`[${requestId}] Google call ${callNumber} (${callId}) START model=${config.model} action=${operation}`);
   config.signal?.throwIfAborted();

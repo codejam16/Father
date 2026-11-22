@@ -4,6 +4,6 @@ import SwiftUI
 @MainActor
 struct TaskLensApp: App {
     var body: some Scene {
-        WindowGroup { ContentView() }
+        WindowGroup { DetourRootView() }
     }
 }

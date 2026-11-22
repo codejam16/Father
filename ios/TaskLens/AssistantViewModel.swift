@@ -21,6 +21,7 @@ final class AssistantViewModel: ObservableObject {
     @Published private(set) var researchReviewID: UUID?
     private var sessionID = UUID().uuidString.lowercased()
     private var sessionTask: String?
+    private var discoveryContext: String?
     private var confirmedStepIDs = Set<String>()
     @Published private(set) var pendingQuestion: String?
     @Published private(set) var webInfo: WebInfo?
@@ -110,13 +111,17 @@ final class AssistantViewModel: ObservableObject {
         updateListening()
     }
 
+    func setDiscoveryContext(_ context: String?) { discoveryContext = context }
+
     func send() {
         let text = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !isBusy, !text.isEmpty else { return }
         guard text.count <= 1500 else { errorMessage = "Please shorten your question to 1,500 characters."; return }
-        if sessionTask != settings.task {
+        let parts = discoveryContext.map { ["Help the user explore a nearby discovery during their walk.", $0, "Optional user notes: " + settings.task] } ?? [settings.task]
+        let effectiveTask = String(parts.filter { !$0.isEmpty }.joined(separator: "\n").prefix(4000))
+        if sessionTask != effectiveTask {
             clearTaskContext()
-            sessionTask = settings.task
+            sessionTask = effectiveTask
         }
         isBusy = true
         pendingQuestion = text
@@ -131,7 +136,7 @@ final class AssistantViewModel: ObservableObject {
         let demoMode = settings.demoMode
         let endpoint = settings.serverURL
         let token = settings.token
-        let task = settings.task
+        let task = effectiveTask
         let researchEnabled = true
         let sessionID = self.sessionID
         let confirmations = Array(confirmedStepIDs)

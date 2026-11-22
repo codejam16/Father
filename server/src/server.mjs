@@ -7,6 +7,8 @@ import { TaskSessions } from './task-session.mjs';
 import { runAgent } from './agent.mjs';
 import { ANALYSIS_TIMEOUT_MS } from './timeouts.mjs';
 import { redactDiagnostic } from './diagnostics.mjs';
+import { LandmarkService } from './landmarks.mjs';
+import { DetourStories } from './detour-story.mjs';
 
 // Developer diagnostics stay in logs; these short messages are safe to read aloud.
 function userErrorMessage(error) {
@@ -98,6 +100,7 @@ async function readJSON(request) {
 export function createApp(config, {
   analyze = analyzeWithGemini, agent = runAgent,
   sessions = new TaskSessions(),
+  landmarks = new LandmarkService(), stories = new DetourStories({ catalog: landmarks.catalog }),
 } = {}) {
   const server = createServer(async (request, response) => {
     const started = Date.now();
@@ -105,7 +108,8 @@ export function createApp(config, {
     const controller = new AbortController();
     const deadline = setTimeout(() => controller.abort(), ANALYSIS_TIMEOUT_MS);
     response.on('finish', () => clearTimeout(deadline));
-    const route = request.url === '/analyze' ? '/analyze' : request.url === '/health' ? '/health' : '/other';
+    const pathname = new URL(request.url, 'http://localhost').pathname;
+    const route = ['/analyze', '/health', '/detour/landmarks', '/detour/story'].includes(pathname) ? pathname : '/other';
     console.log(`[${new Date().toISOString()}] Request received: ${route} [${trace.requestId}]`);
     response.on('close', () => {
       clearTimeout(deadline);
@@ -123,6 +127,21 @@ export function createApp(config, {
     try {
       if (request.method === 'GET' && request.url === '/health') {
         return send(200, { status: 'ok', mode: config.mode });
+      }
+      if (request.method === 'GET' && pathname === '/detour/landmarks') {
+        if (!authorized(request, config.appToken)) throw new APIError(401, 'unauthorized', 'Check the connection token in Settings.');
+        const query = new URL(request.url, 'http://localhost').searchParams;
+        if (!query.get('lat')?.trim() || !query.get('lon')?.trim()) throw new APIError(400, 'invalid_request', 'Starting coordinates are required.');
+        const result = await landmarks.nearby(Number(query.get('lat')), Number(query.get('lon')), Number(query.get('radius') ?? 1500),
+          config.mode !== 'mock' && query.get('discover') === '1', controller.signal, config.mode !== 'mock' && query.get('enrich') === '1');
+        return send(200, result);
+      }
+      if (request.method === 'POST' && pathname === '/detour/story') {
+        if (!authorized(request, config.appToken)) throw new APIError(401, 'unauthorized', 'Check the connection token in Settings.');
+        if (!request.headers['content-type']?.startsWith('application/json')) throw new APIError(415, 'invalid_content_type', 'Use application/json.');
+        const input = await readJSON(request);
+        const result = await stories.story(input, { ...config, signal: controller.signal, trace });
+        return send(200, result);
       }
       if (request.method !== 'POST' || request.url !== '/analyze') {
         throw new APIError(404, 'not_found', 'Endpoint not found.');
