@@ -31,6 +31,8 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		D8C839FBBA8081A5CE124B9E /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.xcconfig; sourceTree = "<group>"; };
+		C6DF743F06AFC0FF2BFF7166 /* Signing.example.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.example.xcconfig; sourceTree = "<group>"; };
 		0BDFFCCB1DE2A38D06637E2C /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		12DAFCE2866BFE70781E1F69 /* ConnectionSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionSettings.swift; sourceTree = "<group>"; };
 		14BA4831417643CB353D6046 /* GeometryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeometryTests.swift; sourceTree = "<group>"; };
@@ -65,6 +67,15 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		5619E268CFFE28118C19FC6A /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				D8C839FBBA8081A5CE124B9E /* Signing.xcconfig */,
+				C6DF743F06AFC0FF2BFF7166 /* Signing.example.xcconfig */,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
 		00C45FD35CB0F9C5F764F070 /* Products */ = {
 			isa = PBXGroup;
 			children = (
@@ -103,6 +114,7 @@
 		DF891E785808226D241F246E = {
 			isa = PBXGroup;
 			children = (
+				5619E268CFFE28118C19FC6A /* Config */,
 				B367AEA80229F6E726EF2602 /* TaskLens */,
 				4D53C03EB87B77CE6B27F93C /* TaskLensTests */,
 				00C45FD35CB0F9C5F764F070 /* Products */,
@@ -243,7 +255,7 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 64262PXUP4;
+				DEVELOPMENT_TEAM = "$(TASKLENS_DEVELOPMENT_TEAM)";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = TaskLens/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -251,7 +263,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.bogdanrudnitski.codejam16.tasklens;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(TASKLENS_BUNDLE_IDENTIFIER)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -264,7 +276,7 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 64262PXUP4;
+				DEVELOPMENT_TEAM = "$(TASKLENS_DEVELOPMENT_TEAM)";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = TaskLens/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -272,7 +284,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.bogdanrudnitski.codejam16.tasklens;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(TASKLENS_BUNDLE_IDENTIFIER)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -282,6 +294,7 @@
 		};
 		877A6BA951A2EA0025A2ABE8 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = D8C839FBBA8081A5CE124B9E;
 			buildSettings = {
 				CLANG_ENABLE_MODULES = YES;
 				CLANG_ENABLE_OBJC_ARC = YES;
@@ -298,6 +311,7 @@
 		};
 		959134B361DD7E21ADEA3164 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = D8C839FBBA8081A5CE124B9E;
 			buildSettings = {
 				CLANG_ENABLE_MODULES = YES;
 				CLANG_ENABLE_OBJC_ARC = YES;
@@ -317,14 +331,14 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = "$(TASKLENS_DEVELOPMENT_TEAM)";
 				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = dev.codejam16.tasklens.tests;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(TASKLENS_BUNDLE_IDENTIFIER).tests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -338,14 +352,14 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = "$(TASKLENS_DEVELOPMENT_TEAM)";
 				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = dev.codejam16.tasklens.tests;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(TASKLENS_BUNDLE_IDENTIFIER).tests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_EMIT_LOC_STRINGS = YES;

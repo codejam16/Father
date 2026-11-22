@@ -10,3 +10,7 @@ xcuserdata/
 .build/
 *.ipa
 *.xcarchive
+
+# Each developer keeps signing values outside the shared Xcode project.
+/ios/Config/Signing.local.xcconfig
+__pycache__/

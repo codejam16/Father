@@ -1,0 +1,4 @@
+// Copy to Signing.local.xcconfig and fill in YOUR settings once.
+// Or run: python3 scripts/configure-signing.py --team YOURTEAMID --bundle-id dev.yourname.codejam16.tasklens
+TASKLENS_DEVELOPMENT_TEAM = YOURTEAMID
+TASKLENS_BUNDLE_IDENTIFIER = dev.yourname.codejam16.tasklens

@@ -1,0 +1,7 @@
+// Shared defaults. Personal identities belong only in Signing.local.xcconfig.
+// An empty team permits unsigned simulator builds; device builds need local setup.
+TASKLENS_DEVELOPMENT_TEAM =
+TASKLENS_BUNDLE_IDENTIFIER = dev.codejam16.tasklens
+
+// Optional so a fresh clone can open without a missing-include warning.
+#include? "Signing.local.xcconfig"

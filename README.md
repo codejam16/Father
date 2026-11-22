@@ -24,7 +24,7 @@ A starter for a moving-camera task assistant on iPhone. Keep the camera open, as
 
 1. On a Mac with Xcode 16 or later, open `ios/TaskLens.xcodeproj`.
 2. Select the **TaskLens** scheme and your connected iPhone running iOS 17 or later.
-3. Under the app target's **Signing & Capabilities**, choose your Personal Team. Change the bundle identifier if Xcode requires a unique one. Choose the same team for the test target when running tests.
+3. Configure your personal signing values once using [Personal signing setup](docs/SIGNING.md). The shared project reads `ios/Config/Signing.local.xcconfig`, which Git ignores. Then select your connected iPhone and Run.
 4. Enable Developer Mode on the iPhone if Xcode requests it. Build and run.
 5. Grant camera permission. Grant microphone and Speech permissions when trying voice.
 6. Leave **Demo responses** on in app settings initially. The camera, selection, conversation, and speech UI can be exercised without an API key or backend.
@@ -195,7 +195,7 @@ The Xcode project is committed; no generator is needed to open it. After adding/
 python3 scripts/generate-xcode-project.py
 ```
 
-Regeneration rebuilds the project definition and resets target signing/custom project settings. Source files are unchanged.
+Regeneration rebuilds the project definition with variable-based signing and leaves your ignored local signing file intact. Review unrelated custom project settings after regeneration. Source files are unchanged.
 
 ## Next milestone
 
