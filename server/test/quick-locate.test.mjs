@@ -42,7 +42,7 @@ test('research, pronouns, multiple tasks and precise controls retain the full as
     'How do I open the bottle?', 'Hello']) {
     assert.equal(canQuickLocate(request({ question }), session()), false, question);
   }
-  for (const extra of [{ includeWebInfo: true }, { researchEnabled: true }, { continuationId: randomUUID() }]) {
+  for (const extra of [{ continuationId: randomUUID() }]) {
     assert.equal(canQuickLocate(request(extra), session()), false, JSON.stringify(extra));
   }
   const original = request();
@@ -86,7 +86,7 @@ test('bottle locating keeps pointing, close-up and selection geometry without fa
 
 test('full-path diagnostics report gates without exposing the question or image contents', () => {
   const cases = [
-    [request({ includeWebInfo: true }), session(), 'research_enabled'],
+    [request({ includeWebInfo: true, history: [{ role: 'user', content: 'Find buying links for this bottle' }] }), session(), 'research_context'],
     [request({ continuationId: randomUUID() }), session(), 'research_continuation'],
     [request(), session({ memory: { ...emptyMemory(), plan: [{ completed: false }] } }), 'unfinished_guided_plan'],
     [request({ question: 'How do I open it?' }), session(), 'question_form'],
@@ -132,12 +132,26 @@ test('invalid quick coordinates fail without a repair call or committing invente
   assert.deepEqual(sessions.entries.get(input.sessionId).memory, emptyMemory());
 });
 
-test('Info-on requests still reach the existing full assistant with research permission', async () => {
-  const input = request({ includeWebInfo: true, researchEnabled: true });
+test('Info-on shopping requests still reach the full assistant with research permission', async () => {
+  const input = request({ question: 'Find buying links for this bottle', includeWebInfo: true, researchEnabled: true });
   const io = transport({ ...answer(), action: 'respond', argument: null, sourceIds: [], memory: emptyMemory() });
   await runAgent(input, { ...config, serperApiKey: 'fake-serper' }, session(), io.fetcher);
   const body = io.calls[0].body;
   assert.equal(JSON.parse(body.contents.at(-1).parts[0].text).researchAllowed, true);
   assert.ok(body.generationConfig.responseJsonSchema.properties.action.enum.includes('search_online'));
   assert.equal(io.calls.length, 1);
+});
+
+test('simple locating uses one minimal-reasoning camera call with either Info setting and no search', async () => {
+  for (const includeWebInfo of [false, true]) {
+    for (const researchEnabled of [false, true]) {
+      const input = request({ question: 'Where is the bottle?', includeWebInfo, researchEnabled });
+      const io = transport(answer());
+      const result = await runAgent(input, { ...config, model: 'gemini-3.5-flash-lite', serperApiKey: 'fake-serper' }, session(), io.fetcher);
+      assert.equal(io.calls.length, 1);
+      assert.equal(io.calls[0].body.generationConfig.thinkingConfig.thinkingLevel, 'MINIMAL');
+      assert.equal(result.webInfo, null);
+      assert.equal('action' in io.calls[0].body.generationConfig.responseJsonSchema.properties, false);
+    }
+  }
 });

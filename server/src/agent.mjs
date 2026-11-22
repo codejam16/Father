@@ -95,7 +95,8 @@ export async function runAgent(request, config, session, fetcher = fetch) {
   if (route.eligible) return quickLocate(request, config, session, fetcher);
   const researchSteps = session.pending?.researchSteps ?? 0;
   const canResearch = request.includeWebInfo === true && request.researchEnabled !== false && config.webResearchEnabled !== false && Boolean(config.serperApiKey) && researchSteps < (config.maxResearchSteps ?? 2);
-  const payload = await generateWithSchemaFallback(buildAgentBody(request, config, session, canResearch), modelFor(request, config), fetcher);
+  const activePlan = session.memory.plan.some((step) => !step.completed);
+  const payload = await generateWithSchemaFallback(buildAgentBody(request, config, session, canResearch), modelFor(request, config, { activePlan }), fetcher);
   let decision;
   try { decision = JSON.parse(candidateText(payload)); } catch {
     throw new APIError(502, 'invalid_model_output', 'The assistant returned an unreadable action.');

@@ -1,5 +1,5 @@
 import { APIError, answerSchema, validateAnswer } from './contract.mjs';
-import { generateContent, candidateText, providerUsage, buildGeminiBody } from './gemini.mjs';
+import { generateContent, candidateText, providerUsage, buildGeminiBody, thinkingLevelFor } from './gemini.mjs';
 
 // Deliberately narrow: never classify a contextual follow-up, research request,
 // fine-detail task or guided step as a stand-alone object-location question.
@@ -9,9 +9,12 @@ export function canQuickLocate(request, session) {
 
 export function quickLocateDecision(request, session) {
   const no = (reason) => ({ eligible: false, reason });
-  if (request.includeWebInfo !== false || request.researchEnabled !== false) return no('research_enabled');
   if (request.continuationId) return no('research_continuation');
   if (session.memory.plan.some((step) => !step.completed)) return no('unfinished_guided_plan');
+  // A follow-up to shopping/research should retain that context even when its
+  // new wording alone resembles a camera-location question.
+  if (request.includeWebInfo && /\b(?:links?|buy|buying|shopping|retailers?|prices?|manuals?|websites?|search)\b/i.test(
+    [request.task, session.memory.goal, ...request.history.slice(-2).map((turn) => turn.content)].join(' '))) return no('research_context');
   const question = request.question.trim().replace(/[.!?]+$/, '')
     .replace(/^(?:(?:can|could|would) you\s+)?(?:please\s+)?/i, '');
   const match = /^(?:find(?: me)?|locate|show me|point (?:to|at)|where is|where are|where['’]?s)\s+(.+)$/i.exec(question);
@@ -48,7 +51,7 @@ export function buildQuickLocateBody(request, maxOutputTokens) {
 
 export async function quickLocate(request, config, session, fetcher) {
   const body = buildQuickLocateBody(request, config.maxOutputTokens);
-  const payload = await generateContent(body, config, fetcher);
+  const payload = await generateContent(body, { ...config, thinkingLevel: thinkingLevelFor(request, config) }, fetcher);
   let parsed;
   try { parsed = JSON.parse(candidateText(payload)); } catch {
     throw new APIError(502, 'invalid_model_output', 'The AI returned an unreadable answer.');

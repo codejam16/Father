@@ -92,13 +92,18 @@ export async function generateContent(body, config, fetcher = fetch) {
   const callNumber = config.trace ? ++config.trace.calls : 1;
   const operation = body.tools?.some((tool) => (tool.google_search || tool.googleSearch)) ? 'search_online'
     : body.tools?.some((tool) => tool.url_context) ? 'read_source' : 'camera_decision';
+  const override = (config.thinkingLevel ?? 'AUTO').toUpperCase();
+  const thinkingLevel = override === 'AUTO' ? body.generationConfig?.thinkingConfig?.thinkingLevel
+    : thinkingLevelFor(undefined, config);
+  const requestBody = thinkingLevel ? { ...body, generationConfig: { ...body.generationConfig,
+    thinkingConfig: { ...body.generationConfig?.thinkingConfig, thinkingLevel } } } : body;
   const started = Date.now();
-  console.log(`[${requestId}] Google call ${callNumber} (${callId}) START model=${config.model} action=${operation}`);
+  console.log(`[${requestId}] Google call ${callNumber} (${callId}) START model=${config.model} action=${operation} thinking=${thinkingLevel ?? 'default'}`);
   config.signal?.throwIfAborted();
   const timeout = AbortSignal.timeout(GEMINI_TIMEOUT_MS);
   const signal = config.signal ? AbortSignal.any([timeout, config.signal]) : timeout;
-  // Google's 500/503 "overloaded" errors are usually momentary and are not billed, so they get a
-  // couple of quick, spaced retries within the same deadline. Quota (429), auth, request, network
+  // Transient Google 5xx responses get a couple of spaced retries within the
+  // same deadline. Quota (429), auth, request, network
   // and timeout failures are never retried, so one question cannot fan out into many slow calls.
   const busyRetries = config.busyRetries ?? 2;
   const retryDelayMs = config.retryDelayMs ?? 1000;
@@ -111,7 +116,7 @@ export async function generateContent(body, config, fetcher = fetch) {
         {
           method: 'POST',
           headers: { 'content-type': 'application/json', 'x-goog-api-key': config.apiKey },
-          body: JSON.stringify(body),
+          body: JSON.stringify(requestBody),
           signal,
         },
       );
@@ -152,7 +157,7 @@ export async function generateContent(body, config, fetcher = fetch) {
     throw new APIError(502, 'incomplete_model_output', 'The AI could not finish a usable answer. Try a simpler question.');
   }
   const usage = providerUsage(payload);
-  console.log(`[${requestId}] Google call ${callNumber} (${callId}) DONE totalMs=${Date.now() - started} inputTokens=${usage.inputTokens} outputTokens=${usage.outputTokens}`);
+  console.log(`[${requestId}] Google call ${callNumber} (${callId}) DONE totalMs=${Date.now() - started} inputTokens=${usage.inputTokens} outputTokens=${usage.outputTokens} answerTokens=${payload.usageMetadata?.candidatesTokenCount ?? 0} thoughtTokens=${payload.usageMetadata?.thoughtsTokenCount ?? 0}`);
   return payload;
 }
 
@@ -174,10 +179,20 @@ const explainPattern = /\b(explain|explanation|walk me through|trace|diagram|cir
 export function looksLikeExplanation(question) {
   return typeof question === 'string' && explainPattern.test(question);
 }
-export function modelFor(request, config) {
-  return config.explainModel && config.explainModel !== config.model && looksLikeExplanation(request?.question)
+export function thinkingLevelFor(request, config, { activePlan = false } = {}) {
+  const configured = (config.thinkingLevel ?? 'AUTO').toUpperCase();
+  const supportsMinimal = config.model === 'gemini-3.5-flash-lite';
+  if (configured !== 'AUTO') return configured === 'MINIMAL' && !supportsMinimal ? 'LOW' : configured;
+  const detailed = activePlan || request?.confirmedStepIds?.length > 0 || looksLikeExplanation(request?.question) ||
+    /\b(?:how|why|repair\w*|fix\w*|diagnos\w*|troubleshoot\w*|calculat\w*|prove|assembl\w*|install\w*|steps?|instructions?|compar\w*|buttons?|caps?|lids?|switch(?:es)?|keys?|pins?|ports?|screws?|serial|labels?)\b/i.test(request?.question ?? '');
+  return supportsMinimal && request && !detailed ? 'MINIMAL' : 'LOW';
+}
+
+export function modelFor(request, config, options) {
+  const selected = config.explainModel && config.explainModel !== config.model && looksLikeExplanation(request?.question)
     // One quick retry only: if it's still busy, the regular model answers instead of waiting longer.
     ? { ...config, model: config.explainModel, fallbackModel: config.model, busyRetries: 1 } : config;
+  return { ...selected, thinkingLevel: thinkingLevelFor(request, selected, options) };
 }
 
 /// If Google rejects the answer format as too complex, retry once without the optional extras

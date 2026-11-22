@@ -388,8 +388,12 @@ test('visual questions and ordinary conversation remain single-call answers with
       await execute(new TaskSessions(), request({ includeWebInfo, question }), transport);
       assert.equal(transport.calls.length, 1);
       const context = JSON.parse(transport.calls[0].body.contents.at(-1).parts[0].text);
-      assert.equal(context.researchAllowed, includeWebInfo);
-      assert.match(transport.calls[0].body.systemInstruction.parts.at(-1).text, includeWebInfo ? /web info/i : /permitted only/);
+      if (question === 'Where is the bottle?') {
+        assert.equal('action' in transport.calls[0].body.generationConfig.responseJsonSchema.properties, false);
+      } else {
+        assert.equal(context.researchAllowed, includeWebInfo);
+        assert.match(transport.calls[0].body.systemInstruction.parts.at(-1).text, includeWebInfo ? /web info/i : /permitted only/);
+      }
     }
   }
 });

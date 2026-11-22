@@ -7,6 +7,7 @@ try {
     console.log(`TaskLens backend: http://${config.host}:${config.port} (${config.mode})`);
     if (config.mode === 'gemini') {
       console.log(`Google model: ${config.model}`);
+      console.log(`Reasoning policy: ${config.thinkingLevel.toLowerCase()} (auto uses minimal for basic Flash-Lite questions).`);
       console.log(`Google error log: ${config.diagnosticLogPath}`);
       console.log(config.webResearchEnabled && config.serperApiKey
         ? 'Web search: Serper (one search request per search action).'

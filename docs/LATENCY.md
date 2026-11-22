@@ -9,7 +9,10 @@ a separate asynchronous request. The label alone cannot identify the bottleneck.
 ## Simple locating requests
 
 New self-contained questions such as “Find the girl” and “Where is my bottle?”
-use a smaller camera-only request when both research flags are off. It requests
+use a smaller camera-only request with either Info setting. Enabling Info permits
+research for eligible questions; it does not require a lookup for locating a visible
+object. An established shopping/research context keeps its full assistant flow.
+The smaller request asks for
 only a short answer, label, box, and clearer-view flag; no diagrams, tools, plan
 generation, or research. It keeps the configured model, image detail, coordinate
 validation and existing busy-error retry policy. It retains only the latest two
@@ -19,7 +22,7 @@ Selections, ordered pointing spots, and optional close-up images are preserved
 in simple locating requests rather than forcing the full assistant solely because
 that camera context exists. The first image remains the coordinate reference.
 
-Info-on questions, research continuations, unfinished guided plans,
+Shopping/research questions and their follow-ups, research continuations, unfinished guided plans,
 contextual pronouns, multi-part questions and requests
 for fine controls stay on the full assistant path. This intentionally conservative
 English routing rule is not a general-purpose intent classifier. It never sends
@@ -29,12 +32,34 @@ This reduces request complexity; it does not guarantee a particular latency or
 constant provider response times. No live Gemini/device benchmark was available.
 Image resolution has not been lowered as a speed shortcut.
 
+## Reasoning policy
+
+`GEMINI_THINKING_LEVEL=auto` is the default, including existing installations with
+no new `.env` entry. Basic Flash-Lite (`gemini-3.5-flash-lite`) questions use
+`MINIMAL`, rather than forcing `LOW` on every request. Explanations, repairs,
+fine controls, explicit step confirmations and active guided plans retain `LOW`.
+Direct document/step-check operations without question classification also retain
+their existing setting. This applies to the full assistant as well as the locator.
+
+An explicit `low`, `medium` or `high` overrides the automatic policy. An explicit
+`minimal` falls back to `LOW` on the supported stronger model, which does not
+support `MINIMAL`. Model selection, image detail, coordinate validation, web
+permissions, output limits and busy-retry policy remain separate controls.
+
+Google documents `MINIMAL` as the near-off, lowest-latency thinking level for
+Flash-Lite; see [Gemini thinking](https://ai.google.dev/gemini-api/docs/generate-content/thinking).
+Reducing reasoning can affect answer quality. The automatic policy keeps more
+reasoning for detailed work, but real-device accuracy and latency still require
+evaluation. Backend tests verify the outgoing settings, not live response speed.
+
 ## Logs
 
 Backend output identifies `Camera path=quick_locate` or `full_assistant`, with a
 non-sensitive routing reason and counts for images/pointing data. It does not log
 the question or image. The
-Google DONE line includes `totalMs`, covering response-body reading as well as
+Google START includes the actual `thinking` level, and DONE includes separate
+`answerTokens` and `thoughtTokens` counts without logging reasoning content. The
+Google DONE line also includes `totalMs`, covering response-body reading as well as
 headers and any busy retries. Completed requests already log total elapsed time.
 `Server-Timing: app;dur=...` exposes total backend elapsed time in milliseconds.
 
