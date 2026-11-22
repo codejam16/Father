@@ -46,8 +46,15 @@ test('repairs, explanations, fine controls and active guided steps retain low re
   }
   const memory = { ...emptyMemory(), plan: [{ id: 's1', text: 'Open the lid', completed: false }] };
   const io = transport(memory);
-  await runAgent(input('Done'), config(), state(memory), io.fetcher);
+  await runAgent({ ...input('Done'), guided: true }, config(), state(memory), io.fetcher);
   assert.equal(io.calls[0].body.generationConfig.thinkingConfig.thinkingLevel, 'LOW');
+});
+
+test('inactive guided plans do not increase reasoning on ordinary questions', async () => {
+  const memory = { ...emptyMemory(), plan: [{ id: 's1', text: 'Open the lid', completed: false }] };
+  const io = transport(memory);
+  await runAgent({ ...input('What color is this?'), guided: false }, config(), state(memory), io.fetcher);
+  assert.equal(io.calls[0].body.generationConfig.thinkingConfig.thinkingLevel, 'MINIMAL');
 });
 
 test('model selection never sends unsupported minimal reasoning to the stronger model', async () => {

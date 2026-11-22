@@ -91,11 +91,11 @@ function taskWebInfo(request, session, decision) {
 
 export async function runAgent(request, config, session, fetcher = fetch) {
   const route = quickLocateDecision(request, session);
-  console.log(`[${config.trace?.requestId ?? 'diagnostic'}] Camera path=${route.eligible ? 'quick_locate' : 'full_assistant'} reason=${route.reason} images=${request.detailImage ? 2 : 1} pointingSpots=${request.pointedAt?.length ?? 0} selection=${Boolean(request.selection)}`);
+  console.log(`[${config.trace?.requestId ?? 'diagnostic'}] Camera path=${route.eligible ? 'quick_locate' : 'full_assistant'} reason=${route.reason} receivedImages=${request.detailImage ? 2 : 1} pointingSpots=${request.pointedAt?.length ?? 0} selection=${Boolean(request.selection)}`);
   if (route.eligible) return quickLocate(request, config, session, fetcher);
   const researchSteps = session.pending?.researchSteps ?? 0;
   const canResearch = request.includeWebInfo === true && request.researchEnabled !== false && config.webResearchEnabled !== false && Boolean(config.serperApiKey) && researchSteps < (config.maxResearchSteps ?? 2);
-  const activePlan = session.memory.plan.some((step) => !step.completed);
+  const activePlan = request.guided && session.memory.plan.some((step) => !step.completed);
   const payload = await generateWithSchemaFallback(buildAgentBody(request, config, session, canResearch), modelFor(request, config, { activePlan }), fetcher);
   let decision;
   try { decision = JSON.parse(candidateText(payload)); } catch {

@@ -4,7 +4,8 @@ import { randomUUID } from 'node:crypto';
 import { validateRequest } from '../src/contract.mjs';
 import { emptyMemory, TaskSessions } from '../src/task-session.mjs';
 import { buildAgentBody, runAgent } from '../src/agent.mjs';
-import { canQuickLocate, buildQuickLocateBody, quickLocateDecision } from '../src/quick-locate.mjs';
+import { canQuickLocate, buildQuickLocateBody, quickLocateDecision, quickLocateMode } from '../src/quick-locate.mjs';
+import { loadConfig } from '../src/server.mjs';
 
 const config = { model: 'test-model', maxOutputTokens: 2048, apiKey: 'fake-key' };
 const request = (extra = {}) => validateRequest({
@@ -46,13 +47,13 @@ test('research, pronouns, multiple tasks and precise controls retain the full as
     assert.equal(canQuickLocate(request(extra), session()), false, JSON.stringify(extra));
   }
   const original = request();
-  assert.equal(canQuickLocate(original, session({ memory: { ...emptyMemory(),
+  assert.equal(canQuickLocate({ ...original, guided: true }, session({ memory: { ...emptyMemory(),
     plan: [{ id: 'step1', text: 'Open the lid', completed: false }] } })), false);
 });
 
-test('a location request keeps the original image detail but removes unrelated response work', () => {
+test('detailed locating preserves configured image detail while removing unrelated response work', () => {
   const input = request({ history: Array.from({ length: 8 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', content: `turn ${i}` })) });
-  const body = buildQuickLocateBody(input, config.maxOutputTokens);
+  const body = buildQuickLocateBody(input, config.maxOutputTokens, { mode: 'detailed' });
   const normal = buildAgentBody(input, config, session(), false);
   const parts = body.contents.at(-1).parts;
   assert.deepEqual(parts[1], normal.contents.at(-1).parts[1]);
@@ -71,7 +72,7 @@ test('bottle locating keeps pointing, close-up and selection geometry without fa
   const input = request({ question: 'Where is the bottle', pointedAt: [[200, 300]],
     selection: [100, 100, 900, 900], detailImage: { ...image, box: [100, 100, 600, 600] } });
   assert.deepEqual(quickLocateDecision(input, session()), { eligible: true, reason: 'simple_location' });
-  const quick = buildQuickLocateBody(input, 2048);
+  const quick = buildQuickLocateBody(input, 2048, { mode: 'detailed' });
   const normal = buildAgentBody(input, config, session(), false);
   assert.deepEqual(quick.contents.at(-1).parts.slice(1), normal.contents.at(-1).parts.slice(1));
   const context = JSON.parse(quick.contents.at(-1).parts[0].text);
@@ -88,11 +89,60 @@ test('full-path diagnostics report gates without exposing the question or image 
   const cases = [
     [request({ includeWebInfo: true, history: [{ role: 'user', content: 'Find buying links for this bottle' }] }), session(), 'research_context'],
     [request({ continuationId: randomUUID() }), session(), 'research_continuation'],
-    [request(), session({ memory: { ...emptyMemory(), plan: [{ completed: false }] } }), 'unfinished_guided_plan'],
+    [request({ guided: true }), session({ memory: { ...emptyMemory(), plan: [{ completed: false }] } }), 'unfinished_guided_plan'],
     [request({ question: 'How do I open it?' }), session(), 'question_form'],
     [request({ question: 'Find the cap' }), session(), 'detailed_or_contextual_task'],
   ];
   for (const [input, state, reason] of cases) assert.deepEqual(quickLocateDecision(input, state), { eligible: false, reason });
+});
+
+test('fast locating sends one medium-detail image while preserving pointing and primary-image coordinates', async () => {
+  const original = request();
+  const input = request({ question: 'Where is the bottle?', selection: [100, 100, 900, 900],
+    pointedAt: [[200, 300]], detailImage: { ...original.image, box: [100, 100, 600, 600] } });
+  const before = structuredClone(input), io = transport(answer());
+  await runAgent(input, config, session(), io.fetcher);
+  const body = io.calls[0].body, parts = body.contents.at(-1).parts;
+  assert.equal(body.generationConfig.mediaResolution, 'MEDIA_RESOLUTION_MEDIUM');
+  assert.equal(parts.filter((part) => part.inlineData).length, 1);
+  assert.deepEqual(parts.find((part) => part.inlineData).inlineData, { mimeType: input.image.mimeType, data: input.image.base64 });
+  const context = JSON.parse(parts[0].text);
+  assert.deepEqual(context.selection, input.selection);
+  assert.deepEqual(context.pointedAt, input.pointedAt);
+  assert.ok(!parts.some((part) => part.text?.startsWith('Second image:')));
+  assert.deepEqual(input, before);
+  assert.equal(io.calls.length, 1);
+});
+
+test('detailed mode restores the extra image without a second generation request', async () => {
+  const original = request();
+  const input = request({ detailImage: { ...original.image, box: [100, 100, 800, 800] } });
+  const io = transport(answer());
+  await runAgent(input, { ...config, quickLocateMode: 'detailed' }, session(), io.fetcher);
+  const posted = io.calls[0].body;
+  assert.equal(posted.contents.at(-1).parts.filter((part) => part.inlineData).length, 2);
+  assert.equal(posted.generationConfig.mediaResolution, buildAgentBody(input, config, session(), false).generationConfig.mediaResolution);
+  assert.equal(io.calls.length, 1);
+});
+
+test('tiny selections keep detailed processing and mode configuration is validated', () => {
+  const small = request({ selection: [100, 100, 150, 150] });
+  assert.equal(quickLocateMode(small, { quickLocateMode: 'fast' }), 'detailed');
+  assert.equal(quickLocateMode(request(), { quickLocateMode: 'fast' }), 'fast');
+  assert.equal(quickLocateMode(request(), { quickLocateMode: 'detailed' }), 'detailed');
+  assert.equal(loadConfig({}).quickLocateMode, 'fast');
+  assert.equal(loadConfig({ QUICK_LOCATE_MODE: ' detailed ' }).quickLocateMode, 'detailed');
+  assert.throws(() => loadConfig({ QUICK_LOCATE_MODE: 'blurry' }), /QUICK_LOCATE_MODE/);
+});
+
+test('turning guided mode off stops an old plan from forcing a heavy request without deleting the plan', async () => {
+  const memory = { ...emptyMemory(), plan: [{ id: 's1', text: 'Open the lid', completed: false }] };
+  const input = request({ question: 'Where is the bottle?', guided: false });
+  const io = transport(answer());
+  const result = await runAgent(input, config, session({ memory }), io.fetcher);
+  assert.equal('action' in io.calls[0].body.generationConfig.responseJsonSchema.properties, false);
+  assert.deepEqual(result.taskMemory, memory);
+  assert.equal(io.calls.length, 1);
 });
 
 test('the real agent routes a quick locate through one provider call and preserves task memory', async () => {
