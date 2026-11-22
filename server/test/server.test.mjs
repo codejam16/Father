@@ -499,3 +499,17 @@ test('if the explanation model is busy, the regular model answers instead', asyn
   });
   assert.deepEqual(models, ['gemini-3.8-flash', 'gemini-3.8-flash', 'gemini-3.5-flash-lite']);
 });
+
+test('spots pointed at while asking go to the model in order', () => {
+  const request = validateRequest(input({ question: 'How do I get from this to this?', pointedAt: [[120.4, 300], [800, 640.6]] }));
+  assert.deepEqual(request.pointedAt, [[120, 300], [800, 641]]);
+  const body = buildGeminiBody(request, 1000);
+  const parts = body.contents.at(-1).parts;
+  assert.deepEqual(JSON.parse(parts[0].text).pointedAt, [[120, 300], [800, 641]]);
+  const note = parts.find((part) => part.text?.startsWith('While asking'));
+  assert.match(note.text, /spot 1 at \[y,x\] \[120,300\]; spot 2 at \[y,x\] \[800,641\]/);
+  assert.match(note.text, /start is spot 1 and the end is the last spot/);
+  assert.equal(validateRequest(input()).pointedAt.length, 0);
+  assert.throws(() => validateRequest(input({ pointedAt: [[1200, 5]] })));
+  assert.throws(() => validateRequest(input({ pointedAt: [[1, 2], [3, 4], [5, 6], [7, 8], [9, 10]] })));
+});

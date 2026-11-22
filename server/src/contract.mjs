@@ -62,6 +62,15 @@ export function validateRequest(value) {
     return { role: message.role, content: text(message.content, 'history content', 2000) };
   });
   const selection = value.selection == null ? null : validateBox(value.selection);
+  // Spots the user's fingertip rested on while asking, in order, as [y, x] (0-1000).
+  let pointedAt = [];
+  if (value.pointedAt != null) {
+    if (!Array.isArray(value.pointedAt) || value.pointedAt.length > 4 || !value.pointedAt.every((point) =>
+      Array.isArray(point) && point.length === 2 && point.every((n) => Number.isFinite(n) && n >= 0 && n <= 1000))) {
+      invalid('pointedAt must be up to four [y, x] points between 0 and 1000.');
+    }
+    pointedAt = value.pointedAt.map(([y, x]) => [Math.round(y), Math.round(x)]);
+  }
   if (value.includeWebInfo !== undefined && typeof value.includeWebInfo !== 'boolean') invalid('includeWebInfo must be a boolean.');
   if (value.guided !== undefined && typeof value.guided !== 'boolean') invalid('guided must be a boolean.');
   const sessionId = value.sessionId ?? null;
@@ -76,7 +85,7 @@ export function validateRequest(value) {
       !confirmedStepIds.every((id) => typeof id === 'string' && /^[a-zA-Z0-9_-]{1,40}$/.test(id))) invalid('Invalid confirmedStepIds.');
   return { frameId, capturedAt, question, task, image, history: normalizedHistory, selection,
     sessionId, continuationId, researchEnabled: value.researchEnabled ?? true, confirmedStepIds, includeWebInfo: value.includeWebInfo === true,
-    searchEveryQuestion: value.searchEveryQuestion === true, guided: value.guided === true, detailImage };
+    searchEveryQuestion: value.searchEveryQuestion === true, guided: value.guided === true, detailImage, pointedAt };
 }
 
 // A schema constrains shape; validate the model's values again before using them.

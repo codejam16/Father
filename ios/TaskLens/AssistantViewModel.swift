@@ -184,7 +184,7 @@ final class AssistantViewModel: ObservableObject {
             if self.speech.lastUtteranceInterrupted, Self.isOnlyInterruption(text) { return }
             if self.handleStepCommand(text) { return }
             self.question = text
-            self.send()
+            self.send(pointingSince: self.speech.lastUtteranceStartedAt)
         }
         camera.onSettled = { [weak self] in
             Task { @MainActor in self?.autoCheck() }
@@ -215,6 +215,8 @@ final class AssistantViewModel: ObservableObject {
         // (or its own replayed voice) can't send a new question and close it.
         speech.allowsInterruption = settings.interruptionsEnabled && isActive && !isMuted && !voiceSuspended && !isViewingSaved
         speech.setListening(isActive && !isMuted && !voiceSuspended && !isBusy && !isViewingSaved)
+        // Watch the fingertip only while the user may be talking, so "this… to this" can be matched.
+        camera.setPointerTracking(isActive && !isMuted && !voiceSuspended && !isViewingSaved)
     }
 
     /// "Stop" / "wait" said over a reply only meant "be quiet": don't send it as a question.
@@ -276,7 +278,9 @@ final class AssistantViewModel: ObservableObject {
         updateListening()
     }
 
-    func send() {
+    /// `pointingSince`: when a spoken question started, so the spots the user pointed at while
+    /// saying it ("from this… to this") go with it. Typed questions don't use pointing history.
+    func send(pointingSince: Date? = nil) {
         let text = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !isBusy, !text.isEmpty else { return }
         guard text.count <= 1500 else { errorMessage = "Please shorten your question to 1,500 characters."; return }
@@ -324,6 +328,9 @@ final class AssistantViewModel: ObservableObject {
                 var detail: CapturedDetail?
                 if let attachment { frame = attachment.frame }
                 else { (frame, detail) = try await camera.snapshotWithDetail() }
+                // Only a live view: a picked photo's coordinates wouldn't match the pointing.
+                var pointed: [CGPoint] = []
+                if attachment == nil, let since = pointingSince { pointed = await camera.pointedSpots(since: since) }
                 var continuationID: String?
                 var currentSelection = attachment?.box
                 var response: AnalysisResponse
@@ -335,7 +342,8 @@ final class AssistantViewModel: ObservableObject {
                                                   history: history, selection: currentSelection,
                                                   sessionId: sessionID, continuationId: continuationID,
                                                   researchEnabled: researchEnabled, confirmedStepIds: confirmations, includeWebInfo: includeWebInfo,
-                                                  searchEveryQuestion: true, guided: guided, detail: detail)
+                                                  searchEveryQuestion: true, guided: guided, detail: detail,
+                                                  pointedAt: continuationID == nil ? pointed : [])
                     detail = nil // Only the first look carries the close-up.
                     if demoMode { response = try await client.demo(request, hasPlan: hasPlan) }
                     else { response = try await client.analyze(request, endpoint: endpoint, token: token) }

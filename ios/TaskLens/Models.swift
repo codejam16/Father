@@ -173,12 +173,18 @@ struct AnalysisRequest: Encodable {
     let detailImage: DetailImagePayload?
     let searchEveryQuestion: Bool
     let guided: Bool
+    /// Spots the user's fingertip rested on while asking, in order, as [y, x] (0–1000).
+    let pointedAt: [[Double]]?
 
     init(frame: CapturedFrame, question: String, task: String, history: [ChatMessage], selection: NormalizedBox?,
          sessionId: String? = nil, continuationId: String? = nil,
          researchEnabled: Bool = true, confirmedStepIds: [String] = [], includeWebInfo: Bool = false,
-         searchEveryQuestion: Bool = false, guided: Bool = false, detail: CapturedDetail? = nil) {
+         searchEveryQuestion: Bool = false, guided: Bool = false, detail: CapturedDetail? = nil,
+         pointedAt: [CGPoint] = []) {
         self.guided = guided
+        self.pointedAt = pointedAt.isEmpty ? nil : pointedAt.prefix(4).map {
+            [(min(max($0.y, 0), 1) * 1000).rounded(), (min(max($0.x, 0), 1) * 1000).rounded()]
+        }
         self.detailImage = detail.map {
             DetailImagePayload(base64: $0.jpeg.base64EncodedString(), width: $0.width, height: $0.height, box: $0.box)
         }

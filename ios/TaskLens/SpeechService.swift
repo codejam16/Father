@@ -144,6 +144,9 @@ final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     private(set) var lastPlaybackInterrupted = false
     /// True while `onUtterance` runs if that utterance interrupted a spoken reply.
     private(set) var lastUtteranceInterrupted = false
+    /// When the user started saying the utterance being delivered (for matching it with their pointing).
+    private(set) var lastUtteranceStartedAt: Date?
+    private var utteranceStartedAt: Date?
 
     private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
     private let engine = AVAudioEngine()
@@ -315,6 +318,10 @@ final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelega
             }
             let spoken = removingEcho(heard)
             if spoken != transcript {
+                if transcript.isEmpty, !spoken.isEmpty {
+                    // Recognition lags the voice; start a little earlier so the first point is caught.
+                    utteranceStartedAt = Date().addingTimeInterval(-1.5)
+                }
                 transcript = spoken
                 consecutiveFailures = 0
                 scheduleSilence(for: id)
@@ -338,21 +345,41 @@ final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     private func scheduleSilence(for id: UUID) {
         silenceTask?.cancel()
         guard !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        // How long a pause ends a question: short enough to feel responsive, long enough for a breath.
+        // A sentence that is clearly unfinished ("from this…", "to") waits longer: the user is
+        // usually moving their finger to the next spot.
+        let wait = Self.soundsUnfinished(transcript) ? 2200 : 800
         silenceTask = Task { [weak self] in
-            // How long a pause ends a question: short enough to feel responsive, long enough for a breath.
-            do { try await Task.sleep(for: .milliseconds(800)) } catch { return }
+            do { try await Task.sleep(for: .milliseconds(wait)) } catch { return }
             guard let self, self.recordingID == id, self.wantsListening else { return }
             self.completeUtterance()
         }
     }
 
+    /// "How do I go from this", "this to", "between here and": more is coming.
+    static func soundsUnfinished(_ text: String) -> Bool {
+        let words = text.lowercased().split(whereSeparator: { !$0.isLetter && $0 != "'" }).map(String.init)
+        guard let last = words.last else { return false }
+        let hangingWords: Set<String> = ["to", "from", "into", "onto", "towards", "toward", "and", "then", "between",
+                                         "the", "a", "an", "this", "that", "here", "there", "of", "with", "through", "via"]
+        if hangingWords.contains(last) { return true }
+        // Said "from …" (or "between …") but not yet the "to …"/"and …" part.
+        let sentence = " " + words.joined(separator: " ") + " "
+        if sentence.contains(" from "), !sentence.contains(" to "), !sentence.contains(" into ") { return true }
+        if sentence.contains(" between "), !sentence.contains(" and ") { return true }
+        return false
+    }
+
     private func completeUtterance() {
         let text = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         let interrupted = interruptedThisUtterance
+        let startedAt = utteranceStartedAt
+        utteranceStartedAt = nil
         finishSession()
         transcript = ""
         if wantsListening, !text.isEmpty {
             lastUtteranceInterrupted = interrupted
+            lastUtteranceStartedAt = startedAt
             onUtterance?(text)
             lastUtteranceInterrupted = false
         }

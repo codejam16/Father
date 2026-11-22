@@ -129,6 +129,16 @@ The camera captures at 1080p (falling back to 720p/VGA). The whole view is sent 
 
 `box` is where the close-up sits in the first image (0–1000, top-left origin). The model is told to read small labels from it and to return boxes in the first image's coordinates. Only the first look of a question carries it (not research refreshes or step checks).
 
+## Pointing while asking ("from this to this")
+
+While the microphone listens, the phone runs a hand-pose pass about 4 times a second. When a spoken question is sent, the places the fingertip rested on (about half a second or more) since the user started talking are sent in order:
+
+```json
+"pointedAt": [[120, 300], [800, 640]]
+```
+
+Up to four `[y, x]` points (0–1000, top-left origin) in the sent image. The model is told that each "this/that/here/there" maps to these spots in order, and that for "from this to this" the start is spot 1 and the end is the last spot (any drawn path must run between them). Typed questions and picked photos send none. A spoken sentence that is clearly unfinished ("…from this", "…to") waits 2.2 s of silence instead of 0.8 s before it is sent, so the user has time to move their finger to the second spot.
+
 ## Visual walkthroughs (explaining diagrams)
 
 When the user asks to explain a diagram, circuit, chart or how something flows, the answer includes `annotations`: 2–6 ordered beats, each `{ "caption": "Current flows through R1 to B", "box": null, "path": [[150, 200], [150, 600], [500, 600]] }` with either a `box` or a `path` of `[y, x]` points (0–1000, top-left origin) traced along the drawn lines in the direction of flow. Otherwise `annotations` is an empty list. Malformed beats are dropped; `needsClearerView` clears them.

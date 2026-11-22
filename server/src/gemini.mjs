@@ -26,6 +26,17 @@ const configuredDetail = (process.env.IMAGE_DETAIL ?? 'high').toLowerCase();
 if (!(configuredDetail in detailLevels)) throw new Error('IMAGE_DETAIL must be high, medium, low or default.');
 function imageDetail() { return detailLevels[configuredDetail]; }
 
+/** Explains the spots the user pointed at while asking, so "from this to this" uses all of them. */
+export function pointingNote(points) {
+  const list = points.map((point, index) => `spot ${index + 1} at [y,x] ${JSON.stringify(point)}`).join('; ');
+  return `While asking, the user pointed with their finger at ${points.length === 1 ? 'one spot' : `${points.length} spots, in this order`}: ${list} (0-1000 coordinates of the image above). `
+    + 'Each "this", "that", "here" or "there" in the question refers to these spots in order: the first one to spot 1, the next to spot 2, and so on. '
+    + (points.length > 1
+      ? 'For "from this to this" (or "between this and this"), the start is spot 1 and the end is the last spot. Name both parts, consider both in the answer, and if you draw a path or connection it must start at spot 1 and end at the last spot. '
+      : '')
+    + 'The finger has moved since the earlier spots and may now cover the last one, so trust these coordinates over where the hand is in the image. Identify what is printed or drawn at each spot.';
+}
+
 export function buildGeminiBody(request, maxOutputTokens, { researchAvailable = false, evidence = null } = {}) {
   const schema = request.includeWebInfo ? {
     ...webAnswerSchema,
@@ -52,9 +63,11 @@ export function buildGeminiBody(request, maxOutputTokens, { researchAvailable = 
             capturedAt: request.capturedAt,
             frameId: request.frameId,
             selection: request.selection,
+            ...(request.pointedAt?.length ? { pointedAt: request.pointedAt } : {}),
             ...(request.includeWebInfo ? { researchAvailable, researchEvidence: evidence } : {}),
           }) },
           { inlineData: { mimeType: request.image.mimeType, data: request.image.base64 } },
+          ...(request.pointedAt?.length ? [{ text: pointingNote(request.pointedAt) }] : []),
           ...(request.detailImage ? [
             { text: `Second image: a zoomed, sharper close-up of the same moment around the user's fingertip. It covers box ${JSON.stringify(request.detailImage.box)} of the first image. Use it to read small labels (individual keys, buttons, text). Always give box coordinates in the FIRST image's coordinates.` },
             { inlineData: { mimeType: request.detailImage.mimeType, data: request.detailImage.base64 } },

@@ -44,6 +44,12 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
     private var frames: [BufferedFrame] = []
     private var lastFrameTime = -Double.infinity
     private var tracker: VNTrackObjectRequest?
+
+    // MARK: Pointing while talking ("how do I get from this… to this?")
+    /// Fingertip positions seen while the user is talking (unit, top-left origin), newest last.
+    private var pointerLog: [(date: Date, point: CGPoint)] = []
+    private var pointerEnabled = false
+    private var lastPointerTime = -Double.infinity
     private var sequence: VNSequenceRequestHandler?
     private var trackingID: UUID?
     private var trackingLabel = ""
@@ -201,6 +207,13 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
         // About 10 seconds of small frames, so slow answers can still be matched to the view they describe.
         if frames.count > 60 { frames.removeFirst(frames.count - 60) }
         observeActivity(pixels, time: time)
+        // About 4 times a second while listening: where is the fingertip?
+        if pointerEnabled, time - lastPointerTime >= 0.25 {
+            lastPointerTime = time
+            if let tip = Self.fingertip(in: pixels) { pointerLog.append((Date(), tip)) }
+            let cutoff = Date().addingTimeInterval(-30)
+            pointerLog.removeAll { $0.date < cutoff }
+        }
         if tracker != nil {
             if Date() >= trackingUntil { resetTracking() }
             else { advanceTracker(on: pixels) }
@@ -375,6 +388,60 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
                 continuation.resume(returning: (captured, detail))
             }
         }
+    }
+
+    /// Watch for a pointing finger while the microphone is listening (cheap: a few hand-pose passes a second).
+    func setPointerTracking(_ on: Bool) {
+        queue.async { [weak self] in
+            guard let self, self.pointerEnabled != on else { return }
+            self.pointerEnabled = on
+            if !on { self.pointerLog.removeAll() }
+        }
+    }
+
+    /// The distinct spots the fingertip rested on since `start`, in the order they were pointed at
+    /// (at most 4), as unit points. "From this to this" gives [first spot, second spot].
+    func pointedSpots(since start: Date) async -> [CGPoint] {
+        await withCheckedContinuation { continuation in
+            queue.async { [weak self] in
+                let samples = self?.pointerLog.filter { $0.date >= start }.map(\.point) ?? []
+                continuation.resume(returning: Self.restingSpots(in: samples))
+            }
+        }
+    }
+
+    /// Groups fingertip samples into places the finger stayed (at least two samples ≈ half a second).
+    static func restingSpots(in samples: [CGPoint]) -> [CGPoint] {
+        func distance(_ a: CGPoint, _ b: CGPoint) -> CGFloat { hypot(a.x - b.x, a.y - b.y) }
+        var groups: [[CGPoint]] = []
+        var current: [CGPoint] = []
+        func mean(_ points: [CGPoint]) -> CGPoint {
+            CGPoint(x: points.map(\.x).reduce(0, +) / CGFloat(points.count),
+                    y: points.map(\.y).reduce(0, +) / CGFloat(points.count))
+        }
+        for sample in samples {
+            if current.isEmpty || distance(sample, mean(current)) < 0.05 { current.append(sample) }
+            else { groups.append(current); current = [sample] }
+        }
+        if !current.isEmpty { groups.append(current) }
+        var spots: [(point: CGPoint, weight: Int)] = []
+        for group in groups where group.count >= 2 {
+            let center = mean(group)
+            // Came back to (nearly) the same place: still the same spot.
+            if let last = spots.last, distance(last.point, center) < 0.07 {
+                spots[spots.count - 1].weight += group.count
+            } else {
+                spots.append((center, group.count))
+            }
+        }
+        if spots.isEmpty, let last = samples.last { return [last] }
+        if spots.count > 4 {
+            // Keep the first and last, plus the two places the finger stayed longest, in order.
+            let middle = spots[1..<(spots.count - 1)].enumerated().sorted { $0.element.weight > $1.element.weight }
+                .prefix(2).map(\.offset).sorted().map { spots[$0 + 1] }
+            spots = [spots[0]] + middle + [spots[spots.count - 1]]
+        }
+        return spots.map(\.point)
     }
 
     /// Where an index fingertip points (a little beyond the tip, along the finger), in unit
