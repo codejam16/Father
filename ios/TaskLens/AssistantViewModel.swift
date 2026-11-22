@@ -35,6 +35,7 @@ final class AssistantViewModel: ObservableObject {
     private var selectionID = UUID()
 
     init() {
+        sessionTask = settings.task
         speech.onUtterance = { [weak self] text in
             guard let self, self.isActive, !self.isMuted, !self.voiceSuspended, !self.isBusy else { return }
             self.question = text
@@ -76,8 +77,8 @@ final class AssistantViewModel: ObservableObject {
             do {
                 let frame = try await camera.snapshot()
                 guard selectionID == id, settings.selectionEnabled else { return }
-                selectedFrame = SelectedFrame(frame: frame, box: box)
-                camera.point(at: box, frameID: frame.id, label: "Your selection", source: .user)
+                guard let targetID = await camera.addSelection(at: box, frameID: frame.id), selectionID == id else { return }
+                selectedFrame = SelectedFrame(frame: frame, box: box, targetID: targetID)
             } catch { errorMessage = error.localizedDescription }
         }
     }
@@ -148,10 +149,11 @@ final class AssistantViewModel: ObservableObject {
             }
             do {
                 var frame: CapturedFrame
-                if let attachment { frame = attachment.frame }
-                else { frame = try await camera.snapshot() }
+                frame = try await camera.snapshot(restartRecovery: true)
                 var continuationID: String?
-                var currentSelection = attachment?.box
+                var currentSelection = attachment.flatMap { selected in
+                    frame.trackedObjects.first(where: { $0.id == selected.targetID && $0.state == "visible" })?.box
+                }
                 var response: AnalysisResponse
                 var usedResearch = false
                 var refreshes = 0
@@ -161,8 +163,17 @@ final class AssistantViewModel: ObservableObject {
                                                   history: history, selection: currentSelection,
                                                   sessionId: sessionID, continuationId: continuationID,
                                                   researchEnabled: researchEnabled, confirmedStepIds: confirmations, includeWebInfo: includeWebInfo,
-                                                  searchEveryQuestion: true)
-                    if demoMode { response = try await client.demo(request) }
+                                                  searchEveryQuestion: true,
+                                                  selections: attachment == nil ? [] : frame.trackedObjects.compactMap { object in
+                                                      guard object.source == "user", object.state == "visible", let box = object.box else { return nil }
+                                                      return Target(label: object.label, box: box, id: object.id, parentId: object.parentId)
+                                                  })
+                    if demoMode {
+                        response = try await client.demo(request)
+                        if !request.selections.isEmpty {
+                            response.targets = request.selections.map { Target(label: $0.label + " — demo", box: $0.box, id: $0.id, parentId: $0.parentId) }
+                        }
+                    }
                     else { response = try await client.analyze(request, endpoint: endpoint, token: token) }
                     try Task.checkCancellation()
                     guard workID == id else { return }
@@ -188,11 +199,16 @@ final class AssistantViewModel: ObservableObject {
                 webInfo = response.webInfo
                 if messages.count > 40 { messages.removeFirst(messages.count - 40) }
                 question = ""
-                clearSelection()
+                selectionID = UUID()
+                selectedFrame = nil
                 lastReplyWasDemo = response.mode == "mock"
                 showAnswered()
-                if let target = response.target, !response.needsClearerView {
-                    camera.point(at: target.box, frameID: frame.id, label: target.label, source: .assistant)
+                if !response.needsClearerView {
+                    let targets = response.targets.flatMap { $0.isEmpty ? nil : $0 } ?? response.target.map { [$0] } ?? []
+                    for target in targets {
+                        camera.point(at: target.box, frameID: frame.id, label: target.label, source: .assistant,
+                                     id: target.id, parentID: target.parentId)
+                    }
                 }
                 if settings.spokenReplies { speech.speak(response.answer, voiceIdentifier: settings.voiceIdentifier) }
                 if !demoMode && (usedResearch || !citedSourceIds.isEmpty) { researchReviewID = UUID() }
@@ -244,6 +260,7 @@ final class AssistantViewModel: ObservableObject {
     }
 
     private func clearTaskContext() {
+        camera.clearHighlight()
         sessionID = UUID().uuidString.lowercased()
         messages.removeAll()
         pendingQuestion = nil

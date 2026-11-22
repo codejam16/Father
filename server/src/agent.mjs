@@ -109,7 +109,7 @@ export async function runAgent(request, config, session, fetcher = fetch) {
       throw new APIError(502, 'invalid_action', 'The assistant did not provide a usable public search query.');
     }
     decision = { ...decision, action: 'search_online', argument: query.trim(),
-      answer: 'Let me look that up.', targetLabel: null, box: null, needsClearerView: false, sourceIds: [] };
+      answer: 'Let me look that up.', targetLabel: null, box: null, targets: [], needsClearerView: false, sourceIds: [] };
   }
   if (!Array.isArray(decision.sourceIds) || decision.sourceIds.length > 8) {
     throw new APIError(502, 'invalid_action', 'The assistant returned an invalid citation list.');
@@ -119,8 +119,8 @@ export async function runAgent(request, config, session, fetcher = fetch) {
   }
   const research = ['search_online', 'read_source'].includes(decision.action);
   if (research && !canResearch) throw new APIError(502, 'tool_limit', 'The research limit was reached. Ask a more specific follow-up question.');
-  const answer = validateAnswer(decision);
-  if (decision.action === 'request_view') { answer.needsClearerView = true; answer.target = null; }
+  const answer = validateAnswer(decision, request.knownTargets ?? []);
+  if (decision.action === 'request_view') { answer.needsClearerView = true; answer.target = null; answer.targets = []; }
   session.memory = mergeMemory(session.memory, decision.memory);
   const usage = providerUsage(payload);
   if (research) {

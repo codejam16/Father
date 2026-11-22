@@ -14,7 +14,8 @@ These are acceptance checks, not completed test results. Native compilation and 
 - Keep Demo responses enabled and turn on the viewfinder button. Drag a region near each of the four corners and center. Check that the yellow box follows the finger and accounts for black letterboxing.
 - Tap instead of dragging; a small region should be selected. It must not claim to have detected an object.
 - Move the phone slowly while the selected region remains visible. Evaluate the Vision tracker; record failures, including drift to similar items.
-- Occlude the object or move it out of view. Confirm a lost/expired pointer clears. A high tracker confidence is not proof that it still follows the intended item.
+- Keep a well-tracked object visible for at least a minute: it must not disappear after five seconds. Occlude it or move it out of view: the box must hide rather than freeze. Bring it back at another location and verify local recovery without another question or provider call. A high tracker confidence is not proof that it still follows the intended item.
+- Test two identical objects, a uniform/textureless target, lighting and distance changes, and rapid viewpoint changes. Ambiguous or unsupported recovery should leave the box hidden. Check front/rear cameras, clear/new selections, camera switching, and backgrounding: recovery of an old target must stop. Measure preview smoothness and battery/CPU use while searching for a missing target.
 - Ask a demo question with and without a selection. Without a selection there must be no invented target. Every demo reply is labelled.
 - An attached selected view belongs to the next question even if you move away. Clear it to use a fresh view.
 
@@ -96,3 +97,22 @@ Use one clear, low-risk task and distinctive objects. Confirm that identifying a
 - Stop a preview, switch voices during playback, dismiss settings during a preview, interrupt audio, and mute/unmute. Speech playback must stop as appropriate and listening must resume only when the camera screen is active, unmuted and not busy. Confirm captions and the colored speaking/listening badge still follow playback. Preview and voice quality require a physical iPhone and were not executable in the Linux authoring environment.
 
 - While previewing a voice, scroll the voice rows and download instructions out of view: playback must continue. Closing Settings or changing the voice stops it. With only standard voices installed, Automatic should still prefer the phone’s English dialect where available.
+
+
+## Multiple targets, recovery schedule and rotation
+
+- Identify a bottle, then ask how to open it. The bottle should retain its ID and highlight while a new lid/button target is added with the bottle as its parent. Repeat across several follow-ups; unrelated objects must not inherit each other's IDs. Retain at most six objects.
+- Make two manual selections before asking a question. Confirm both are associated with one fresh camera frame, and old objects persist after the answer. In Settings → Remembered objects, forget one target and clear all; forgotten targets must not reappear from recovery callbacks.
+- Occlude a target: hide its box and search approximately once a second for the full minute. After one minute, it must remain hidden/dormant with no more recovery scans. A new question restarts local recovery. Other visible targets must continue tracking throughout.
+- Roll the phone slowly through positive and negative angles while pointing at a textured object: outlines should rotate with it without arbitrary expiry. Repeat with the mirrored front camera and verify the angle/position reflect together. Move/rotate the object itself, change distance, occlude/reintroduce it rotated, and test distinct competing lookalikes.
+- Measure preview smoothness with several live trackers and several missing targets. Recovery searches are scheduled for at most one lost object per captured frame. Confirm no extra Gemini/Serper calls occur for rotation or recovery.
+- Test camera flip, a new task, backgrounding and clearing/forgetting targets while a reply is in flight. No old-camera or old-task boxes should be reintroduced. Large out-of-plane rotations, uniform surfaces and occlusion remain best-effort cases and must not show frozen positions.
+
+
+## Snapshot-history and recovery responsiveness
+
+- Track a textured object for 10, 20 and 60 seconds while changing its view gradually. Inspect that source/newest views remain while intermediate history is thinned; memory must not grow indefinitely. Return to an earlier view and check recovery against that older snapshot.
+- Lose one or several targets, then immediately ask a question. Camera capture and JPEG encoding must not wait for the full-image search to finish. Compare local capture-to-send delay separately from Serper/Gemini response latency.
+- While a background search is running, clear/forget the object, switch cameras, start a new task, or background the app. A result from the old target instance or loss revision must never reappear. A recovery result is replayed from its own source frame before drawing, not applied directly to the latest image.
+- Check CPU/thermal behavior on the actual phone with several missing objects: only one full-image background scan can be in flight, and pending target deadlines are served fairly. Once a lost target reaches one minute, it must stop scheduling work until a new question restarts recovery.
+- Verify uniform views are not used as identity templates; appearance changes and lookalikes remain best-effort cases. No history/recovery operation should generate extra provider calls or write camera images to disk.

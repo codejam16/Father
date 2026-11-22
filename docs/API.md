@@ -119,3 +119,12 @@ Each task-aware HTTP request permits a decision and at most one research operati
 A missing Serper key leaves camera-only mode available. A Serper 401/403, 402/429, timeout, network failure, or empty/unusable results ends a research turn with an honest answer and no fabricated citations/target/continuation. No further model call is made for that failure; subsequent camera questions are still allowed. These fallback replies use HTTP 200 as a completed conversational turn. Google model 429s remain provider errors.
 
 Sessions are process-local, capped at 100, and expire after 30 minutes of inactivity. They contain bounded task notes, sources and research excerpts, not images or API keys. Use an unguessable, per-task UUID. One active operation per session prevents out-of-order state updates. Changing task notes resets state; new tasks should use new UUIDs. A backend restart loses memory and invalidates continuations. Expired or overlapping tasks return 409. No client-supplied research text is accepted as verified evidence.
+
+
+## Multiple remembered objects
+
+The updated client optionally sends `knownTargets` (up to six) and `selections` (up to six). Every known target has `id`, `label`, nullable `parentId`, `source` (`user`/`assistant`), `state` (`visible`/`searching`/`dormant`), `isFocused`, and a nullable `box`. Visible boxes refer to the current request image; searching/dormant records must have `box: null`. IDs are 1–64 letters, digits, underscores or hyphens. Only one object is focused, and parent links must refer to known objects without cycles. Explicit selections must reference visible known IDs.
+
+Answers may include `targets`, an array of up to four `{id, parentId, label, box}` objects in the current image. Reuse existing IDs for the same physical object, and link parts to their parent IDs. The client retains earlier targets not repeated by the response. Duplicate IDs, unknown parents, cyclic relationships and invalid coordinates are rejected. `needsClearerView` suppresses all returned targets. The legacy `target`/`targetLabel`/`box` fields are retained for older clients; current clients prefer the multi-target array.
+
+Rotation and reacquisition run on the phone without additional Gemini calls. Rotated outlines use image-pixel geometry; the network's boxes remain axis-aligned canonical rectangles. Snapshot metadata and manual selections are collected on the camera queue against one fresh image. Lost coordinates are never forwarded as currently visible evidence.

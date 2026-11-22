@@ -24,6 +24,21 @@ export function validateBox(box) {
   return box;
 }
 
+const objectID = (id) => typeof id === 'string' && /^[a-zA-Z0-9_-]{1,64}$/.test(id);
+function validateObjectGraph(objects, fail) {
+  const byID = new Map(objects.map((object) => [object.id, object]));
+  if (byID.size !== objects.length) fail();
+  for (const object of objects) {
+    const visited = new Set([object.id]);
+    let parent = object.parentId;
+    while (parent != null) {
+      if (!byID.has(parent) || visited.has(parent)) fail();
+      visited.add(parent);
+      parent = byID.get(parent).parentId;
+    }
+  }
+}
+
 export function validateRequest(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) invalid('Expected a JSON object.');
   const frameId = text(value.frameId, 'frameId', 80);
@@ -50,6 +65,25 @@ export function validateRequest(value) {
     return { role: message.role, content: text(message.content, 'history content', 2000) };
   });
   const selection = value.selection == null ? null : validateBox(value.selection);
+  const rawKnownTargets = value.knownTargets ?? [];
+  if (!Array.isArray(rawKnownTargets) || rawKnownTargets.length > 6) invalid('At most six known targets are allowed.');
+  const knownTargets = rawKnownTargets.map((object) => {
+    if (!object || !objectID(object.id) || (object.parentId != null && !objectID(object.parentId)) ||
+        !['visible', 'searching', 'dormant'].includes(object.state) || !['user', 'assistant'].includes(object.source) ||
+        typeof object.isFocused !== 'boolean') invalid('Invalid known target.');
+    const label = text(object.label, 'object label', 160);
+    if (object.state !== 'visible' && object.box != null) invalid('Lost targets must not include stale coordinates.');
+    return { id: object.id, label, parentId: object.parentId ?? null, source: object.source, state: object.state,
+      box: object.state === 'visible' ? validateBox(object.box) : null, isFocused: object.isFocused };
+  });
+  validateObjectGraph(knownTargets, () => invalid('Invalid known target relationships.'));
+  if (knownTargets.filter((object) => object.isFocused).length > 1) invalid('Only one target can be focused.');
+  const rawSelections = value.selections ?? [];
+  if (!Array.isArray(rawSelections) || rawSelections.length > 6) invalid('At most six selections are allowed.');
+  const selections = rawSelections.map((object) => {
+    if (!objectID(object?.id) || !knownTargets.some((known) => known.id === object.id && known.state === 'visible')) invalid('Selection must refer to a visible known target.');
+    return { id: object.id, label: text(object.label, 'selection label', 160), box: validateBox(object.box) };
+  });
   if (value.includeWebInfo !== undefined && typeof value.includeWebInfo !== 'boolean') invalid('includeWebInfo must be a boolean.');
   const sessionId = value.sessionId ?? null;
   const continuationId = value.continuationId ?? null;
@@ -62,7 +96,7 @@ export function validateRequest(value) {
   if (!Array.isArray(confirmedStepIds) || confirmedStepIds.length > 10 ||
       !confirmedStepIds.every((id) => typeof id === 'string' && /^[a-zA-Z0-9_-]{1,40}$/.test(id))) invalid('Invalid confirmedStepIds.');
   return { frameId, capturedAt, question, task, image, history: normalizedHistory, selection,
-    sessionId, continuationId, researchEnabled: value.researchEnabled ?? true, confirmedStepIds, includeWebInfo: value.includeWebInfo === true,
+    knownTargets, selections, sessionId, continuationId, researchEnabled: value.researchEnabled ?? true, confirmedStepIds, includeWebInfo: value.includeWebInfo === true,
     searchEveryQuestion: value.searchEveryQuestion === true };
 }
 
@@ -74,12 +108,19 @@ export const answerSchema = {
     targetLabel: { type: ['string', 'null'] },
     box: { type: ['array', 'null'], items: { type: 'number' }, minItems: 4, maxItems: 4 },
     needsClearerView: { type: 'boolean' },
+    targets: { type: 'array', maxItems: 4, items: {
+      type: 'object', additionalProperties: false,
+      properties: {
+        id: { type: 'string' }, parentId: { type: ['string', 'null'] }, label: { type: 'string' },
+        box: { type: 'array', items: { type: 'number' }, minItems: 4, maxItems: 4 },
+      }, required: ['id', 'parentId', 'label', 'box'],
+    } },
   },
-  required: ['answer', 'targetLabel', 'box', 'needsClearerView'],
+  required: ['answer', 'targetLabel', 'box', 'needsClearerView', 'targets'],
   additionalProperties: false,
 };
 
-export function validateAnswer(value) {
+export function validateAnswer(value, knownTargets = []) {
   if (!value || typeof value.answer !== 'string' || !value.answer.trim() || value.answer.length > 2000 ||
       typeof value.needsClearerView !== 'boolean') {
     throw new APIError(502, 'invalid_model_output', 'The model returned an unusable answer. Please try again.');
@@ -97,5 +138,27 @@ export function validateAnswer(value) {
       throw new APIError(502, 'invalid_model_output', 'The model returned an invalid target position.');
     }
   }
-  return { answer: value.answer.trim(), target, needsClearerView: value.needsClearerView };
+  let targets;
+  if (value.targets !== undefined) {
+    const fail = () => { throw new APIError(502, 'invalid_model_output', 'The model returned invalid object selections.'); };
+    if (!Array.isArray(value.targets) || value.targets.length > 4) fail();
+    targets = value.targets.map((object) => {
+      if (!object || !objectID(object.id) || (object.parentId != null && !objectID(object.parentId)) ||
+          typeof object.label !== 'string' || !object.label.trim() || object.label.length > 160) fail();
+      try { validateBox(object.box); } catch { fail(); }
+      return { id: object.id, parentId: object.parentId ?? null, label: object.label.trim(), box: object.box };
+    });
+    if (new Set(targets.map((object) => object.id)).size !== targets.length) fail();
+    const updated = new Map(knownTargets.map((object) => [object.id, object]));
+    for (const object of targets) updated.set(object.id, object);
+    validateObjectGraph([...updated.values()], fail);
+    // Parents precede their new child targets when both are in the answer.
+    targets.sort((a, b) => {
+      const depth = (object) => { let n = 0; for (let id = object.parentId; id != null; id = updated.get(id).parentId) n++; return n; };
+      return depth(a) - depth(b);
+    });
+    if (value.needsClearerView) targets = [];
+    if (!target && targets.length) target = { label: targets[0].label, box: targets[0].box };
+  }
+  return { answer: value.answer.trim(), target, ...(targets === undefined ? {} : { targets }), needsClearerView: value.needsClearerView };
 }

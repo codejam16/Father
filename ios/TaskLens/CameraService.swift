@@ -10,12 +10,14 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
     let session = AVCaptureSession()
     @Published private(set) var isRunning = false
     @Published private(set) var status = "Starting camera…"
-    @Published private(set) var highlight: Highlight?
+    @Published private(set) var highlights: [Highlight] = []
+    @Published private(set) var trackedObjects: [TrackedObjectContext] = []
     @Published private(set) var aspectRatio: CGFloat = 0.75
     /// Which camera is live. Frames are never mirrored; the front preview is mirrored on screen only.
     @Published private(set) var position: AVCaptureDevice.Position = .back
 
-    private struct BufferedFrame {
+    // Camera-owned pixel copies are immutable once published to either worker queue.
+    private struct BufferedFrame: @unchecked Sendable {
         let id: String
         let date: Date
         let time: Double
@@ -24,18 +26,46 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
 
     private let queue = DispatchQueue(label: "tasklens.camera", qos: .userInitiated)
     private let context = CIContext()
+    private let snapshotQueue = DispatchQueue(label: "tasklens.snapshot", qos: .userInitiated)
+    private let snapshotContext = CIContext()
+    private let recoveryQueue = DispatchQueue(label: "tasklens.recovery", qos: .utility)
+    private var recoveryWorkID: UUID?
     private var configured = false
     private var input: AVCaptureDeviceInput?
     private var output: AVCaptureVideoDataOutput?
     private var desiredPosition: AVCaptureDevice.Position = .back
     private var frames: [BufferedFrame] = []
     private var lastFrameTime = -Double.infinity
-    private var tracker: VNTrackObjectRequest?
-    private var sequence: VNSequenceRequestHandler?
-    private var trackingID: UUID?
-    private var trackingLabel = ""
-    private var trackingSource: Highlight.Source = .assistant
-    private var trackingUntil = Date.distantPast
+    private final class TrackedTarget {
+        let id: String
+        var label: String
+        var parentID: String?
+        var source: Highlight.Source
+        var pose: RotatedBox
+        var tracker: VNTrackObjectRequest?
+        var sequence: VNSequenceRequestHandler?
+        let instanceID = UUID()
+        var lossRevision = UUID()
+        var history = ObjectSnapshotHistory()
+        var activeAppearance: ObjectAppearance?
+        var lastBox: NormalizedBox
+        var lastVisionBox: NormalizedBox
+        var stability = TrackingStability()
+        var lastRotationCheck = -Double.infinity
+        var lastAppearanceUpdate = -Double.infinity
+        var lostAt: Double?
+        var nextRecoveryTime = -Double.infinity
+        var recoveryFramesRemaining = 0
+        var recoveryAppearanceIndex = 0
+
+        init(id: String, label: String, parentID: String?, source: Highlight.Source, box: NormalizedBox) {
+            self.id = id; self.label = label; self.parentID = parentID; self.source = source
+            pose = RotatedBox(box: box); lastBox = box; lastVisionBox = box
+        }
+    }
+    private var targets: [TrackedTarget] = []
+    private var focusedID: String?
+    private var manualSelectionCount = 0
 
     func start() async {
         guard await AVCaptureDevice.requestAccess(for: .video) else {
@@ -156,13 +186,17 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
         let frame = BufferedFrame(id: UUID().uuidString, date: Date(), time: time, pixels: pixels)
         frames.append(frame)
         if frames.count > 36 { frames.removeFirst(frames.count - 36) }
-        if tracker != nil {
-            if Date() >= trackingUntil { resetTracking() }
-            else { advanceTracker(on: pixels) }
-        }
+        for target in targets where target.tracker != nil { advanceTracker(target, on: frame) }
+        // One background search at a time; earliest deadlines keep multiple lost objects fair.
+        if let target = targets.filter({ target in
+            guard target.tracker == nil, let lostAt = target.lostAt else { return false }
+            return frame.time >= target.nextRecoveryTime && TrackingRecoveryPolicy.interval(after: frame.time - lostAt) != nil
+        }).min(by: { $0.nextRecoveryTime < $1.nextRecoveryTime }) { attemptRecovery(target, on: frame) }
+        publishTargets(at: frame.time)
+
     }
 
-    func snapshot() async throws -> CapturedFrame {
+    func snapshot(restartRecovery: Bool = false) async throws -> CapturedFrame {
         try await withCheckedThrowingContinuation { continuation in
             queue.async { [weak self] in
                 guard let self, let frame = self.frames.last, self.session.isRunning,
@@ -170,84 +204,304 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
                     continuation.resume(throwing: TaskLensError.message("Wait for a fresh camera view, then try again."))
                     return
                 }
-                let image = CIImage(cvPixelBuffer: frame.pixels)
-                guard let cgImage = self.context.createCGImage(image, from: image.extent),
-                      let jpeg = UIImage(cgImage: cgImage).jpegData(compressionQuality: 0.75) else {
-                    continuation.resume(throwing: TaskLensError.message("Could not capture the camera view."))
-                    return
+                if restartRecovery {
+                    for target in self.targets where target.tracker == nil {
+                        target.lostAt = frame.time
+                        target.nextRecoveryTime = frame.time
+                        target.recoveryAppearanceIndex = 0
+                        target.lossRevision = UUID()
+                    }
                 }
-                continuation.resume(returning: CapturedFrame(id: frame.id, capturedAt: frame.date, jpeg: jpeg,
-                                                            width: cgImage.width, height: cgImage.height))
+                let objects = self.objectContext(at: frame.time)
+                // Do not make the next capture/tracking update wait for JPEG encoding.
+                self.snapshotQueue.async {
+                    autoreleasepool {
+                        let image = CIImage(cvPixelBuffer: frame.pixels)
+                        guard let cgImage = self.snapshotContext.createCGImage(image, from: image.extent),
+                              let jpeg = UIImage(cgImage: cgImage).jpegData(compressionQuality: 0.75) else {
+                            continuation.resume(throwing: TaskLensError.message("Could not capture the camera view."))
+                            return
+                        }
+                        continuation.resume(returning: CapturedFrame(id: frame.id, capturedAt: frame.date, jpeg: jpeg,
+                            width: cgImage.width, height: cgImage.height, trackedObjects: objects))
+                    }
+                }
             }
         }
     }
 
-    /// Seeds the original image and replays retained frames before going live.
-    /// An expired source frame is never interpreted as a current-frame location.
-    func point(at box: NormalizedBox, frameID: String, label: String, source: Highlight.Source) {
+    /// Adds or updates a stable target without replacing other tracked objects.
+    func point(at box: NormalizedBox, frameID: String, label: String, source: Highlight.Source,
+               id: String? = nil, parentID: String? = nil) {
         queue.async { [weak self] in
             guard let self else { return }
-            self.resetTracking()
-            guard let index = self.frames.firstIndex(where: { $0.id == frameID }), self.session.isRunning else {
-                self.publishStatus("The view changed. Ask again to locate the item.")
-                return
-            }
-            let id = UUID()
-            self.trackingID = id
-            self.trackingLabel = label
-            self.trackingSource = source
-            self.trackingUntil = Date().addingTimeInterval(5)
-            let request = VNTrackObjectRequest(detectedObjectObservation: VNDetectedObjectObservation(boundingBox: box.visionRect))
-            request.trackingLevel = .accurate
-            self.tracker = request
-            self.sequence = VNSequenceRequestHandler()
-            for frame in self.frames[index...] {
-                guard self.tracker != nil else { break }
-                self.advanceTracker(on: frame.pixels, publish: false)
-            }
-            if self.tracker != nil,
-               let result = self.tracker?.results?.first as? VNDetectedObjectObservation,
-               let trackedBox = NormalizedBox.fromVision(result.boundingBox) {
-                self.publishHighlight(trackedBox)
-            }
-            self.queue.asyncAfter(deadline: .now() + 5) { [weak self] in
-                guard let self, self.trackingID == id else { return }
-                self.resetTracking()
+            _ = self.seedTarget(at: box, frameID: frameID, label: label, source: source, id: id, parentID: parentID)
+            self.publishTargets(at: self.frames.last?.time ?? 0)
+        }
+    }
+
+    func addSelection(at box: NormalizedBox, frameID: String) async -> String? {
+        await withCheckedContinuation { continuation in
+            queue.async { [weak self] in
+                guard let self else { continuation.resume(returning: nil); return }
+                self.manualSelectionCount += 1
+                let existing = self.targets.first { $0.tracker != nil && self.overlap($0.lastBox, box) > 0.65 }
+                let id = self.seedTarget(at: box, frameID: frameID,
+                                         label: existing?.label ?? "Selection \(self.manualSelectionCount)",
+                                         source: existing?.source ?? .user, id: existing?.id, parentID: existing?.parentID)
+                self.publishTargets(at: self.frames.last?.time ?? 0)
+                continuation.resume(returning: id)
             }
         }
     }
 
-    private func advanceTracker(on pixels: CVPixelBuffer, publish: Bool = true) {
-        guard let tracker, let sequence else { return }
+    private func seedTarget(at box: NormalizedBox, frameID: String, label: String, source: Highlight.Source,
+                            id: String?, parentID: String?) -> String? {
+        guard let index = frames.firstIndex(where: { $0.id == frameID }), session.isRunning else {
+            publishStatus("The view changed. Ask again to locate the item.")
+            return nil
+        }
+        // Older backends have no IDs; reuse a matching label/region rather than duplicating it.
+        let legacy = id == nil && source == .assistant ? targets.first(where: {
+            $0.label.caseInsensitiveCompare(label) == .orderedSame || ($0.tracker != nil && overlap($0.lastBox, box) > 0.7)
+        })?.id : nil
+        let targetID = id ?? legacy ?? UUID().uuidString.lowercased()
+        if let existing = targets.first(where: { $0.id == targetID }), existing.tracker != nil,
+           existing.recoveryFramesRemaining == 0 {
+            existing.label = label; existing.parentID = parentID
+            focusedID = existing.id
+            return existing.id
+        }
+        let target = TrackedTarget(id: targetID, label: label, parentID: parentID, source: source, box: box)
+        if let existingIndex = targets.firstIndex(where: { $0.id == targetID }) { targets.remove(at: existingIndex) }
+        if targets.count >= 6 {
+            let parents = Set(targets.compactMap(\.parentID) + [parentID].compactMap { $0 })
+            let evicted = targets.firstIndex { $0.tracker == nil && !parents.contains($0.id) }
+                ?? targets.firstIndex { $0.id != focusedID && !parents.contains($0.id) }
+            guard let evicted else { return nil }
+            targets.remove(at: evicted)
+        }
+        targets.append(target)
+        focusedID = target.id
+        if let image = trackingImage(from: frames[index].pixels) {
+            target.history.record(image: image, pose: target.pose, time: frames[index].time)
+            target.lastAppearanceUpdate = frames[index].time
+            target.activeAppearance = target.history.snapshots.last?.appearance
+        }
+        seedVision(target, box: box)
+        for frame in frames[index...] {
+            guard target.tracker != nil else { break }
+            advanceTracker(target, on: frame, allowAppearanceCheck: false)
+        }
+        return target.id
+    }
+
+    private func seedVision(_ target: TrackedTarget, box: NormalizedBox) {
+        let request = VNTrackObjectRequest(detectedObjectObservation: VNDetectedObjectObservation(boundingBox: box.visionRect))
+        request.trackingLevel = .accurate
+        target.tracker = request
+        target.sequence = VNSequenceRequestHandler()
+    }
+
+    private func advanceTracker(_ target: TrackedTarget, on frame: BufferedFrame, allowAppearanceCheck: Bool = true) {
+        guard let tracker = target.tracker, let sequence = target.sequence else { return }
         do {
-            try sequence.perform([tracker], on: pixels, orientation: .up)
-            guard let result = tracker.results?.first as? VNDetectedObjectObservation,
-                  result.confidence >= 0.5,
-                  let box = NormalizedBox.fromVision(result.boundingBox) else {
-                resetTracking()
-                publishStatus("Lost the pointer. Ask again or point to the item.")
+            try sequence.perform([tracker], on: frame.pixels, orientation: .up)
+            let result = tracker.results?.first as? VNDetectedObjectObservation
+            let confidence = result?.confidence ?? 0
+            guard let result, let box = NormalizedBox.fromVision(result.boundingBox),
+                  confidence >= (target.recoveryFramesRemaining > 0 ? 0.5 : 0.4) else {
+                if target.recoveryFramesRemaining > 0 || target.stability.recordVision(min(confidence, 0.39)) {
+                    loseTracking(target, at: frame.time)
+                }
                 return
             }
+            _ = target.stability.recordVision(confidence)
+            let oldArea = target.lastVisionBox.unitRect.width * target.lastVisionBox.unitRect.height
+            let newArea = box.unitRect.width * box.unitRect.height
+            let scale = min(1.06, max(0.94, sqrt(newArea / max(oldArea, 0.00001))))
+            var predicted = target.pose
+            predicted.center = CGPoint(x: box.unitRect.midX, y: box.unitRect.midY)
+            predicted.size = CGSize(width: predicted.size.width * scale, height: predicted.size.height * scale)
+            let confirming = target.recoveryFramesRemaining > 0
+            let checkInterval = target.id == focusedID ? 0.25 : 0.5
+            let checkAppearance = allowAppearanceCheck && (confirming || frame.time - target.lastRotationCheck >= checkInterval)
+            // Vision owns translation and scale. Appearance matching may update
+            // orientation, but must not slowly crop/shrink the displayed object.
+            target.pose = predicted
+            if checkAppearance, let primary = target.activeAppearance ?? target.history.snapshots.last?.appearance,
+               let image = trackingImage(from: frame.pixels) {
+                func match(_ appearance: ObjectAppearance) -> (pose: RotatedBox, score: Float)? {
+                    if let score = appearance.similarity(in: image, pose: predicted), score >= 0.9 { return (predicted, score) }
+                    return appearance.follow(in: image, near: predicted, allowScale: false)
+                }
+                var reference = primary
+                var matched = match(primary)
+                // During confirmation, never switch away from the snapshot that
+                // actually found this object. That used to reject valid recoveries.
+                if !confirming, (matched?.score ?? -1) < 0.8 {
+                    let remembered = target.history.snapshots.compactMap { snapshot -> (ObjectAppearance, Float)? in
+                        guard let score = snapshot.appearance.similarity(in: image, pose: predicted) else { return nil }
+                        return (snapshot.appearance, score)
+                    }.max { $0.1 < $1.1 }
+                    if let remembered, let candidate = match(remembered.0), candidate.score > (matched?.score ?? -1) {
+                        matched = candidate; reference = remembered.0
+                    }
+                }
+                target.lastRotationCheck = frame.time
+                if confirming && (matched?.score ?? -1) < 0.78 {
+                    loseTracking(target, at: frame.time); return
+                }
+                if target.stability.recordAppearance(matched?.score, visionConfidence: confidence) {
+                    loseTracking(target, at: frame.time); return
+                }
+                if let matched, matched.score >= 0.7 {
+                    target.pose.angle = matched.pose.angle
+                    target.activeAppearance = reference
+                    if !confirming, (matched.score >= 0.8 && confidence >= 0.75 || matched.score >= 0.7 && confidence >= 0.9),
+                       frame.time - target.lastAppearanceUpdate >= 1 {
+                        target.history.record(image: image, pose: target.pose, time: frame.time)
+                        target.lastAppearanceUpdate = frame.time
+                        target.activeAppearance = target.history.snapshots.last?.appearance ?? reference
+                    }
+                }
+            } else if allowAppearanceCheck, target.history.snapshots.isEmpty, confidence >= 0.8,
+                      frame.time - target.lastAppearanceUpdate >= 1, let image = trackingImage(from: frame.pixels) {
+                target.history.record(image: image, pose: target.pose, time: frame.time)
+                target.lastAppearanceUpdate = frame.time
+                target.activeAppearance = target.history.snapshots.last?.appearance
+            }
+            target.lastVisionBox = box
+            target.lastBox = target.pose.boundingBox(aspect: CGFloat(CVPixelBufferGetWidth(frame.pixels)) / CGFloat(CVPixelBufferGetHeight(frame.pixels))) ?? box
+            // Preserve Vision's own observation. Rotated overlay estimates must not
+            // repeatedly overwrite its internal positional tracking region.
             tracker.inputObservation = result
-            if publish { publishHighlight(box) }
+            if target.recoveryFramesRemaining > 0 { target.recoveryFramesRemaining -= 1 }
+            if target.recoveryFramesRemaining == 0 { target.lostAt = nil }
         } catch {
-            resetTracking()
-            publishStatus("Could not follow that item. Ask again to locate it.")
+            if target.recoveryFramesRemaining > 0 || target.stability.recordVision(0) {
+                loseTracking(target, at: frame.time)
+            }
         }
+    }
+
+    private func loseTracking(_ target: TrackedTarget, at time: Double) {
+        target.tracker = nil; target.sequence = nil; target.recoveryFramesRemaining = 0
+        if target.lostAt == nil {
+            target.lostAt = time; target.nextRecoveryTime = time; target.recoveryAppearanceIndex = 0
+            target.lossRevision = UUID()
+        }
+    }
+
+    private func attemptRecovery(_ target: TrackedTarget, on frame: BufferedFrame) {
+        guard recoveryWorkID == nil, let lostAt = target.lostAt,
+              let interval = TrackingRecoveryPolicy.interval(after: frame.time - lostAt) else { return }
+        target.nextRecoveryTime = frame.time + interval
+        guard !target.history.snapshots.isEmpty, let image = trackingImage(from: frame.pixels) else { return }
+        let history = target.history
+        let allowGlobalSearch = frame.time - lostAt >= 5
+        let attempt = target.recoveryAppearanceIndex
+        target.recoveryAppearanceIndex += 1
+        let previousPose = target.pose
+        let sourceFrameID = frame.id
+        let instanceID = target.instanceID, lossRevision = target.lossRevision, targetID = target.id
+        let workID = UUID()
+        recoveryWorkID = workID
+        // This scan must never run on the capture/snapshot queue. The worker receives
+        // only immutable low-resolution values, not live tracker/session objects.
+        recoveryQueue.async { [weak self] in
+            let recovered = autoreleasepool {
+                history.recoverMatch(in: image, near: previousPose, attempt: attempt, allowGlobalSearch: allowGlobalSearch)
+            }
+            guard let self else { return }
+            self.queue.async {
+                if self.recoveryWorkID == workID { self.recoveryWorkID = nil }
+                guard let recovered, self.session.isRunning,
+                      let current = self.targets.first(where: { $0.id == targetID && $0.instanceID == instanceID }),
+                      current.lossRevision == lossRevision, current.tracker == nil,
+                      let currentTime = self.frames.last?.time, let lostAt = current.lostAt,
+                      TrackingRecoveryPolicy.interval(after: currentTime - lostAt) != nil,
+                      let index = self.frames.firstIndex(where: { $0.id == sourceFrameID }),
+                      let box = recovered.pose.boundingBox(aspect: image.aspect) else { return }
+                current.activeAppearance = recovered.snapshot.appearance
+                current.pose = recovered.pose; current.lastBox = box; current.lastVisionBox = box
+                current.stability = TrackingStability()
+                self.seedVision(current, box: box)
+                current.recoveryFramesRemaining = 3
+                // Advance from the worker's actual source frame, never install its old
+                // coordinates directly on the newest frame.
+                for replay in self.frames[index...] {
+                    guard current.tracker != nil else { break }
+                    self.advanceTracker(current, on: replay, allowAppearanceCheck: current.recoveryFramesRemaining > 0)
+                }
+                self.publishTargets(at: currentTime)
+            }
+        }
+    }
+
+    private func overlap(_ a: NormalizedBox, _ b: NormalizedBox) -> CGFloat {
+        let intersection = a.unitRect.intersection(b.unitRect)
+        let area = intersection.isNull ? 0 : intersection.width * intersection.height
+        let union = a.unitRect.width * a.unitRect.height + b.unitRect.width * b.unitRect.height - area
+        return union > 0 ? area / union : 0
+    }
+
+    private func objectContext(at time: Double) -> [TrackedObjectContext] {
+        targets.map { target in
+            let visible = target.tracker != nil && target.recoveryFramesRemaining == 0
+            let recovering = target.lostAt.map { TrackingRecoveryPolicy.interval(after: time - $0) != nil } ?? false
+            return TrackedObjectContext(id: target.id, label: target.label, parentId: target.parentID,
+                source: target.source.rawValue, state: visible ? "visible" : recovering ? "searching" : "dormant",
+                box: visible ? target.lastBox : nil, isFocused: target.id == focusedID)
+        }
+    }
+
+    private func publishTargets(at time: Double) {
+        let visible = targets.filter { $0.tracker != nil && $0.recoveryFramesRemaining == 0 }.map {
+            Highlight(id: $0.id, label: $0.label, source: $0.source, pose: $0.pose, isFocused: $0.id == focusedID)
+        }
+        let objects = objectContext(at: time)
+        DispatchQueue.main.async { self.highlights = visible; self.trackedObjects = objects }
+    }
+
+    func forgetTarget(_ id: String) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.targets.removeAll { $0.id == id }
+            for child in self.targets where child.parentID == id { child.parentID = nil }
+            if self.focusedID == id { self.focusedID = self.targets.last?.id }
+            self.publishTargets(at: self.frames.last?.time ?? 0)
+        }
+    }
+
+    private func trackingImage(from pixels: CVPixelBuffer) -> TrackingImage? {
+        guard CVPixelBufferGetPixelFormatType(pixels) == kCVPixelFormatType_32BGRA,
+              CVPixelBufferLockBaseAddress(pixels, .readOnly) == kCVReturnSuccess else { return nil }
+        defer { CVPixelBufferUnlockBaseAddress(pixels, .readOnly) }
+        guard let base = CVPixelBufferGetBaseAddress(pixels) else { return nil }
+        let sourceWidth = CVPixelBufferGetWidth(pixels), sourceHeight = CVPixelBufferGetHeight(pixels)
+        let rowBytes = CVPixelBufferGetBytesPerRow(pixels)
+        let width = min(96, sourceWidth)
+        let height = min(192, max(1, sourceHeight * width / sourceWidth))
+        let bytes = base.assumingMemoryBound(to: UInt8.self)
+        var values = [Float](repeating: 0, count: width * height)
+        for y in 0..<height {
+            let sourceY = min(sourceHeight - 1, (2 * y + 1) * sourceHeight / (2 * height))
+            for x in 0..<width {
+                let sourceX = min(sourceWidth - 1, (2 * x + 1) * sourceWidth / (2 * width))
+                let offset = sourceY * rowBytes + sourceX * 4
+                values[y * width + x] = (0.2126 * Float(bytes[offset + 2]) + 0.7152 * Float(bytes[offset + 1])
+                                         + 0.0722 * Float(bytes[offset])) / 255
+            }
+        }
+        return TrackingImage(width: width, height: height, values: values)
     }
 
     func clearHighlight() { queue.async { [weak self] in self?.resetTracking() } }
 
     private func resetTracking() {
-        tracker = nil
-        sequence = nil
-        trackingID = nil
-        DispatchQueue.main.async { self.highlight = nil }
-    }
-
-    private func publishHighlight(_ box: NormalizedBox) {
-        let item = Highlight(box: box, label: trackingLabel, source: trackingSource)
-        DispatchQueue.main.async { self.highlight = item; self.status = "Camera live" }
+        targets.removeAll(); focusedID = nil
+        DispatchQueue.main.async { self.highlights = []; self.trackedObjects = [] }
     }
 
     private func publishStatus(_ value: String) { DispatchQueue.main.async { self.status = value } }

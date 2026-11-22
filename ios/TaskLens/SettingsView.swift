@@ -6,11 +6,35 @@ import WebKit
 struct SettingsView: View {
     @ObservedObject var settings: ConnectionSettings
     @ObservedObject var model: AssistantViewModel
+    @ObservedObject private var camera: CameraService
     @Environment(\.dismiss) private var dismiss
+
+    init(settings: ConnectionSettings, model: AssistantViewModel) {
+        self.settings = settings; self.model = model; self.camera = model.camera
+    }
 
     var body: some View {
         NavigationStack {
             Form {
+                if !camera.trackedObjects.isEmpty {
+                    Section("Remembered objects") {
+                        ForEach(camera.trackedObjects) { object in
+                            HStack {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(object.label)
+                                    if let parent = camera.trackedObjects.first(where: { $0.id == object.parentId }) {
+                                        Text("Part of \(parent.label)").font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    Text(object.state == "dormant" ? "Search paused; ask about it to retry" : object.state.capitalized)
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Button("Forget", role: .destructive) { camera.forgetTarget(object.id) }
+                            }
+                        }
+                        Button("Clear all selections", role: .destructive) { model.clearSelection() }
+                    }
+                }
                 if let error = model.errorMessage {
                     Section("Last issue") { Text(error).foregroundStyle(.orange) }
                 }

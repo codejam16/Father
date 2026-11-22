@@ -57,9 +57,10 @@ struct CameraStage: View {
                     }
                     .foregroundStyle(.white.opacity(0.8)).padding(28)
                 }
-                if let highlight = camera.highlight {
-                    pointer(highlight.box, label: highlight.label,
-                            color: highlight.source == .user ? .yellow : .mint, in: geometry.size)
+                ForEach(camera.highlights) { highlight in
+                    pointer(highlight.pose, label: highlight.label,
+                            color: highlight.source == .user ? .yellow : .mint,
+                            focused: highlight.isFocused, in: geometry.size)
                 }
                 if let dragStart, let dragEnd,
                    let box = FrameGeometry.selection(start: dragStart, end: dragEnd,
@@ -110,14 +111,17 @@ struct CameraStage: View {
     }
 
     private func pointer(_ box: NormalizedBox, label: String, color: Color, in size: CGSize) -> some View {
+        pointer(RotatedBox(box: box), label: label, color: color, focused: true, in: size)
+    }
+
+    private func pointer(_ pose: RotatedBox, label: String, color: Color, focused: Bool, in size: CGSize) -> some View {
         let image = FrameGeometry.fittedRect(in: size, aspect: camera.aspectRatio)
-        let rect = box.unitRect
-        let width = rect.width * image.width
-        let height = rect.height * image.height
-        let midX = mirrored ? 1 - rect.midX : rect.midX
+        let width = pose.size.width * image.width
+        let height = pose.size.height * image.height
+        let midX = mirrored ? 1 - pose.center.x : pose.center.x
         return RoundedRectangle(cornerRadius: 10)
             .fill(color.opacity(0.035))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(color.opacity(0.85), lineWidth: 1.5))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(color.opacity(focused ? 0.95 : 0.65), lineWidth: focused ? 2 : 1))
             .overlay(alignment: .topLeading) {
                 Text(label).font(.system(size: 10, weight: .semibold))
                     .lineLimit(2).padding(.horizontal, 7).padding(.vertical, 4)
@@ -126,7 +130,9 @@ struct CameraStage: View {
                     .padding(6)
             }
             .frame(width: width, height: height)
-            .position(x: image.minX + midX * image.width, y: image.minY + rect.midY * image.height)
+            .rotationEffect(.radians(mirrored ? -pose.angle : pose.angle))
+            .opacity(focused ? 1 : 0.55)
+            .position(x: image.minX + midX * image.width, y: image.minY + pose.center.y * image.height)
             .allowsHitTesting(false)
     }
 }
