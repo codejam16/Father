@@ -95,7 +95,9 @@ export async function generateContent(body, config, fetcher = fetch) {
   const started = Date.now();
   console.log(`[${requestId}] Google call ${callNumber} (${callId}) START model=${config.model} action=${operation}`);
   config.signal?.throwIfAborted();
-  const timeout = AbortSignal.timeout(GEMINI_TIMEOUT_MS);
+  // With a backup model, give up on this one sooner so the backup still has time to answer.
+  const timeoutMs = config.timeoutMs ?? GEMINI_TIMEOUT_MS;
+  const timeout = AbortSignal.timeout(timeoutMs);
   const signal = config.signal ? AbortSignal.any([timeout, config.signal]) : timeout;
   // Google's 500/503 "overloaded" errors are usually momentary and are not billed, so they get a
   // couple of quick, spaced retries within the same deadline. Quota (429), auth, request, network
@@ -140,9 +142,9 @@ export async function generateContent(body, config, fetcher = fetch) {
     console.warn(`[${requestId}] Google call ${callNumber} (${callId}) ${timedOut ? 'TIMEOUT' : 'NETWORK'} after ${elapsedMs}ms; no automatic retry`);
     logGoogleError({ timestamp: new Date().toISOString(), requestId, callId, callNumber, operation,
       model: config.model, httpStatus: null, transportError: timedOut ? 'timeout' : 'network',
-      elapsedMs, timeoutMs: GEMINI_TIMEOUT_MS, googleResponse: null }, config);
+      elapsedMs, timeoutMs, googleResponse: null }, config);
     const failure = new APIError(timedOut ? 504 : 502, 'provider_unavailable',
-      timedOut ? 'Gemini exceeded its 40-second response deadline. No automatic retry was made.'
+      timedOut ? `Gemini exceeded its ${Math.round(timeoutMs / 1000)}-second response deadline.`
         : 'Could not connect to Gemini. No automatic retry was made.');
     failure.userMessage = timedOut ? 'The AI service is taking too long to respond. Please try again.'
       : "I couldn't reach the AI service. Please try again.";
@@ -180,8 +182,8 @@ export function modelFor(request, config) {
   // Each model backs up the other: one quick retry, then the other model answers instead of
   // "AI service is busy" (Google's high-demand errors usually hit one model at a time).
   return looksLikeExplanation(request?.question)
-    ? { ...config, model: second, fallbackModel: config.model, busyRetries: 1 }
-    : { ...config, fallbackModel: second, busyRetries: 1 };
+    ? { ...config, model: second, fallbackModel: config.model, busyRetries: 1, timeoutMs: 20_000 }
+    : { ...config, fallbackModel: second, busyRetries: 1, timeoutMs: 20_000 };
 }
 
 /// If Google rejects the answer format as too complex, retry once without the optional extras
@@ -191,9 +193,11 @@ export async function generateWithSchemaFallback(body, config, fetcher = fetch) 
     return await generateContent(body, config, fetcher);
   } catch (error) {
     // The stronger explanation model is busy (Google 5xx after retries): answer with the regular model.
-    if (config.fallbackModel && error instanceof APIError && /Gemini HTTP 5\d\d/.test(error.message)) {
-      console.warn(`${config.model} is busy; answering with ${config.fallbackModel} instead`);
-      return generateWithSchemaFallback(body, { ...config, model: config.fallbackModel, fallbackModel: null, busyRetries: undefined }, fetcher);
+    // Busy (5xx) or not answering in time: the other model answers instead.
+    const slow = error instanceof APIError && error.code === 'provider_unavailable' && error.status === 504;
+    if (config.fallbackModel && error instanceof APIError && (/Gemini HTTP 5\d\d/.test(error.message) || slow)) {
+      console.warn(`${config.model} is ${slow ? 'too slow' : 'busy'}; answering with ${config.fallbackModel} instead`);
+      return generateWithSchemaFallback(body, { ...config, model: config.fallbackModel, fallbackModel: null, busyRetries: undefined, timeoutMs: undefined }, fetcher);
     }
     if (!(error instanceof APIError) || !/structured response settings/.test(error.message)) throw error;
     const slim = structuredClone(body);

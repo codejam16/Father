@@ -71,7 +71,7 @@ export function validateTrace(value) {
 export async function traceWithGemini(input, config, fetcher = fetch) {
   // The stronger explanation model when available, falling back to the regular one if it is busy.
   const callConfig = config.explainModel && config.explainModel !== config.model
-    ? { ...config, model: config.explainModel, fallbackModel: config.model, busyRetries: 1 } : config;
+    ? { ...config, model: config.explainModel, fallbackModel: config.model, busyRetries: 1, timeoutMs: 20_000 } : config;
   const payload = await generateWithSchemaFallback(buildTraceBody(input, config.maxOutputTokens), callConfig, fetcher);
   let value;
   try { value = JSON.parse(candidateText(payload)); } catch {
