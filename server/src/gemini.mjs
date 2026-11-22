@@ -2,7 +2,7 @@ import { APIError, answerSchema, boxInstruction, validateAnswer, walkthroughInst
 import { randomUUID } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { geminiHTTPError } from './provider-error.mjs';
-import { webAnswerSchema, webInstruction } from './web-info.mjs';
+import { webAnswerSchema, webInstruction, productLinkInstruction } from './web-info.mjs';
 import { searchWithSerper } from './serper.mjs';
 import { GEMINI_TIMEOUT_MS } from './timeouts.mjs';
 import { logGoogleError } from './diagnostics.mjs';
@@ -45,7 +45,7 @@ export function buildGeminiBody(request, maxOutputTokens, { researchAvailable = 
     required: [...webAnswerSchema.required, 'searchQuery', 'sourceIds'],
   } : answerSchema;
   return {
-    systemInstruction: { parts: [{ text: instruction + '\n' + boxInstruction + '\n' + walkthroughInstruction + (request.includeWebInfo ? '\n' + webInstruction
+    systemInstruction: { parts: [{ text: instruction + '\n' + boxInstruction + '\n' + walkthroughInstruction + '\n' + productLinkInstruction + (request.includeWebInfo ? '\n' + webInstruction
       : researchAvailable ? '\nExternal research is controlled by researchAllowed in the task context.'
         : '\nWeb lookup is disabled. Do not claim to have checked live prices, availability, or websites. If asked for current prices, explain that Web info can be enabled.')
       + (request.includeWebInfo ? '\nFor this response, use searchQuery for one concise query only when researchAvailable=true and external facts help; otherwise return null. Return sourceIds only from supplied researchEvidence. With researchEvidence, use it to answer and return searchQuery=null. Without evidence, answer from the visible scene and do not claim checked prices or sources.' : '') }] },
