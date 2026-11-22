@@ -8,6 +8,8 @@ import { runAgent } from './agent.mjs';
 import { checkStepWithGemini, demoCheck, validateCheckRequest } from './step-check.mjs';
 import { speakWithGemini, ttsModels, ttsVoices, validateSpeakRequest } from './tts.mjs';
 import { demoToolsScan, scanToolsWithGemini, validateToolsRequest } from './tools.mjs';
+import { demoTrace, traceWithGemini, validateTraceRequest } from './trace.mjs';
+import { findPicture, validatePictureRequest } from './picture.mjs';
 import { ANALYSIS_TIMEOUT_MS } from './timeouts.mjs';
 import { redactDiagnostic } from './diagnostics.mjs';
 
@@ -107,7 +109,7 @@ async function readJSON(request) {
 }
 
 export function createApp(config, {
-  analyze = analyzeWithGemini, agent = runAgent, check = checkStepWithGemini, speak = speakWithGemini, scanTools = scanToolsWithGemini,
+  analyze = analyzeWithGemini, agent = runAgent, check = checkStepWithGemini, speak = speakWithGemini, scanTools = scanToolsWithGemini, traceRoute = traceWithGemini, picture = findPicture,
   sessions = new TaskSessions(),
 } = {}) {
   const server = createServer(async (request, response) => {
@@ -116,7 +118,7 @@ export function createApp(config, {
     const controller = new AbortController();
     const deadline = setTimeout(() => controller.abort(), ANALYSIS_TIMEOUT_MS);
     response.on('finish', () => clearTimeout(deadline));
-    const route = ['/analyze', '/check', '/speak', '/tools', '/health'].includes(request.url) ? request.url : '/other';
+    const route = ['/analyze', '/check', '/speak', '/tools', '/trace', '/picture', '/health'].includes(request.url) ? request.url : '/other';
     console.log(`[${new Date().toISOString()}] Request received: ${route} [${trace.requestId}]`);
     response.on('close', () => {
       clearTimeout(deadline);
@@ -126,7 +128,7 @@ export function createApp(config, {
       }
     });
     const send = (status, data) => {
-      const circle = data.error || route === '/speak' || route === '/tools' ? '' : data.target ? ` circle="${String(data.target.label).slice(0, 60)}"` : ' circle=none';
+      const circle = data.error || route === '/speak' || route === '/tools' || route === '/trace' || route === '/picture' ? '' : data.target ? ` circle="${String(data.target.label).slice(0, 60)}"` : ' circle=none';
       const step = data.status ? ` step=${data.status}` : '';
       const beats = Array.isArray(data.annotations) && data.annotations.length ? data.annotations : null;
       const walkthrough = beats ? ` walkthrough=${beats.length} steps (paths=${beats.filter((b) => b.path).length}`
@@ -142,7 +144,7 @@ export function createApp(config, {
       if (request.method === 'GET' && request.url === '/health') {
         return send(200, { status: 'ok', mode: config.mode });
       }
-      if (request.method !== 'POST' || !['/analyze', '/check', '/speak', '/tools'].includes(request.url)) {
+      if (request.method !== 'POST' || !['/analyze', '/check', '/speak', '/tools', '/trace', '/picture'].includes(request.url)) {
         throw new APIError(404, 'not_found', 'Endpoint not found.');
       }
       if (!authorized(request, config.appToken)) throw new APIError(401, 'unauthorized', 'Check the connection token in Settings.');
@@ -166,6 +168,21 @@ export function createApp(config, {
           ? await scanTools(input, { ...config, signal: controller.signal, trace })
           : demoToolsScan(input);
         return send(200, { mode: config.mode, ...result });
+      }
+      if (request.url === '/picture') {
+        // Public reference photos only; works in mock mode too (no Gemini call).
+        const input = validatePictureRequest(await readJSON(request));
+        const result = await picture(input, { ...config, signal: controller.signal });
+        console.log(`Picture: "${input.query}" → ${result.picture ? result.picture.source : 'none found'}`);
+        return send(200, { mode: config.mode, ...result });
+      }
+      if (request.url === '/trace') {
+        const input = validateTraceRequest(await readJSON(request));
+        const result = config.mode === 'gemini'
+          ? await traceRoute(input, { ...config, signal: controller.signal, trace })
+          : demoTrace(input);
+        console.log(`Route traced: ${result.path ? `${result.path.length} points (rough had ${input.rough.length})` : 'no line found, keeping the rough route'}`);
+        return send(200, { mode: config.mode, path: result.path });
       }
       if (request.url === '/check') {
         const input = validateCheckRequest(await readJSON(request));

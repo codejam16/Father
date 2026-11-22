@@ -421,7 +421,7 @@ test('explanations of diagrams come with a validated visual walkthrough', () => 
   const body = buildGeminiBody({ task: '', question: 'Explain this circuit', capturedAt: new Date().toISOString(), frameId: 'f',
     selection: null, history: [], includeWebInfo: false, image: { mimeType: 'image/jpeg', base64: '/9j/2Q==' } }, 512);
   assert.ok(body.generationConfig.responseJsonSchema.required.includes('annotations'));
-  assert.match(body.systemInstruction.parts[0].text, /placed ON the drawn lines/);
+  assert.match(body.systemInstruction.parts[0].text, /One point at EVERY corner or turn/);
 });
 
 test('answer schemas avoid nested size-limited arrays that Gemini rejects as too complex', () => {

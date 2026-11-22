@@ -129,6 +129,28 @@ The camera captures at 1080p (falling back to 720p/VGA). The whole view is sent 
 
 `box` is where the close-up sits in the first image (0–1000, top-left origin). The model is told to read small labels from it and to return boxes in the first image's coordinates. Only the first look of a question carries it (not research refreshes or step checks).
 
+## Reference pictures (`POST /picture`)
+
+"What does a spudger look like?": answers carry `pictureOf`, a short search phrase (or null), when the user asks what something looks like, says they don't know it, or asks to see it. The app then shows a photo card (top of the screen, closed with X). Each item in the "You'll need" list also has a photo button.
+
+```json
+{ "query": "Phillips #1 screwdriver", "context": "replace a laptop battery" }
+→ { "mode": "gemini", "picture": { "imageUrl": "https://…", "thumbnailUrl": "https://…", "title": "Screwdriver", "source": "Wikipedia", "link": "https://…" } }
+```
+
+Sources, in order: Google Images via Serper (when `SERPER_API_KEY` is set), the Wikipedia article with exactly that name (following redirects), Wikimedia Commons photos, a Wikipedia search, then the article for the main word ("Phillips #1 screwdriver" → "Screwdriver"). Every result's title must name the item's main word, so an unrelated photo is never shown; `picture: null` when nothing matches. HTTPS JPEG/PNG/WebP only, no SVGs. The app shows the card under the tools and step cards. No Gemini call, so it also works in mock mode.
+
+## Tracing routes (`POST /trace`)
+
+The first answer places route points roughly. Before showing an explanation, the app crops the photo around each route (up to 3, with the parts at its ends, squared and at least a third of the photo) and asks for the existing drawn line on that zoomed view:
+
+```json
+{ "image": { "mimeType": "image/jpeg", "base64": "…", "width": 640, "height": 640 },
+  "rough": [[750, 200], [650, 600], [300, 700]], "what": "Follow the dashed path", "question": "How do I go from A to B?" }
+```
+
+`rough` is the first route in the crop's coordinates (`[y, x]`, 0–1000). The reply is `{ "mode": "gemini", "path": [[750, 200], [760, 640], …] }`: the drawn line from start to end with a point at every turn, or `path: null` if no line connects them (the app then keeps the rough route). Uses `EXPLAIN_MODEL` with the regular model as a fallback; mock mode returns the rough route. The app waits at most 20 s per route.
+
 ## Pointing while asking ("from this to this")
 
 While the microphone listens, the phone runs a hand-pose pass about 4 times a second. When a spoken question is sent, the places the fingertip rested on (about half a second or more) since the user started talking are sent in order:

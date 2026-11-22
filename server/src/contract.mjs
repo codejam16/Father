@@ -96,6 +96,7 @@ export const answerSchema = {
     targetLabel: { type: ['string', 'null'] },
     box: { type: ['array', 'null'], items: { type: 'number' }, minItems: 4, maxItems: 4 },
     needsClearerView: { type: 'boolean' },
+    pictureOf: { type: ['string', 'null'] },
     // Kept deliberately simple: Gemini rejects schemas with nested, size-limited arrays as too complex.
     // Limits (beats, points, ranges) are enforced by validateAnnotations instead.
     annotations: {
@@ -116,16 +117,22 @@ export const answerSchema = {
       },
     },
   },
-  required: ['answer', 'targetLabel', 'box', 'needsClearerView', 'annotations'],
+  required: ['answer', 'targetLabel', 'box', 'needsClearerView', 'pictureOf', 'annotations'],
   additionalProperties: false,
 };
 
 export const boxInstruction = `Highlighting is one of the most useful things you do. When the user asks for help with, about or where something visible is, return targetLabel and box for the item your answer is about. For on-screen tasks, box the exact button, menu item, icon or setting to click or tap next.
 Box accurately: find the item by its distinguishing features (shape, colour, text on it, position relative to nearby things) and put the box edges on its visible outline, not around the general area. When several similar items exist, box the specific one meant.`;
 
+export const pictureInstruction = `REFERENCE PICTURES. pictureOf: the plain everyday name of the one object to show, as it would be titled in an encyclopedia or shop (e.g. "tweezers", "Phillips screwdriver", "spudger", "jumper wire"), never mixed with the task or the user's situation when the user asks what something looks like, says they don't know or can't find it, or asks to see a picture of it. The app then shows a photo of it on screen. Use the specific item you mean, not a vague category. Otherwise null; never for something you are already circling in the camera view.`;
+
 export const walkthroughInstruction = `VISUAL WALKTHROUGHS. Return annotations (otherwise an empty list) whenever the user asks to explain, walk through or trace something visible: a diagram, circuit, schematic, chart, map, flowchart or drawing, or how something goes, gets, flows or moves from one place to another ("how does it go from A to B?"). The app freezes this image and draws the beats over it, one at a time, while the say lines are spoken.
 Give 2 to 6 ordered beats. Every beat has: caption (under 12 words), say (1–2 short spoken sentences), box, path, label, to, zoom, region. A beat needs at least one of box, path or region; unused fields are null (zoom false).
-- path: REQUIRED for any "from X to Y", flow or route question. A flat list y1, x1, y2, x2, … (2 to 24 points, 0..1000, top-left origin) placed ON the drawn lines and corners, in the direction of travel. The app draws it as an arrow.
+- path: REQUIRED for any "from X to Y", flow or route question. A flat list y1, x1, y2, x2, … (2 to 24 points, 0..1000, top-left origin) in the direction of travel. The app draws it as an arrow, so trace the drawn line exactly:
+  • First point exactly where the line leaves the start (e.g. the tip of pin A); last point exactly where it reaches the end (e.g. the tip of pin B). Never stop partway.
+  • One point at EVERY corner or turn of the drawn line, in order. A zigzag with 4 turns needs all 4 turn points. Count the turns before answering.
+  • Each point sits ON the line (on a dash for dashed lines). Never cut across empty space between turns or skip a section.
+  • Prefer one beat whose path runs the whole route from start to end; other beats can box the start and end.
 - box: [ymin,xmin,ymax,xmax] around the part a beat is about.
 - label: a 1–4 word tag for that part, e.g. "R1 · 220 Ω" or "Point A".
 - to: when one part affects or connects to another ("the switch controls the LED"), the second part's box; box is the first part. The app draws a curved arrow between them.
@@ -190,5 +197,12 @@ export function validateAnswer(value) {
     }
   }
   const annotations = value.needsClearerView ? [] : validateAnnotations(value.annotations);
-  return { answer: value.answer.trim(), target, needsClearerView: value.needsClearerView, annotations };
+  return { answer: value.answer.trim(), target, needsClearerView: value.needsClearerView, annotations, pictureOf: validatePictureOf(value.pictureOf) };
+}
+
+/// A short search phrase for a reference picture, or null.
+export function validatePictureOf(value) {
+  if (typeof value !== 'string') return null;
+  const phrase = value.trim().replace(/\s+/g, ' ');
+  return phrase && phrase.length <= 80 ? phrase : null;
 }
