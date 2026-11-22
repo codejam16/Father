@@ -26,6 +26,20 @@ struct AnalysisClient {
         return result
     }
 
+    /// "Check my tools": which listed items are visible now.
+    func scanTools(items: [String], goal: String, frame: CapturedFrame, endpoint: String, token: String) async throws -> ToolsResponse {
+        let image = ImagePayload(base64: frame.jpeg.base64EncodedString(), width: frame.width, height: frame.height)
+        let data = try await post(ToolsRequest(items: items, goal: String(goal.prefix(600)), image: image),
+                                  path: "tools", endpoint: endpoint, token: token, timeout: 40)
+        return try JSONDecoder().decode(ToolsResponse.self, from: data)
+    }
+
+    /// Demo: identifies nothing; marks every item found so the checklist can be tried.
+    func demoToolsScan(_ items: [String]) async throws -> ToolsResponse {
+        try await Task.sleep(for: .milliseconds(500))
+        return ToolsResponse(mode: "mock", items: items.map { ToolItem(name: $0, visible: true) }, note: nil)
+    }
+
     /// Natural speech for a reply, or nil when the backend has no cloud voice (mock mode).
     func speech(text: String, voice: String, endpoint: String, token: String) async throws -> SpeechAudio? {
         let data = try await post(SpeakRequest(text: String(text.prefix(2000)), voice: voice),
@@ -75,6 +89,30 @@ struct AnalysisClient {
 
     func demo(_ input: AnalysisRequest, hasPlan: Bool = false) async throws -> AnalysisResponse {
         try await Task.sleep(for: .milliseconds(450))
+        let asked = input.question.lowercased()
+        if ["explain", "diagram", "circuit", "how does"].contains(where: { asked.contains($0) }) {
+            // Shows what a walkthrough looks like; it does not read the real image.
+            var response = AnalysisResponse(
+                frameId: input.frameId, mode: "mock",
+                answer: "Demo walkthrough: with Gemini connected I would trace your real diagram. First the source, then the path along the wire, then where it ends.",
+                target: nil, needsClearerView: false)
+            response.annotations = [
+                Annotation(caption: "Demo: the source, point A",
+                           say: "This is a demo walkthrough. First, this would be the source, point A, magnified so you can read it.",
+                           box: NormalizedBox([180, 150, 300, 330]), label: "Source A", zoom: true),
+                Annotation(caption: "Demo: the current follows this wire",
+                           say: "Then the current follows this wire, along the top and down the right side.",
+                           path: [[240, 330], [240, 780], [600, 780]], label: "Current"),
+                Annotation(caption: "Demo: the switch controls the light",
+                           say: "This switch controls the light over here.",
+                           box: NormalizedBox([600, 700, 700, 860]), label: "Switch",
+                           to: NormalizedBox([760, 200, 860, 380])),
+                Annotation(caption: "Demo: everything in this loop is in series",
+                           say: "And everything inside this shaded loop is connected in series.",
+                           region: [[160, 120], [160, 860], [880, 860], [880, 120]]),
+            ]
+            return response
+        }
         if input.guided && !hasPlan && Self.isHowTo(input.question) {
             // Practice steps so guided mode can be tried without AI requests. Identifies nothing.
             let plan: [TaskStep] = [
@@ -87,6 +125,11 @@ struct AnalysisClient {
                 answer: "Demo guided steps: I’ll take you through three practice steps and watch as you go. Step 1: show me the object you want to fix.",
                 target: nil, needsClearerView: false)
             response.taskMemory = TaskMemory(goal: "Demo repair", facts: [], openQuestions: [], plan: plan)
+            response.toolsNeeded = [
+                ToolItem(name: "Phillips screwdriver", visible: false),
+                ToolItem(name: "Small tray for screws", visible: false),
+                ToolItem(name: "Plastic pry tool", visible: false),
+            ]
             return response
         }
         return AnalysisResponse(

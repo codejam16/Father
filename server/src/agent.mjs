@@ -1,6 +1,7 @@
 import { APIError, answerSchema, validateAnswer } from './contract.mjs';
-import { buildGeminiBody, generateContent, candidateText, providerUsage } from './gemini.mjs';
+import { buildGeminiBody, generateContent, generateWithSchemaFallback, modelFor, candidateText, providerUsage } from './gemini.mjs';
 import { mergeMemory, continuation, applyUserCompletedSteps } from './task-session.mjs';
+import { toolsInstruction, toolsSchemaField, validateTools } from './tools.mjs';
 import { researchBody, extractResearch, publicURL } from './research.mjs';
 import { searchWithSerper } from './serper.mjs';
 
@@ -42,7 +43,7 @@ export function buildAgentBody(request, config, session, canResearch) {
   const initialSearch = needsInitialSearch(request, canResearch);
   const body = buildGeminiBody({ ...request, includeWebInfo: false }, config.maxOutputTokens, { researchAvailable: canResearch });
   body.systemInstruction.parts.push({ text: agentInstruction });
-  if (request.guided) body.systemInstruction.parts.push({ text: guidedInstruction });
+  if (request.guided) body.systemInstruction.parts.push({ text: guidedInstruction + '\n' + toolsInstruction });
   if (initialSearch) body.systemInstruction.parts.push({ text: "The backend will perform a web search before answering every new question, even when its result cards are hidden. Supply searchQuery: one concise, relevant public-topic query based on the question and visible object. The backend executes this query regardless of your action choice; this first response is only a lookup plan, not a final answer. For an uncertain object use a qualified category, not an invented exact model. Omit private identifiers, credentials and unnecessary personal details. After supplied search evidence arrives, answer normally; do not repeat this initial lookup on a continuation." });
   if (!config.serperApiKey) body.systemInstruction.parts.push({ text: 'Web search is not connected on this server. Continue helping with visible evidence and prior supplied sources, but do not promise a new lookup or tell the user to enable an already enabled overlay.' });
   if (request.includeWebInfo) {
@@ -65,8 +66,9 @@ export function buildAgentBody(request, config, session, canResearch) {
         items: { type: 'string', ...(session.sources.length ? { enum: session.sources.map((source) => source.id) } : {}) } },
       memory: memorySchema,
       userCompletedStepIds: { type: 'array', maxItems: 10, items: { type: 'string' } },
+      toolsNeeded: toolsSchemaField,
     },
-    required: [...answerSchema.required, 'action', 'argument', 'sourceIds', 'memory', 'userCompletedStepIds'],
+    required: [...answerSchema.required, 'action', 'argument', 'sourceIds', 'memory', 'userCompletedStepIds', 'toolsNeeded'],
   };
   if (initialSearch) {
     body.generationConfig.responseJsonSchema.properties.searchQuery = { type: 'string', minLength: 1, maxLength: 500 };
@@ -98,7 +100,7 @@ function taskWebInfo(request, session, decision) {
 export async function runAgent(request, config, session, fetcher = fetch) {
   const researchSteps = session.pending?.researchSteps ?? 0;
   const canResearch = config.webResearchEnabled !== false && request.researchEnabled !== false && Boolean(config.serperApiKey) && researchSteps < (config.maxResearchSteps ?? 2);
-  const payload = await generateContent(buildAgentBody(request, config, session, canResearch), config, fetcher);
+  const payload = await generateWithSchemaFallback(buildAgentBody(request, config, session, canResearch), modelFor(request, config), fetcher);
   let decision;
   try { decision = JSON.parse(candidateText(payload)); } catch {
     throw new APIError(502, 'invalid_model_output', 'The assistant returned an unreadable action.');
@@ -184,5 +186,6 @@ export async function runAgent(request, config, session, fetcher = fetch) {
     webInfo,
     taskMemory: session.memory, sources: session.sources, researchReports: session.reports,
     sourceIds: [...new Set(decision.sourceIds)], usage,
+    toolsNeeded: request.guided ? validateTools(decision.toolsNeeded) : [],
   };
 }

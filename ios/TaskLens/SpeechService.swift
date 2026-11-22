@@ -52,6 +52,32 @@ private final class RecognitionFeed: @unchecked Sendable {
     }
 }
 
+/// Counts the audio frames scheduled for one reply, so playback position can be turned into progress.
+private final class PlaybackCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var frames: AVAudioFramePosition = 0
+    private var finished = false
+
+    func add(_ count: AVAudioFrameCount) {
+        lock.lock()
+        frames += AVAudioFramePosition(count)
+        lock.unlock()
+    }
+
+    func finish() {
+        lock.lock()
+        finished = true
+        lock.unlock()
+    }
+
+    /// Total length once all of the reply has been scheduled.
+    var total: AVAudioFramePosition? {
+        lock.lock()
+        defer { lock.unlock() }
+        return finished ? frames : nil
+    }
+}
+
 /// Converts one reply's audio chunks with a single, continuous converter. A fresh converter per chunk
 /// restarted at every chunk boundary, which was audible as tiny pauses between syllables.
 private final class StreamConverter {
@@ -118,6 +144,9 @@ final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     private(set) var lastPlaybackInterrupted = false
     /// True while `onUtterance` runs if that utterance interrupted a spoken reply.
     private(set) var lastUtteranceInterrupted = false
+    /// When the user started saying the utterance being delivered (for matching it with their pointing).
+    private(set) var lastUtteranceStartedAt: Date?
+    private var utteranceStartedAt: Date?
 
     private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
     private let engine = AVAudioEngine()
@@ -149,6 +178,15 @@ final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     private var interruptedThisUtterance = false
     /// Gemini voice played without interruption support (mic off).
     private var filePlayer: AVAudioPlayer?
+    /// How the current reply's progress can be measured.
+    private enum ProgressSource {
+        case none
+        case utterance(length: Int)
+        case engine(PlaybackCounter)
+        case file
+    }
+    private var progressSource = ProgressSource.none
+    private var spokenLocation = 0
     /// Set when echo cancellation delivered unusable audio on this phone; not retried this run.
     private var voiceProcessingFailed = false
     private var receivedResult = false
@@ -280,6 +318,10 @@ final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelega
             }
             let spoken = removingEcho(heard)
             if spoken != transcript {
+                if transcript.isEmpty, !spoken.isEmpty {
+                    // Recognition lags the voice; start a little earlier so the first point is caught.
+                    utteranceStartedAt = Date().addingTimeInterval(-1.5)
+                }
                 transcript = spoken
                 consecutiveFailures = 0
                 scheduleSilence(for: id)
@@ -303,21 +345,41 @@ final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     private func scheduleSilence(for id: UUID) {
         silenceTask?.cancel()
         guard !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        // How long a pause ends a question: short enough to feel responsive, long enough for a breath.
+        // A sentence that is clearly unfinished ("from this…", "to") waits longer: the user is
+        // usually moving their finger to the next spot.
+        let wait = Self.soundsUnfinished(transcript) ? 2200 : 800
         silenceTask = Task { [weak self] in
-            // How long a pause ends a question: short enough to feel responsive, long enough for a breath.
-            do { try await Task.sleep(for: .milliseconds(800)) } catch { return }
+            do { try await Task.sleep(for: .milliseconds(wait)) } catch { return }
             guard let self, self.recordingID == id, self.wantsListening else { return }
             self.completeUtterance()
         }
     }
 
+    /// "How do I go from this", "this to", "between here and": more is coming.
+    static func soundsUnfinished(_ text: String) -> Bool {
+        let words = text.lowercased().split(whereSeparator: { !$0.isLetter && $0 != "'" }).map(String.init)
+        guard let last = words.last else { return false }
+        let hangingWords: Set<String> = ["to", "from", "into", "onto", "towards", "toward", "and", "then", "between",
+                                         "the", "a", "an", "this", "that", "here", "there", "of", "with", "through", "via"]
+        if hangingWords.contains(last) { return true }
+        // Said "from …" (or "between …") but not yet the "to …"/"and …" part.
+        let sentence = " " + words.joined(separator: " ") + " "
+        if sentence.contains(" from "), !sentence.contains(" to "), !sentence.contains(" into ") { return true }
+        if sentence.contains(" between "), !sentence.contains(" and ") { return true }
+        return false
+    }
+
     private func completeUtterance() {
         let text = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         let interrupted = interruptedThisUtterance
+        let startedAt = utteranceStartedAt
+        utteranceStartedAt = nil
         finishSession()
         transcript = ""
         if wantsListening, !text.isEmpty {
             lastUtteranceInterrupted = interrupted
+            lastUtteranceStartedAt = startedAt
             onUtterance?(text)
             lastUtteranceInterrupted = false
         }
@@ -426,6 +488,8 @@ final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelega
             try session.setActive(true)
         } catch { scheduleRestart(); return }
         activeUtterance = utterance
+        progressSource = .utterance(length: utterance.speechString.count)
+        spokenLocation = 0
         isSpeaking = true
         synthesizer.speak(utterance)
     }
@@ -438,7 +502,9 @@ final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelega
         transcript = ""
         spokenWords = Set(Self.words(text))
         isSpeaking = true
-        Self.render(utterance, synthesizer: synthesizer, player: player, format: playbackFormat) { [weak self] in
+        let counter = PlaybackCounter()
+        progressSource = .engine(counter)
+        Self.render(utterance, synthesizer: synthesizer, player: player, format: playbackFormat, counter: counter) { [weak self] in
             Task { @MainActor [weak self] in self?.finishedPlayback(id) }
         }
         if wantsListening { prepareListening() }
@@ -447,7 +513,7 @@ final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     /// Synthesizes into buffers and schedules them on the player. Runs off the main actor.
     nonisolated private static func render(_ utterance: AVSpeechUtterance, synthesizer: AVSpeechSynthesizer,
                                            player: AVAudioPlayerNode, format: AVAudioFormat,
-                                           onFinished: @escaping () -> Void) {
+                                           counter: PlaybackCounter, onFinished: @escaping () -> Void) {
         var ended = false
         var started = false
         var scheduledFrames: AVAudioFrameCount = 0
@@ -457,6 +523,7 @@ final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelega
         func schedule(_ buffer: AVAudioPCMBuffer) {
             player.scheduleBuffer(buffer, completionHandler: nil)
             scheduledFrames += buffer.frameLength
+            counter.add(buffer.frameLength)
             if !started && scheduledFrames >= cushion {
                 started = true
                 player.play()
@@ -467,6 +534,7 @@ final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelega
             if pcm.frameLength == 0 {
                 ended = true
                 if let tail = stream.flush() { schedule(tail) }
+                counter.finish()
                 if !started {
                     started = true
                     player.play()
@@ -489,17 +557,27 @@ final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelega
         transcript = ""
         spokenWords = Set(Self.words(text))
         isSpeaking = true
-        Self.schedule(buffer, on: player, format: playbackFormat) { [weak self] in
+        let counter = PlaybackCounter()
+        progressSource = .engine(counter)
+        Self.schedule(buffer, on: player, format: playbackFormat, counter: counter) { [weak self] in
             Task { @MainActor [weak self] in self?.finishedPlayback(id) }
         }
         if wantsListening { prepareListening() }
     }
 
     nonisolated private static func schedule(_ buffer: AVAudioPCMBuffer, on player: AVAudioPlayerNode,
-                                             format: AVAudioFormat, onFinished: @escaping () -> Void) {
+                                             format: AVAudioFormat, counter: PlaybackCounter,
+                                             onFinished: @escaping () -> Void) {
         let stream = StreamConverter(output: format)
-        if let converted = stream.convert(buffer) { player.scheduleBuffer(converted, completionHandler: nil) }
-        if let tail = stream.flush() { player.scheduleBuffer(tail, completionHandler: nil) }
+        if let converted = stream.convert(buffer) {
+            player.scheduleBuffer(converted, completionHandler: nil)
+            counter.add(converted.frameLength)
+        }
+        if let tail = stream.flush() {
+            player.scheduleBuffer(tail, completionHandler: nil)
+            counter.add(tail.frameLength)
+        }
+        counter.finish()
         guard let marker = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1) else { onFinished(); return }
         marker.frameLength = 1
         player.scheduleBuffer(marker, completionCallbackType: .dataPlayedBack) { _ in onFinished() }
@@ -519,6 +597,7 @@ final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelega
         guard let audioPlayer = try? AVAudioPlayer(data: Self.wav(audio)) else { return false }
         audioPlayer.delegate = self
         filePlayer = audioPlayer
+        progressSource = .file
         isSpeaking = true
         if audioPlayer.play() { return true }
         filePlayer = nil
@@ -579,6 +658,24 @@ final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelega
         stopEngineIfIdle()
     }
 
+    /// How much of the current reply has been spoken (0…1), or nil when not speaking or not yet known.
+    func currentProgress() -> Double? {
+        guard isSpeaking else { return nil }
+        switch progressSource {
+        case .none:
+            return nil
+        case .utterance(let length):
+            return length > 0 ? min(1, Double(spokenLocation) / Double(length)) : nil
+        case .engine(let counter):
+            guard let total = counter.total, total > 0, let nodeTime = player.lastRenderTime,
+                  let playerTime = player.playerTime(forNodeTime: nodeTime) else { return nil }
+            return min(1, max(0, Double(playerTime.sampleTime) / Double(total)))
+        case .file:
+            guard let filePlayer, filePlayer.duration > 0 else { return nil }
+            return min(1, filePlayer.currentTime / filePlayer.duration)
+        }
+    }
+
     func stopSpeaking(restartListening: Bool = true) {
         filePlayer?.stop()
         filePlayer = nil
@@ -590,6 +687,15 @@ final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelega
         spokenWords = []
         if restartListening { scheduleRestart() }
         stopEngineIfIdle()
+    }
+
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, willSpeakRangeOfSpeechString characterRange: NSRange,
+                                       utterance: AVSpeechUtterance) {
+        let location = characterRange.location
+        Task { @MainActor [weak self] in
+            guard let self, self.activeUtterance === utterance else { return }
+            self.spokenLocation = location
+        }
     }
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {

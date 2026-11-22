@@ -7,6 +7,7 @@ import { TaskSessions } from './task-session.mjs';
 import { runAgent } from './agent.mjs';
 import { checkStepWithGemini, demoCheck, validateCheckRequest } from './step-check.mjs';
 import { speakWithGemini, ttsModels, ttsVoices, validateSpeakRequest } from './tts.mjs';
+import { demoToolsScan, scanToolsWithGemini, validateToolsRequest } from './tools.mjs';
 import { ANALYSIS_TIMEOUT_MS } from './timeouts.mjs';
 import { redactDiagnostic } from './diagnostics.mjs';
 
@@ -46,8 +47,11 @@ export function loadConfig(env = process.env) {
   if (!['mock', 'gemini'].includes(mode)) throw new Error('AI_MODE must be mock or gemini.');
   const model = env.GEMINI_MODEL ?? 'gemini-3.8-flash';
   if (!['gemini-3.8-flash', 'gemini-3.5-flash-lite'].includes(model)) throw new Error('Select a supported Gemini Flash model.');
+  // Stronger model for explanations (walkthroughs); "same" uses GEMINI_MODEL for everything.
+  const explainModel = (env.EXPLAIN_MODEL ?? 'gemini-3.8-flash') === 'same' ? null : (env.EXPLAIN_MODEL ?? 'gemini-3.8-flash');
+  if (explainModel && !['gemini-3.8-flash', 'gemini-3.5-flash-lite'].includes(explainModel)) throw new Error('EXPLAIN_MODEL must be gemini-3.8-flash, gemini-3.5-flash-lite or same.');
   const config = {
-    mode, model, apiKey: env.GEMINI_API_KEY ?? '', appToken: env.APP_TOKEN ?? '',
+    mode, model, explainModel, apiKey: env.GEMINI_API_KEY ?? '', appToken: env.APP_TOKEN ?? '',
     port: integer(env.PORT, 8787, 65535), host: env.HOST ?? '127.0.0.1',
     maxOutputTokens: integer(env.MAX_OUTPUT_TOKENS, 2048, 4096),
     diagnosticLogPath: fileURLToPath(new URL('../.data/provider-errors.jsonl', import.meta.url)),
@@ -103,7 +107,7 @@ async function readJSON(request) {
 }
 
 export function createApp(config, {
-  analyze = analyzeWithGemini, agent = runAgent, check = checkStepWithGemini, speak = speakWithGemini,
+  analyze = analyzeWithGemini, agent = runAgent, check = checkStepWithGemini, speak = speakWithGemini, scanTools = scanToolsWithGemini,
   sessions = new TaskSessions(),
 } = {}) {
   const server = createServer(async (request, response) => {
@@ -112,7 +116,7 @@ export function createApp(config, {
     const controller = new AbortController();
     const deadline = setTimeout(() => controller.abort(), ANALYSIS_TIMEOUT_MS);
     response.on('finish', () => clearTimeout(deadline));
-    const route = ['/analyze', '/check', '/speak', '/health'].includes(request.url) ? request.url : '/other';
+    const route = ['/analyze', '/check', '/speak', '/tools', '/health'].includes(request.url) ? request.url : '/other';
     console.log(`[${new Date().toISOString()}] Request received: ${route} [${trace.requestId}]`);
     response.on('close', () => {
       clearTimeout(deadline);
@@ -122,9 +126,14 @@ export function createApp(config, {
       }
     });
     const send = (status, data) => {
-      const circle = data.error || route === '/speak' ? '' : data.target ? ` circle="${String(data.target.label).slice(0, 60)}"` : ' circle=none';
+      const circle = data.error || route === '/speak' || route === '/tools' ? '' : data.target ? ` circle="${String(data.target.label).slice(0, 60)}"` : ' circle=none';
       const step = data.status ? ` step=${data.status}` : '';
-      console.log(`Request completed: ${route} [${trace.requestId}] googleCalls=${trace.calls} serperSearches=${trace.searchCalls} HTTP ${status} ${data.error?.code ?? 'ok'}${step}${circle} (${Date.now() - started}ms)`);
+      const beats = Array.isArray(data.annotations) && data.annotations.length ? data.annotations : null;
+      const walkthrough = beats ? ` walkthrough=${beats.length} steps (paths=${beats.filter((b) => b.path).length}`
+        + ` boxes=${beats.filter((b) => b.box).length} labels=${beats.filter((b) => b.label).length}`
+        + ` arrows=${beats.filter((b) => b.to).length} zoom=${beats.filter((b) => b.zoom).length}`
+        + ` shaded=${beats.filter((b) => b.region).length})` : (route === '/analyze' && !data.error ? ' walkthrough=none' : '');
+      console.log(`Request completed: ${route} [${trace.requestId}] googleCalls=${trace.calls} serperSearches=${trace.searchCalls} HTTP ${status} ${data.error?.code ?? 'ok'}${step}${circle}${walkthrough} (${Date.now() - started}ms)`);
       if (response.destroyed) return;
       response.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
       response.end(JSON.stringify(data));
@@ -133,7 +142,7 @@ export function createApp(config, {
       if (request.method === 'GET' && request.url === '/health') {
         return send(200, { status: 'ok', mode: config.mode });
       }
-      if (request.method !== 'POST' || !['/analyze', '/check', '/speak'].includes(request.url)) {
+      if (request.method !== 'POST' || !['/analyze', '/check', '/speak', '/tools'].includes(request.url)) {
         throw new APIError(404, 'not_found', 'Endpoint not found.');
       }
       if (!authorized(request, config.appToken)) throw new APIError(401, 'unauthorized', 'Check the connection token in Settings.');
@@ -150,6 +159,13 @@ export function createApp(config, {
           if (error?.quota) return send(200, { mode: config.mode, audio: null, reason: 'voice_quota' });
           throw error;
         }
+      }
+      if (request.url === '/tools') {
+        const input = validateToolsRequest(await readJSON(request));
+        const result = config.mode === 'gemini'
+          ? await scanTools(input, { ...config, signal: controller.signal, trace })
+          : demoToolsScan(input);
+        return send(200, { mode: config.mode, ...result });
       }
       if (request.url === '/check') {
         const input = validateCheckRequest(await readJSON(request));
