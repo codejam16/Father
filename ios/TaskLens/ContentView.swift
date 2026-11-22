@@ -181,6 +181,8 @@ private struct CameraExperience: View {
                     VStack(alignment: .leading, spacing: 8) {
                         toolsCard
                         stepCard
+                        // Stacked under the tools and the step, so it never covers them.
+                        pictureCard
                     }
                     .padding(.leading, 16)
                     .padding(.top, model.selectedFrame == nil ? 62 : 0)
@@ -317,14 +319,26 @@ private struct CameraExperience: View {
                 .accessibilityLabel(model.toolsExpanded ? "Hide tools list" : "Show tools list")
                 if model.toolsExpanded {
                     ForEach(model.tools) { tool in
-                        Button { model.toggleTool(tool.name) } label: {
-                            Label(tool.name, systemImage: tool.visible ? "checkmark.circle.fill" : "circle")
-                                .font(.caption)
-                                .foregroundStyle(tool.visible ? Color.mint : Color.white)
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                        HStack(spacing: 8) {
+                            Button { model.toggleTool(tool.name) } label: {
+                                Label(tool.name, systemImage: tool.visible ? "checkmark.circle.fill" : "circle")
+                                    .font(.caption)
+                                    .foregroundStyle(tool.visible ? Color.mint : Color.white)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityValue(tool.visible ? "Found" : "Not found yet")
+                            // Not sure what it looks like? Show a photo of it.
+                            Button { model.showPicture(of: tool.name) } label: {
+                                Image(systemName: "photo")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.white.opacity(0.85))
+                                    .frame(width: 28, height: 24)
+                                    .background(.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Show what \(tool.name) looks like")
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityValue(tool.visible ? "Found" : "Not found yet")
                     }
                     Button { model.scanTools() } label: {
                         Label(model.isScanningTools ? "Checking…" : "Check my tools", systemImage: "camera.viewfinder")
@@ -341,6 +355,59 @@ private struct CameraExperience: View {
             .frame(maxWidth: 290, alignment: .leading)
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
             .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.mint.opacity(0.35), lineWidth: 1))
+        }
+    }
+
+    /// A reference photo ("this is what a spudger looks like"), until the user closes it.
+    @ViewBuilder
+    private var pictureCard: some View {
+        if let query = model.pictureQuery {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("WHAT IT LOOKS LIKE").font(.caption2.weight(.bold)).foregroundStyle(.mint)
+                    Spacer(minLength: 8)
+                    Button { model.closePicture() } label: {
+                        Image(systemName: "xmark").font(.system(size: 13, weight: .bold)).foregroundStyle(.white)
+                            .frame(width: 30, height: 30)
+                            .background(.white.opacity(0.15), in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Close picture")
+                }
+                Group {
+                    if let picture = model.picture {
+                        AsyncImage(url: picture.imageUrl) { phase in
+                            switch phase {
+                            case .success(let image): image.resizable().scaledToFit()
+                            case .failure: Label("Couldn't load the picture", systemImage: "photo").font(.caption).foregroundStyle(.white.opacity(0.8))
+                            default: ProgressView().tint(.white)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 100, maxHeight: 170)
+                        .background(.white, in: RoundedRectangle(cornerRadius: 10))
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                    } else if model.pictureNotFound {
+                        Label("No picture found for this", systemImage: "photo.badge.exclamationmark")
+                            .font(.caption).foregroundStyle(.white.opacity(0.8))
+                            .frame(maxWidth: .infinity, minHeight: 60)
+                    } else {
+                        ProgressView().tint(.white).frame(maxWidth: .infinity, minHeight: 100)
+                    }
+                }
+                Text(String(query.prefix(1)).uppercased() + String(query.dropFirst()))
+                    .font(.subheadline.weight(.semibold)).foregroundStyle(.white)
+                    .lineLimit(2)
+                if let picture = model.picture {
+                    Text("Photo: \(picture.source)").font(.caption2).foregroundStyle(.white.opacity(0.6))
+                }
+            }
+            .padding(12)
+            .frame(maxWidth: 290, alignment: .leading)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18))
+            .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(.mint.opacity(0.35), lineWidth: 1))
+            .shadow(color: .black.opacity(0.3), radius: 10, y: 4)
+            .transition(.scale(scale: 0.9).combined(with: .opacity))
+            .animation(.easeOut(duration: 0.2), value: model.picture)
         }
     }
 

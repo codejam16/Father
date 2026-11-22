@@ -34,6 +34,22 @@ struct AnalysisClient {
         return try JSONDecoder().decode(ToolsResponse.self, from: data)
     }
 
+    /// A second look at one route on a zoomed crop: the existing drawn line from start to end,
+    /// as [y, x] points (0–1000) of the crop. Nil when no line was found.
+    func trace(image: ImagePayload, rough: [[Double]], what: String, question: String,
+               endpoint: String, token: String) async throws -> [[Double]]? {
+        let data = try await post(TraceRequest(image: image, rough: rough, what: String(what.prefix(300)), question: String(question.prefix(500))),
+                                  path: "trace", endpoint: endpoint, token: token, timeout: 20)
+        return try JSONDecoder().decode(TraceResponse.self, from: data).path
+    }
+
+    /// A reference photo for a short phrase ("Phillips #1 screwdriver"), or nil if none was found.
+    func picture(of query: String, context: String, endpoint: String, token: String) async throws -> ReferencePicture? {
+        let data = try await post(PictureRequest(query: String(query.prefix(80)), context: String(context.prefix(120))),
+                                  path: "picture", endpoint: endpoint, token: token, timeout: 15)
+        return try JSONDecoder().decode(PictureResponse.self, from: data).picture
+    }
+
     /// Demo: identifies nothing; marks every item found so the checklist can be tried.
     func demoToolsScan(_ items: [String]) async throws -> ToolsResponse {
         try await Task.sleep(for: .milliseconds(500))

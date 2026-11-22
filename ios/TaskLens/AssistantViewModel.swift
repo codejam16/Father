@@ -170,6 +170,12 @@ final class AssistantViewModel: ObservableObject {
     /// "What you'll need" for the current guided task.
     @Published private(set) var tools: [ToolItem] = []
     @Published private(set) var isScanningTools = false
+    /// A reference photo on screen ("what does a spudger look like?").
+    @Published private(set) var picture: ReferencePicture?
+    /// What a picture is being looked up for (shown while it loads, or if none is found).
+    @Published private(set) var pictureQuery: String?
+    @Published private(set) var pictureNotFound = false
+    private var pictureTask: Task<Void, Never>?
     @Published var toolsExpanded = true
     private var isActive = false
     private var voiceSuspended = false
@@ -396,8 +402,14 @@ final class AssistantViewModel: ObservableObject {
                 clearSelection()
                 lastReplyWasDemo = response.mode == "mock"
                 showAnswered()
+                if let phrase = response.pictureOf, !phrase.isEmpty { showPicture(of: phrase) }
                 if let beats = response.annotations, !beats.isEmpty, let image = UIImage(data: frame.jpeg) {
-                    let made = Walkthrough(image: image, photo: frame.jpeg, beats: beats, answer: response.answer)
+                    // Second, focused look: the AI traces each route along the existing drawn line
+                    // on a zoomed crop (its first answer only roughly places the points).
+                    let traced = demoMode ? beats
+                        : await RouteTracer.refine(beats, image: image, question: text, client: client, endpoint: endpoint, token: token)
+                    guard workID == id else { return }
+                    let made = Walkthrough(image: image, photo: frame.jpeg, beats: traced, answer: response.answer)
                     walkthrough = made
                     library.save(made)
                 }
@@ -721,6 +733,31 @@ final class AssistantViewModel: ObservableObject {
     }
 
     /// The user has an item even if the camera did not see it (or unticks it).
+    /// Show a photo of something the user may not recognize (a tool from the list, or what the AI named).
+    func showPicture(of query: String) {
+        let phrase = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !phrase.isEmpty else { return }
+        pictureTask?.cancel()
+        picture = nil
+        pictureNotFound = false
+        pictureQuery = phrase
+        let endpoint = settings.serverURL, token = settings.token
+        let context = String(settings.task.prefix(120))
+        pictureTask = Task { [weak self] in
+            guard let self else { return }
+            let found = try? await self.client.picture(of: phrase, context: context, endpoint: endpoint, token: token)
+            guard !Task.isCancelled, self.pictureQuery == phrase else { return }
+            if let found { self.picture = found } else { self.pictureNotFound = true }
+        }
+    }
+
+    func closePicture() {
+        pictureTask?.cancel()
+        picture = nil
+        pictureQuery = nil
+        pictureNotFound = false
+    }
+
     func toggleTool(_ name: String) {
         guard let index = tools.firstIndex(where: { $0.name == name }) else { return }
         tools[index].visible.toggle()
@@ -815,5 +852,80 @@ final class AssistantViewModel: ObservableObject {
         researchReviewID = nil
         confirmedStepIDs.removeAll()
         updateWatching()
+    }
+}
+
+
+// MARK: - Tracing routes along the drawn line
+
+/// Gemini's first answer places route points roughly (cutting corners, stopping short). For each
+/// route, the app crops the photo around it and asks the AI again, on that zoomed view only, for the
+/// existing drawn line from start to end. If that fails or takes too long, the first route is kept.
+enum RouteTracer {
+    static func refine(_ beats: [Annotation], image: UIImage, question: String,
+                       client: AnalysisClient, endpoint: String, token: String) async -> [Annotation] {
+        guard let photo = image.cgImage else { return beats }
+        let boxes = beats.compactMap { $0.box?.unitRect }
+        let routes = beats.indices.filter { beats[$0].unitPath.count >= 2 }.prefix(3)
+        guard !routes.isEmpty else { return beats }
+        var refined = beats
+        await withTaskGroup(of: (Int, [[Double]]?).self) { group in
+            for index in routes {
+                let beat = beats[index]
+                group.addTask {
+                    guard let crop = Self.crop(photo, around: beat.unitPath, boxes: boxes) else { return (index, nil) }
+                    let rough = beat.unitPath.map { crop.local($0) }.map { [($0.y * 1000).rounded(), ($0.x * 1000).rounded()] }
+                    let what = [beat.caption, beat.say ?? ""].filter { !$0.isEmpty }.joined(separator: " — ")
+                    let roughConverted: [[Double]] = rough.map { row in
+                        row.map { Double($0) }
+                    }
+                    guard let points = try? await client.trace(image: crop.payload, rough: roughConverted, what: what, question: question,
+                                                               endpoint: endpoint, token: token),
+                          points.count >= 2 else { return (index, nil) }
+                    let mapped = points.compactMap { point -> [Double]? in
+                        guard point.count == 2 else { return nil }
+                        let unit = crop.global(CGPoint(x: point[1] / 1000, y: point[0] / 1000))
+                        return [(unit.y * 1000).rounded(), (unit.x * 1000).rounded()]
+                    }
+                    return (index, mapped.count >= 2 ? mapped : nil)
+                }
+            }
+            for await (index, path) in group {
+                if let path { refined[index].path = path }
+            }
+        }
+        return refined
+    }
+
+    private struct Crop {
+        let area: CGRect
+        let payload: ImagePayload
+        func local(_ unit: CGPoint) -> CGPoint {
+            CGPoint(x: (unit.x - area.minX) / area.width, y: (unit.y - area.minY) / area.height)
+        }
+        func global(_ local: CGPoint) -> CGPoint {
+            CGPoint(x: area.minX + local.x * area.width, y: area.minY + local.y * area.height)
+        }
+    }
+
+    /// The route plus the parts at its ends, with a margin, squared up so the AI sees the line large.
+    private static func crop(_ photo: CGImage, around route: [CGPoint], boxes: [CGRect]) -> Crop? {
+        guard let first = route.first, let last = route.last else { return nil }
+        var area = route.reduce(CGRect(origin: first, size: .zero)) { $0.union(CGRect(origin: $1, size: .zero)) }
+        for box in boxes where box.insetBy(dx: -0.12, dy: -0.12).contains(first) || box.insetBy(dx: -0.12, dy: -0.12).contains(last) {
+            area = area.union(box)
+        }
+        area = area.insetBy(dx: -0.1, dy: -0.1)
+        // Square in pixels, and at least a third of the photo so the surroundings are visible.
+        let width = CGFloat(photo.width), height = CGFloat(photo.height)
+        var side = max(area.width * width, area.height * height, min(width, height) / 3)
+        side = min(side, min(width, height))
+        let center = CGPoint(x: area.midX * width, y: area.midY * height)
+        let pixels = CGRect(x: min(max(center.x - side / 2, 0), width - side),
+                            y: min(max(center.y - side / 2, 0), height - side), width: side, height: side).integral
+        guard pixels.width >= 32, let cropped = photo.cropping(to: pixels),
+              let jpeg = UIImage(cgImage: cropped).jpegData(compressionQuality: 0.9) else { return nil }
+        let unitArea = CGRect(x: pixels.minX / width, y: pixels.minY / height, width: pixels.width / width, height: pixels.height / height)
+        return Crop(area: unitArea, payload: ImagePayload(base64: jpeg.base64EncodedString(), width: cropped.width, height: cropped.height))
     }
 }

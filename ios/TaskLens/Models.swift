@@ -289,6 +289,25 @@ struct AnalysisResponse: Decodable {
     var toolsNeeded: [ToolItem]? = nil
     /// Step-by-step drawings explaining a diagram (empty for ordinary answers).
     var annotations: [Annotation]? = nil
+    /// "What does it look like?": a short phrase to show a reference photo of.
+    var pictureOf: String? = nil
+}
+
+/// A reference photo of something the user may not recognize (a tool, a part).
+struct ReferencePicture: Decodable, Equatable {
+    let imageUrl: URL
+    let title: String
+    let source: String
+    var link: URL? = nil
+}
+
+struct PictureRequest: Encodable {
+    let query: String
+    let context: String
+}
+
+struct PictureResponse: Decodable {
+    let picture: ReferencePicture?
 }
 
 /// One beat of a visual walkthrough: a caption plus a box around a part or a path traced along the drawing.
@@ -321,6 +340,17 @@ struct ToolItem: Codable, Identifiable, Equatable {
     let name: String
     var visible: Bool
     var id: String { name }
+}
+
+struct TraceRequest: Encodable {
+    let image: ImagePayload
+    let rough: [[Double]]
+    let what: String
+    let question: String
+}
+
+struct TraceResponse: Decodable {
+    let path: [[Double]]?
 }
 
 struct ToolsRequest: Encodable {
