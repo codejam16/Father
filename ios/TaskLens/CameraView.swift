@@ -63,9 +63,9 @@ struct CameraStage: View {
                         foreground(mask, from: box, to: highlight.pose, color: color,
                                    focused: highlight.isFocused, in: geometry.size)
                     } else {
-                        // A localized marker is explicit targeting, not a claimed
-                        // silhouette. Native masks often cannot isolate a tiny button.
-                        targetMarker(highlight, color: color, in: geometry.size)
+                        // Keep the requested filled-area presentation while a fresh
+                        // silhouette is unavailable; never substitute corner boxes.
+                        targetArea(highlight, color: color, in: geometry.size)
                     }
                     targetLabel(highlight, color: color, in: geometry.size)
                 }
@@ -117,23 +117,21 @@ struct CameraStage: View {
         .accessibilityLabel(enabled ? "Live camera. Tap or drag to select a region for your next question." : "Live camera. Region selection is off.")
     }
 
-    private func targetMarker(_ highlight: Highlight, color: Color, in size: CGSize) -> some View {
+    private func targetArea(_ highlight: Highlight, color: Color, in size: CGSize) -> some View {
         let image = FrameGeometry.fittedRect(in: size, aspect: camera.aspectRatio)
         let pose = highlight.pose
-        let x = image.minX + (mirrored ? 1 - pose.center.x : pose.center.x) * image.width
-        let y = image.minY + pose.center.y * image.height
-        return Group {
-            if highlight.kind == .part {
-                ZStack {
-                    Circle().stroke(color.opacity(0.95), lineWidth: 2).frame(width: 24, height: 24)
-                    Circle().fill(color).frame(width: 4, height: 4)
-                }.position(x: x, y: y)
-            } else {
-                TargetCorners().stroke(color.opacity(0.9), style: StrokeStyle(lineWidth: 2, lineCap: .round))
-                    .frame(width: max(8, pose.size.width * image.width), height: max(8, pose.size.height * image.height))
-                    .rotationEffect(.radians(mirrored ? -pose.angle : pose.angle)).position(x: x, y: y)
-            }
-        }.allowsHitTesting(false).accessibilityLabel(highlight.label)
+        return ZStack(alignment: .topLeading) {
+            RoundedRectangle(cornerRadius: highlight.kind == .part ? 5 : 14)
+                .fill(color.opacity(highlight.isFocused ? 0.30 : 0.23))
+                .blur(radius: highlight.kind == .part ? 1 : 3)
+                .frame(width: max(8, pose.size.width * image.width), height: max(8, pose.size.height * image.height))
+                .rotationEffect(.radians(mirrored ? -pose.angle : pose.angle))
+                .position(x: (mirrored ? 1 - pose.center.x : pose.center.x) * image.width,
+                          y: pose.center.y * image.height)
+        }
+        .frame(width: image.width, height: image.height).clipped()
+        .position(x: image.midX, y: image.midY)
+        .allowsHitTesting(false).accessibilityLabel("Highlighted area: " + highlight.label)
     }
 
     private func targetLabel(_ highlight: Highlight, color: Color, in size: CGSize) -> some View {
@@ -197,22 +195,5 @@ struct CameraStage: View {
             .opacity(focused ? 1 : 0.55)
             .position(x: image.minX + midX * image.width, y: image.minY + pose.center.y * image.height)
             .allowsHitTesting(false)
-    }
-}
-
-private struct TargetCorners: Shape {
-    func path(in rect: CGRect) -> Path {
-        let length = min(14, min(rect.width, rect.height) * 0.25)
-        var path = Path()
-        let corners: [(CGFloat, CGFloat, CGFloat, CGFloat)] = [
-            (rect.minX, rect.minY, 1, 1), (rect.maxX, rect.minY, -1, 1),
-            (rect.minX, rect.maxY, 1, -1), (rect.maxX, rect.maxY, -1, -1)
-        ]
-        for (x, y, sx, sy) in corners {
-            path.move(to: CGPoint(x: x + sx * length, y: y))
-            path.addLine(to: CGPoint(x: x, y: y))
-            path.addLine(to: CGPoint(x: x, y: y + sy * length))
-        }
-        return path
     }
 }

@@ -46,6 +46,7 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
         let id: UUID
         let box: NormalizedBox
         let mask: CGImage
+        let reanchorObject: Bool
     }
     private var configured = false
     private var input: AVCaptureDeviceInput?
@@ -578,12 +579,22 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
                     self.lastSegmentationError = nil
                     // Never display masks inferred from a camera view that is already stale.
                     guard newest.time - frame.time < 0.8,
-                          self.frames.contains(where: { $0.id == frame.id }) else { return }
+                          let sourceIndex = self.frames.firstIndex(where: { $0.id == frame.id }) else { return }
                     for match in masks {
                         guard let target = self.targets.first(where: { $0.instanceID == match.id }) else { continue }
-                        // Segmentation decorates the AI/Vision target; it must not
-                        // move or resize a button's tracker onto its whole bottle.
                         guard target.tracker != nil else { continue }
+                        if match.reanchorObject {
+                            // Fresh whole-object silhouettes correct positional drift.
+                            // Parts never get expanded to an enclosing object's bounds.
+                            target.pose = RotatedBox(box: match.box)
+                            target.lastBox = match.box; target.lastVisionBox = match.box
+                            target.stability = TrackingStability()
+                            self.seedVision(target, box: match.box)
+                            for replay in self.frames[sourceIndex...] {
+                                guard target.tracker != nil else { break }
+                                self.advanceTracker(target, on: replay, allowAppearanceCheck: false)
+                            }
+                        }
                         target.foregroundMaskBox = match.box
                         target.foregroundMask = match.mask
                         target.foregroundMaskTime = frame.time
@@ -600,7 +611,7 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
         try handler.perform([request])
         guard let observation = request.results?.first else { return [] }
         var instances: [(index: Int, box: NormalizedBox)] = []
-        // Use Vision's float masks, rather than assuming a pixel format for instance labels.
+        // Use Vision's per-instance masks, not the instance-label buffer.
         for index in observation.allInstances {
             let mask = try observation.generateMask(forInstances: IndexSet(integer: index))
             if let box = Self.foregroundBounds(mask) { instances.append((index, box)) }
@@ -616,15 +627,16 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
             let image = CIImage(cvPixelBuffer: mask)
             guard let cgImage = segmentationContext.createCGImage(image, from: image.extent,
                 format: .L8, colorSpace: CGColorSpaceCreateDeviceGray()) else { continue }
-            results.append(SegmentedTarget(id: input.id, box: input.box, mask: cgImage))
+            results.append(SegmentedTarget(id: input.id, box: input.isPart ? input.box : instance.box, mask: cgImage, reanchorObject: !input.isPart))
             claimed.insert(instance.index)
         }
         return results
     }
 
     /// Mask rows, like our upright camera buffers and API coordinates, start at the top.
-    private static func foregroundBounds(_ mask: CVPixelBuffer) -> NormalizedBox? {
-        guard CVPixelBufferGetPixelFormatType(mask) == kCVPixelFormatType_OneComponent32Float,
+    static func foregroundBounds(_ mask: CVPixelBuffer) -> NormalizedBox? {
+        let format = CVPixelBufferGetPixelFormatType(mask)
+        guard [kCVPixelFormatType_OneComponent32Float, kCVPixelFormatType_OneComponent8].contains(format),
               CVPixelBufferLockBaseAddress(mask, .readOnly) == kCVReturnSuccess else { return nil }
         defer { CVPixelBufferUnlockBaseAddress(mask, .readOnly) }
         guard let base = CVPixelBufferGetBaseAddress(mask) else { return nil }
@@ -632,8 +644,12 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
         let stride = CVPixelBufferGetBytesPerRow(mask)
         var minX = width, minY = height, maxX = -1, maxY = -1
         for y in 0..<height {
-            let row = base.advanced(by: y * stride).assumingMemoryBound(to: Float.self)
-            for x in 0..<width where row[x] >= 0.5 {
+            let row = base.advanced(by: y * stride)
+            for x in 0..<width {
+                let foreground = format == kCVPixelFormatType_OneComponent32Float
+                    ? row.assumingMemoryBound(to: Float.self)[x] >= 0.5
+                    : row.assumingMemoryBound(to: UInt8.self)[x] >= 128
+                guard foreground else { continue }
                 minX = min(minX, x); maxX = max(maxX, x)
                 minY = min(minY, y); maxY = max(maxY, y)
             }

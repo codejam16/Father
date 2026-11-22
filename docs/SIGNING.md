@@ -69,3 +69,28 @@ python3 scripts/test-signing.py
 The Python tests cover old-commit migration, ignored local files, preserving
 existing settings, rejecting malformed inputs, and stable project generation.
 They do not replace building and installing with Xcode on a Mac.
+
+## If Xcode shows a variable or a personal override was entered
+
+`$(TASKLENS_BUNDLE_IDENTIFIER)` in the project editor is intentional. It reads
+`TASKLENS_BUNDLE_IDENTIFIER` from your ignored local file. It should not become
+the literal installed bundle identifier. Show the configured local values with:
+
+```bash
+python3 scripts/configure-signing.py --show
+```
+
+The setup helper also prints the actual configured local team and bundle ID
+after saving them. If you changed signing through Xcode or imported the wrong
+local values, explicitly repair the project references and re-import a known
+working commit:
+
+```bash
+python3 scripts/configure-signing.py --from-commit YOUR_SAVED_COMMIT_SHA --repair-project --replace-local
+```
+
+Close Xcode first. This only repairs the app/test team and bundle settings in
+Debug/Release. It leaves unrelated project settings alone. Any replaced local
+file and the project before repair are backed up under the Git-ignored
+`.build/signing-backups/` directory. The personal IDs stay in the ignored local
+file. Reopen Xcode after setup so it reloads the configuration.

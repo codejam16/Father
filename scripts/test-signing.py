@@ -57,6 +57,34 @@ class SigningTests(unittest.TestCase):
                 signing.save_local(root, "Z9Y8X7W6V5", "dev.someoneelse.tasklens")
             self.assertEqual((root / signing.LOCAL).read_bytes(), before)
 
+    def test_explicit_local_replacement_preserves_original_backup(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            signing.save_local(root, TEAM, BUNDLE)
+            before = (root / signing.LOCAL).read_bytes()
+            signing.save_local(root, "Z9Y8X7W6V5", "dev.another.tasklens", replace=True)
+            backups = list((root / ".build/signing-backups").glob("Signing.local.xcconfig.*"))
+            self.assertEqual(len(backups), 1)
+            self.assertEqual(backups[0].read_bytes(), before)
+            self.assertIn("dev.another.tasklens", (root / signing.LOCAL).read_text())
+
+    def test_project_repair_only_restores_signing_values(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for file in [signing.PROJECT, "ios/Config/Signing.xcconfig"]:
+                dest = root / file
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(ROOT / file, dest)
+            path = root / signing.PROJECT
+            shared = path.read_text()
+            overridden = shared.replace(signing.TEAM_VARIABLE, TEAM).replace(signing.BUNDLE_VARIABLE, BUNDLE)
+            path.write_text(overridden)
+            self.assertTrue(signing.repair_project(root))
+            self.assertEqual(path.read_text(), shared)
+            self.assertFalse(signing.repair_project(root))
+            backups = list((root / ".build/signing-backups").glob("project.pbxproj.*"))
+            self.assertEqual(backups[0].read_text(), overridden)
+
     def test_saved_commit_migration_works_from_server_and_is_git_ignored(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

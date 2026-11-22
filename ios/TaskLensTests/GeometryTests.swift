@@ -1,4 +1,5 @@
 import XCTest
+import CoreVideo
 @testable import TaskLens
 
 final class GeometryTests: XCTestCase {
@@ -389,5 +390,34 @@ final class HighlightIntentTests: XCTestCase {
         let lid = CGRect(x: 0.29, y: 0.29, width: 0.12, height: 0.12)
         XCTAssertNil(ForegroundAssociation.match(target: button, candidates: [lid], isPart: true))
         XCTAssertEqual(ForegroundAssociation.match(target: button, candidates: [button], isPart: true), 0)
+    }
+}
+
+final class ForegroundPixelFormatTests: XCTestCase {
+    private func mask(_ format: OSType) throws -> CVPixelBuffer {
+        var buffer: CVPixelBuffer?
+        XCTAssertEqual(CVPixelBufferCreate(kCFAllocatorDefault, 4, 4, format, nil, &buffer), kCVReturnSuccess)
+        let value = try XCTUnwrap(buffer)
+        XCTAssertEqual(CVPixelBufferLockBaseAddress(value, []), kCVReturnSuccess)
+        defer { CVPixelBufferUnlockBaseAddress(value, []) }
+        let base = try XCTUnwrap(CVPixelBufferGetBaseAddress(value))
+        let stride = CVPixelBufferGetBytesPerRow(value)
+        memset(base, 0, stride * 4)
+        for y in 1...2 {
+            for x in 1...2 {
+                if format == kCVPixelFormatType_OneComponent32Float {
+                    base.advanced(by: y * stride).assumingMemoryBound(to: Float.self)[x] = 1
+                } else {
+                    base.advanced(by: y * stride).assumingMemoryBound(to: UInt8.self)[x] = 255
+                }
+            }
+        }
+        return value
+    }
+    func testForegroundBoundsAcceptFloatAndEightBitMasks() throws {
+        for format in [kCVPixelFormatType_OneComponent32Float, kCVPixelFormatType_OneComponent8] {
+            let bounds = try XCTUnwrap(CameraService.foregroundBounds(mask(format)))
+            XCTAssertEqual(bounds.values, [250, 250, 750, 750])
+        }
     }
 }

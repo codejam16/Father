@@ -131,9 +131,9 @@ These replace the rectangle/appearance-recovery checks on this branch. Rebuild a
 
 ## Question-aware highlighting (Apple masks branch)
 
-- Ask where one visible bottle is; verify a silhouette or corner marker points
+- Ask where one visible bottle is; verify a filled silhouette or soft filled area points
   to that bottle. Ask how to open it: the visible opening control should be the
-  target, with a small ring/dot when segmentation cannot isolate that part.
+  target, with a soft fill restricted to that area when segmentation cannot isolate it.
 - Test a screw cap and a push-release lid. The assistant should inspect the
   actual mechanism; hide it and verify it requests a better view instead of
   pointing at an invented button. Repeat with a zipper, keyboard key or switch.
@@ -150,6 +150,6 @@ These replace the rectangle/appearance-recovery checks on this branch. Rebuild a
   re-localize it. Test a slow response after the source frame leaves the ring;
   expect a visible view-changed message and no stale pointer.
 - Move and rotate the phone during segmentation; check silhouettes, localized
-  part markers and labels on rear/front cameras, including letterboxing. Small
+  part fills and labels on rear/front cameras, including letterboxing. Small
   controls must not expand into their enclosing object. Background/close during
   analysis must still cancel without leaving old highlights.
