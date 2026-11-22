@@ -1,25 +1,25 @@
-# TaskLens
+# CallYoDad
 
 **Show what you see. Ask what you need. Find your next step.**
 
-TaskLens is an iPhone visual assistant that helps you understand and interact with the world in front of you. Keep your camera open, ask a question, and receive spoken guidance with visual pointers connecting the answer to what you are looking at.
+CallYoDad is an iPhone visual assistant that helps you understand and interact with the world in front of you. Keep your camera open, ask a question, and receive spoken guidance with visual pointers connecting the answer to what you are looking at.
 
 Built for a hackathon with **Swift, SwiftUI, Apple Vision, Node.js, and the Gemini API**.
 
 ## Demo Video
 
-[![Watch TaskLens Demo](https://img.youtube.com/vi/3hVQmhwbsEw/maxresdefault.jpg)](https://www.youtube.com/shorts/3hVQmhwbsEw)
+[![Watch CallYoDad Demo](https://img.youtube.com/vi/3hVQmhwbsEw/maxresdefault.jpg)](https://www.youtube.com/shorts/3hVQmhwbsEw)
 
 
 ## Inspiration
 
 Explaining a physical problem through a text box is awkward. You know which button, cable, or object you mean, but describing it can take longer than the task itself. Even a correct explanation can leave you wondering, “Which part is it talking about?”
 
-We wanted asking an AI for help to feel closer to showing someone what you see. TaskLens combines conversation, camera understanding, and visual guidance so users can move from an explanation to their next action.
+We wanted asking an AI for help to feel closer to showing someone what you see. CallYoDad combines conversation, camera understanding, and visual guidance so users can move from an explanation to their next action.
 
 ## What it does
 
-| Ask or do | How TaskLens helps |
+| Ask or do | How CallYoDad helps |
 | --- | --- |
 | “Where is the bottle?” | Marks a target over the camera preview, then uses local tracking as the camera moves. |
 | “How do I open this?” | Explains the next action and can point to a relevant visible control or component. |
@@ -114,7 +114,7 @@ A useful visual assistant needs more than a capable model. Answers need to arriv
 - Evaluate localization and tracking under changing light, occlusion, and similar-looking objects.
 - Make saved walkthroughs easier to organize and revisit.
 
-TaskLens is a hackathon prototype. Visual locations and task checks are AI estimates, and response time depends on the model, network, and provider availability. We have not established a production accuracy or latency benchmark.
+CallYoDad is a hackathon prototype. Visual locations and task checks are AI estimates, and response time depends on the model, network, and provider availability. We have not established a production accuracy or latency benchmark.
 
 ## Try it locally
 
@@ -160,7 +160,7 @@ open ios/TaskLens.xcodeproj
 
 The helper saves your values in the Git-ignored `ios/Config/Signing.local.xcconfig`. Each teammate keeps their settings across pulls. See [personal signing setup](docs/SIGNING.md).
 
-In Xcode, select the **TaskLens** scheme and your connected iPhone, then press **Run**. Accept camera, microphone, Speech, and Local Network permissions when requested.
+In Xcode, select the **CallYoDad** scheme and your connected iPhone, then press **Run**. Accept camera, microphone, Speech, and Local Network permissions when requested.
 
 ### 3. Start and connect
 
