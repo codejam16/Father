@@ -6,6 +6,11 @@ TaskLens is an iPhone visual assistant that helps you understand and interact wi
 
 Built for a hackathon with **Swift, SwiftUI, Apple Vision, Node.js, and the Gemini API**.
 
+## Demo Video
+
+[![Watch TaskLens Demo](https://img.youtube.com/vi/3hVQmhwbsEw/maxresdefault.jpg)](https://www.youtube.com/shorts/3hVQmhwbsEw)
+
+
 ## Inspiration
 
 Explaining a physical problem through a text box is awkward. You know which button, cable, or object you mean, but describing it can take longer than the task itself. Even a correct explanation can leave you wondering, “Which part is it talking about?”
