@@ -814,7 +814,14 @@ private struct WebInfoDetails: View {
                         ForEach(info.sources) { source in
                             VStack(alignment: .leading, spacing: 5) {
                                 Link(source.title, destination: source.url).font(.caption).lineLimit(2)
-                                SourcePreview(url: source.url).frame(width: 220, height: 100).clipped()
+                                Link(destination: source.url) {
+                                    SourcePreview(url: source.url)
+                                        .frame(width: 220, height: 220)
+                                        .background(.white.opacity(0.94), in: RoundedRectangle(cornerRadius: 12))
+                                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("Open image source: " + source.title)
                             }
                             .frame(width: 220)
                         }
@@ -837,33 +844,48 @@ private struct WebInfoDetails: View {
 private struct SourcePreview: UIViewRepresentable {
     let url: URL
     func makeCoordinator() -> Coordinator { Coordinator() }
-    func makeUIView(context: Context) -> LPLinkView {
-        let view = LPLinkView(url: url)
+    func makeUIView(context: Context) -> UIImageView {
+        let view = UIImageView()
+        view.clipsToBounds = true
+        view.tintColor = .secondaryLabel
         context.coordinator.load(url, into: view)
         return view
     }
-    func updateUIView(_ view: LPLinkView, context: Context) { context.coordinator.load(url, into: view) }
-    static func dismantleUIView(_ view: LPLinkView, coordinator: Coordinator) { coordinator.cancel() }
+    func updateUIView(_ view: UIImageView, context: Context) { context.coordinator.load(url, into: view) }
+    static func dismantleUIView(_ view: UIImageView, coordinator: Coordinator) { coordinator.cancel() }
 
     @MainActor final class Coordinator {
         private var currentURL: URL?
         private var provider: LPMetadataProvider?
-        func load(_ url: URL, into view: LPLinkView) {
+        private var imageLoad: Progress?
+        func load(_ url: URL, into view: UIImageView) {
             guard url != currentURL, url.scheme == "https", url.host != nil, url.user == nil, url.password == nil else { return }
             cancel()
             currentURL = url
+            view.image = UIImage(systemName: "photo")
+            view.contentMode = .center
             let provider = LPMetadataProvider()
             provider.timeout = 8
             self.provider = provider
             provider.startFetchingMetadata(for: url) { [weak self, weak view] metadata, _ in
                 DispatchQueue.main.async {
-                    guard self?.currentURL == url, let metadata else { return }
-                    view?.metadata = metadata
+                    guard let self, self.currentURL == url, let imageProvider = metadata?.imageProvider else { return }
+                    self.imageLoad = imageProvider.loadObject(ofClass: UIImage.self) { [weak self, weak view] object, _ in
+                        guard let image = object as? UIImage else { return }
+                        DispatchQueue.main.async {
+                            guard self?.currentURL == url else { return }
+                            // Fit the complete source image; never crop a tall product to a strip.
+                            view?.contentMode = .scaleAspectFit
+                            view?.image = image
+                        }
+                    }
                 }
             }
         }
         func cancel() {
             currentURL = nil
+            imageLoad?.cancel()
+            imageLoad = nil
             provider?.cancel()
             provider = nil
         }
