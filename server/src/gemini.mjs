@@ -24,7 +24,7 @@ Return the requested JSON object, with no markdown.`;
 const detailLevels = { high: 'MEDIA_RESOLUTION_HIGH', medium: 'MEDIA_RESOLUTION_MEDIUM', low: 'MEDIA_RESOLUTION_LOW', default: null };
 const configuredDetail = (process.env.IMAGE_DETAIL ?? 'high').toLowerCase();
 if (!(configuredDetail in detailLevels)) throw new Error('IMAGE_DETAIL must be high, medium, low or default.');
-function imageDetail() { return detailLevels[configuredDetail]; }
+export function cameraImageDetail() { return detailLevels[configuredDetail]; }
 
 /** Explains the spots the user pointed at while asking, so "from this to this" uses all of them. */
 export function pointingNote(points) {
@@ -45,7 +45,7 @@ export function buildGeminiBody(request, maxOutputTokens, { researchAvailable = 
     required: [...webAnswerSchema.required, 'searchQuery', 'sourceIds'],
   } : answerSchema;
   return {
-    systemInstruction: { parts: [{ text: instruction + '\n' + boxInstruction + '\n' + walkthroughInstruction + '\n' + productLinkInstruction + (request.includeWebInfo ? '\n' + webInstruction
+    systemInstruction: { parts: [{ text: instruction + '\n' + boxInstruction + '\n' + walkthroughInstruction + (request.includeWebInfo || researchAvailable ? '\n' + productLinkInstruction : '') + (request.includeWebInfo ? '\n' + webInstruction
       : researchAvailable ? '\nExternal research is controlled by researchAllowed in the task context.'
         : '\nWeb lookup is disabled. Do not claim to have checked live prices, availability, or websites. If asked for current prices, explain that Web info can be enabled.')
       + (request.includeWebInfo ? '\nFor this response, use searchQuery for one concise query only when researchAvailable=true and external facts help; otherwise return null. Return sourceIds only from supplied researchEvidence. With researchEvidence, use it to answer and return searchQuery=null. Without evidence, answer from the visible scene and do not claim checked prices or sources.' : '') }] },
@@ -81,7 +81,7 @@ export function buildGeminiBody(request, maxOutputTokens, { researchAvailable = 
       maxOutputTokens,
       thinkingConfig: { thinkingLevel: 'LOW' },
       // More image tokens = finer detail (small text, keys, labels), at some extra latency.
-      ...(imageDetail() ? { mediaResolution: imageDetail() } : {}),
+      ...(cameraImageDetail() ? { mediaResolution: cameraImageDetail() } : {}),
     },
   };
 }
@@ -152,7 +152,7 @@ export async function generateContent(body, config, fetcher = fetch) {
     throw new APIError(502, 'incomplete_model_output', 'The AI could not finish a usable answer. Try a simpler question.');
   }
   const usage = providerUsage(payload);
-  console.log(`[${requestId}] Google call ${callNumber} (${callId}) DONE inputTokens=${usage.inputTokens} outputTokens=${usage.outputTokens}`);
+  console.log(`[${requestId}] Google call ${callNumber} (${callId}) DONE totalMs=${Date.now() - started} inputTokens=${usage.inputTokens} outputTokens=${usage.outputTokens}`);
   return payload;
 }
 

@@ -310,6 +310,7 @@ final class AssistantViewModel: ObservableObject {
         errorMessage = nil
         let id = UUID()
         workID = id
+        let questionStarted = Date()
         let attachment = selectedFrame
         let history = messages
         let demoMode = settings.demoMode
@@ -327,6 +328,7 @@ final class AssistantViewModel: ObservableObject {
         work = Task {
             defer {
                 if workID == id {
+                    NSLog("TaskLens question totalMs=%.0f", Date().timeIntervalSince(questionStarted) * 1000)
                     isBusy = false
                     workID = nil
                     workMayResearch = false
@@ -336,6 +338,7 @@ final class AssistantViewModel: ObservableObject {
                 }
             }
             do {
+                let preparationStarted = Date()
                 var frame: CapturedFrame
                 var detail: CapturedDetail?
                 if let attachment { frame = attachment.frame }
@@ -343,6 +346,7 @@ final class AssistantViewModel: ObservableObject {
                 // Only a live view: a picked photo's coordinates wouldn't match the pointing.
                 var pointed: [CGPoint] = []
                 if attachment == nil, let since = pointingSince { pointed = await camera.pointedSpots(since: since) }
+                NSLog("TaskLens camera preparation totalMs=%.0f", Date().timeIntervalSince(preparationStarted) * 1000)
                 var continuationID: String?
                 var currentSelection = attachment?.box
                 var response: AnalysisResponse
@@ -380,6 +384,7 @@ final class AssistantViewModel: ObservableObject {
                     currentSelection = nil
                 }
                 workMayResearch = false // No more research after the final reply.
+                let presentationStarted = Date()
                 confirmedStepIDs.subtract(confirmations)
                 citedSourceIds = response.sourceIds ?? []
                 messages.append(ChatMessage(role: .user, content: text))
@@ -406,6 +411,7 @@ final class AssistantViewModel: ObservableObject {
                     if guiding { highlightedStepID = currentStep?.id }
                 }
                 speakReply(spokenText)
+                NSLog("TaskLens answer presentation totalMs=%.0f", Date().timeIntervalSince(presentationStarted) * 1000)
                 if !demoMode && (usedResearch || !citedSourceIds.isEmpty) { researchReviewID = UUID() }
             } catch is CancellationError {
                 // Explicit cancellation/backgrounding should not surface as a failed task.

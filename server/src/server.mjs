@@ -135,7 +135,8 @@ export function createApp(config, {
         + ` shaded=${beats.filter((b) => b.region).length})` : (route === '/analyze' && !data.error ? ' walkthrough=none' : '');
       console.log(`Request completed: ${route} [${trace.requestId}] googleCalls=${trace.calls} serperSearches=${trace.searchCalls} HTTP ${status} ${data.error?.code ?? 'ok'}${step}${circle}${walkthrough} (${Date.now() - started}ms)`);
       if (response.destroyed) return;
-      response.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+      response.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store',
+        'server-timing': `app;dur=${Math.max(0, Date.now() - started)}` });
       response.end(JSON.stringify(data));
     };
     try {

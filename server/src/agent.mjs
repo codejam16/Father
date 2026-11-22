@@ -4,6 +4,7 @@ import { mergeMemory, continuation, applyUserCompletedSteps } from './task-sessi
 import { toolsInstruction, toolsSchemaField, validateTools } from './tools.mjs';
 import { researchBody, extractResearch, publicURL } from './research.mjs';
 import { searchWithSerper } from './serper.mjs';
+import { canQuickLocate, quickLocate } from './quick-locate.mjs';
 
 const actions = ['respond', 'ask_clarification', 'request_view', 'search_online', 'read_source'];
 const memorySchema = {
@@ -89,6 +90,9 @@ function taskWebInfo(request, session, decision) {
 }
 
 export async function runAgent(request, config, session, fetcher = fetch) {
+  const quick = canQuickLocate(request, session);
+  console.log(`[${config.trace?.requestId ?? 'diagnostic'}] Camera path=${quick ? 'quick_locate' : 'full_assistant'}`);
+  if (quick) return quickLocate(request, config, session, fetcher);
   const researchSteps = session.pending?.researchSteps ?? 0;
   const canResearch = request.includeWebInfo === true && request.researchEnabled !== false && config.webResearchEnabled !== false && Boolean(config.serperApiKey) && researchSteps < (config.maxResearchSteps ?? 2);
   const payload = await generateWithSchemaFallback(buildAgentBody(request, config, session, canResearch), modelFor(request, config), fetcher);

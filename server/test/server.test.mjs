@@ -38,6 +38,7 @@ test('normal camera conversation does not invent a target', async (t) => {
   const url = await running(t, config(t), { analyze: () => { throw new Error('Must not contact provider'); } });
   const response = await post(url);
   assert.equal(response.status, 200);
+  assert.match(response.headers.get('server-timing'), /^app;dur=\d+$/);
   const value = await response.json();
   assert.equal(value.mode, 'mock');
   assert.equal(value.target, null);

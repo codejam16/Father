@@ -55,6 +55,7 @@ struct AnalysisClient {
               base.user == nil, base.password == nil else {
             throw TaskLensError.message("Enter a valid backend URL in Connection settings.")
         }
+        let started = Date()
         var request = URLRequest(url: base.appendingPathComponent(path))
         request.httpMethod = "POST"
         // Backend allows 95s for a decision, research and a final answer.
@@ -71,6 +72,9 @@ struct AnalysisClient {
             throw TaskLensError.message("I can't reach the server. Please check your connection and try again.")
         }
         guard let response = response as? HTTPURLResponse else { throw TaskLensError.message("The backend did not respond.") }
+        NSLog("TaskLens /%@: totalMs=%.0f serverTiming=%@", path,
+              Date().timeIntervalSince(started) * 1000,
+              response.value(forHTTPHeaderField: "Server-Timing") ?? "unavailable")
         guard response.statusCode == 200 else {
             // Older servers may return technical text in `message`; never read it aloud.
             let friendly = try? JSONDecoder().decode(ErrorEnvelope.self, from: data).error.userMessage
