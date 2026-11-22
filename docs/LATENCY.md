@@ -15,8 +15,12 @@ generation, or research. It keeps the configured model, image detail, coordinate
 validation and existing busy-error retry policy. It retains only the latest two
 conversation messages as brief context and preserves established task memory.
 
-Info-on questions, research continuations, unfinished guided plans, selections,
-pointing/close-up images, contextual pronouns, multi-part questions and requests
+Selections, ordered pointing spots, and optional close-up images are preserved
+in simple locating requests rather than forcing the full assistant solely because
+that camera context exists. The first image remains the coordinate reference.
+
+Info-on questions, research continuations, unfinished guided plans,
+contextual pronouns, multi-part questions and requests
 for fine controls stay on the full assistant path. This intentionally conservative
 English routing rule is not a general-purpose intent classifier. It never sends
 raw user text to a search provider or adds a classification model call.
@@ -27,7 +31,9 @@ Image resolution has not been lowered as a speed shortcut.
 
 ## Logs
 
-Backend output identifies `Camera path=quick_locate` or `full_assistant`. The
+Backend output identifies `Camera path=quick_locate` or `full_assistant`, with a
+non-sensitive routing reason and counts for images/pointing data. It does not log
+the question or image. The
 Google DONE line includes `totalMs`, covering response-body reading as well as
 headers and any busy retries. Completed requests already log total elapsed time.
 `Server-Timing: app;dur=...` exposes total backend elapsed time in milliseconds.

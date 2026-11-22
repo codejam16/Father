@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { validateRequest } from '../src/contract.mjs';
 import { emptyMemory, TaskSessions } from '../src/task-session.mjs';
 import { buildAgentBody, runAgent } from '../src/agent.mjs';
-import { canQuickLocate, buildQuickLocateBody } from '../src/quick-locate.mjs';
+import { canQuickLocate, buildQuickLocateBody, quickLocateDecision } from '../src/quick-locate.mjs';
 
 const config = { model: 'test-model', maxOutputTokens: 2048, apiKey: 'fake-key' };
 const request = (extra = {}) => validateRequest({
@@ -28,7 +28,7 @@ function transport(result) {
 }
 
 test('short explicit location questions qualify without depending on an existing conversation', () => {
-  for (const question of ['Find the girl', 'Where is my bottle?', 'Where’s the blue bag?',
+  for (const question of ['Find the girl', 'Where is the bottle', 'wheres the bottle', 'Where is my bottle?', 'Where’s the blue bag?',
     'Can you please find the girl in the red shirt?', 'Show me the chair', 'Locate my backpack.']) {
     assert.equal(canQuickLocate(request({ question }), session()), true, question);
   }
@@ -42,13 +42,10 @@ test('research, pronouns, multiple tasks and precise controls retain the full as
     'How do I open the bottle?', 'Hello']) {
     assert.equal(canQuickLocate(request({ question }), session()), false, question);
   }
-  for (const extra of [{ includeWebInfo: true }, { researchEnabled: true }, { continuationId: randomUUID() },
-    { selection: [100, 100, 900, 900] }, { pointedAt: [[200, 300]] }]) {
+  for (const extra of [{ includeWebInfo: true }, { researchEnabled: true }, { continuationId: randomUUID() }]) {
     assert.equal(canQuickLocate(request(extra), session()), false, JSON.stringify(extra));
   }
   const original = request();
-  const detail = { ...original.image, box: [100, 100, 800, 800] };
-  assert.equal(canQuickLocate(request({ detailImage: detail }), session()), false);
   assert.equal(canQuickLocate(original, session({ memory: { ...emptyMemory(),
     plan: [{ id: 'step1', text: 'Open the lid', completed: false }] } })), false);
 });
@@ -63,10 +60,39 @@ test('a location request keeps the original image detail but removes unrelated r
   assert.equal(body.generationConfig.thinkingConfig.thinkingLevel, normal.generationConfig.thinkingConfig.thinkingLevel);
   assert.equal(body.generationConfig.maxOutputTokens, 768);
   assert.equal(buildQuickLocateBody(input, 400).generationConfig.maxOutputTokens, 400);
-  assert.deepEqual(JSON.parse(parts[0].text).history, input.history.slice(-2));
+  assert.deepEqual(body.contents.slice(0, -1), normal.contents.slice(-3, -1));
   assert.equal('annotations' in body.generationConfig.responseJsonSchema.properties, false);
   assert.equal('toolsNeeded' in body.generationConfig.responseJsonSchema.properties, false);
   assert.equal('memory' in body.generationConfig.responseJsonSchema.properties, false);
+});
+
+test('bottle locating keeps pointing, close-up and selection geometry without falling back to the full agent', async () => {
+  const image = request().image;
+  const input = request({ question: 'Where is the bottle', pointedAt: [[200, 300]],
+    selection: [100, 100, 900, 900], detailImage: { ...image, box: [100, 100, 600, 600] } });
+  assert.deepEqual(quickLocateDecision(input, session()), { eligible: true, reason: 'simple_location' });
+  const quick = buildQuickLocateBody(input, 2048);
+  const normal = buildAgentBody(input, config, session(), false);
+  assert.deepEqual(quick.contents.at(-1).parts.slice(1), normal.contents.at(-1).parts.slice(1));
+  const context = JSON.parse(quick.contents.at(-1).parts[0].text);
+  assert.deepEqual(context.selection, input.selection);
+  assert.deepEqual(context.pointedAt, input.pointedAt);
+  assert.equal(quick.contents.at(-1).parts.filter((part) => part.inlineData).length, 2);
+  const io = transport(answer());
+  await runAgent(input, config, session(), io.fetcher);
+  assert.equal(io.calls.length, 1);
+  assert.equal('action' in io.calls[0].body.generationConfig.responseJsonSchema.properties, false);
+});
+
+test('full-path diagnostics report gates without exposing the question or image contents', () => {
+  const cases = [
+    [request({ includeWebInfo: true }), session(), 'research_enabled'],
+    [request({ continuationId: randomUUID() }), session(), 'research_continuation'],
+    [request(), session({ memory: { ...emptyMemory(), plan: [{ completed: false }] } }), 'unfinished_guided_plan'],
+    [request({ question: 'How do I open it?' }), session(), 'question_form'],
+    [request({ question: 'Find the cap' }), session(), 'detailed_or_contextual_task'],
+  ];
+  for (const [input, state, reason] of cases) assert.deepEqual(quickLocateDecision(input, state), { eligible: false, reason });
 });
 
 test('the real agent routes a quick locate through one provider call and preserves task memory', async () => {
