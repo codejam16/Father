@@ -243,7 +243,7 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = ZD9X42753P;
+				DEVELOPMENT_TEAM = 64262PXUP4;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = TaskLens/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -251,7 +251,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = dev.y.codejam16.tasklens;
+				PRODUCT_BUNDLE_IDENTIFIER = com.bogdanrudnitski.codejam16.tasklens;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -264,7 +264,7 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = ZD9X42753P;
+				DEVELOPMENT_TEAM = 64262PXUP4;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = TaskLens/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -272,7 +272,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = dev.y.codejam16.tasklens;
+				PRODUCT_BUNDLE_IDENTIFIER = com.bogdanrudnitski.codejam16.tasklens;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_EMIT_LOC_STRINGS = YES;
