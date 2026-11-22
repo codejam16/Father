@@ -182,8 +182,11 @@ struct AnalysisRequest: Encodable {
          searchEveryQuestion: Bool = false, guided: Bool = false, detail: CapturedDetail? = nil,
          pointedAt: [CGPoint] = []) {
         self.guided = guided
-        self.pointedAt = pointedAt.isEmpty ? nil : pointedAt.prefix(4).map {
-            [(min(max($0.y, 0), 1) * 1000).rounded(), (min(max($0.x, 0), 1) * 1000).rounded()]
+        self.pointedAt = pointedAt.isEmpty ? nil : pointedAt.prefix(4).map { point -> [Double] in
+            let x = Double(point.x)
+            let y = Double(point.y)
+            return [(min(max(y, 0), 1) * 1000).rounded(),
+                    (min(max(x, 0), 1) * 1000).rounded()]
         }
         self.detailImage = detail.map {
             DetailImagePayload(base64: $0.jpeg.base64EncodedString(), width: $0.width, height: $0.height, box: $0.box)
